@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount, untrack } from 'svelte';
+	import { untrack } from 'svelte';
 	import { getClient, APIError } from '$lib/api/client.js';
 	import type {
 		UserDetailResponse,
@@ -10,12 +10,11 @@
 	} from '$lib/api/types.js';
 	import * as Card from '$lib/components/ui/card/index.js';
 	import * as Table from '$lib/components/ui/table/index.js';
-	import * as Dialog from '$lib/components/ui/dialog/index.js';
+	import SimpleDialog from '$lib/components/SimpleDialog.svelte';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { Input } from '$lib/components/ui/input/index.js';
 	import { Label } from '$lib/components/ui/label/index.js';
 	import { Badge } from '$lib/components/ui/badge/index.js';
-	import * as Select from '$lib/components/ui/select/index.js';
 	import { Plus } from '@lucide/svelte';
 
 	let activeTab = $state<'users' | 'invitations'>('users');
@@ -33,11 +32,6 @@
 	let inviteRoleId = $state('');
 	let inviteStoreIds = $state<string[]>([]);
 	let inviteLoading = $state(false);
-	let mounted = $state(false);
-
-	onMount(() => {
-		mounted = true;
-	});
 
 	let initialized = $state(false);
 	$effect(() => {
@@ -282,71 +276,64 @@
 	{/if}
 </div>
 
-{#if mounted}<Dialog.Root bind:open={inviteDialogOpen}>
-	<Dialog.Content>
-		<Dialog.Header>
-			<Dialog.Title>Invite User</Dialog.Title>
-			<Dialog.Description>Send an invitation to join your team</Dialog.Description>
-		</Dialog.Header>
-		<form onsubmit={handleInvite} class="space-y-4">
+<SimpleDialog bind:open={inviteDialogOpen} title="Invite User" description="Send an invitation to join your team">
+	<form onsubmit={handleInvite} class="space-y-4">
+		<div class="space-y-2">
+			<Label for="inviteEmail">Email</Label>
+			<Input
+				id="inviteEmail"
+				type="email"
+				bind:value={inviteEmail}
+				required
+				placeholder="user@example.com"
+			/>
+		</div>
+		<div class="space-y-2">
+			<Label for="inviteRole">Role</Label>
+			<select
+				id="inviteRole"
+				bind:value={inviteRoleId}
+				required
+				class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+			>
+				<option value="">Select a role</option>
+				{#each roles as role}
+					<option value={role.id}>{role.name}</option>
+				{/each}
+			</select>
+		</div>
+		<div class="space-y-2">
+			<Label>Store Access (optional)</Label>
+			<p class="text-xs text-muted-foreground">
+				Leave empty to grant access to all stores (for admin roles).
+			</p>
 			<div class="space-y-2">
-				<Label for="inviteEmail">Email</Label>
-				<Input
-					id="inviteEmail"
-					type="email"
-					bind:value={inviteEmail}
-					required
-					placeholder="user@example.com"
-				/>
+				{#each stores as store}
+					<label class="flex items-center gap-2">
+						<input
+							type="checkbox"
+							checked={inviteStoreIds.includes(store.id)}
+							onchange={() => {
+								if (inviteStoreIds.includes(store.id)) {
+									inviteStoreIds = inviteStoreIds.filter((id) => id !== store.id);
+								} else {
+									inviteStoreIds = [...inviteStoreIds, store.id];
+								}
+							}}
+							class="h-4 w-4 rounded border-input"
+						/>
+						<span class="text-sm">{store.name}</span>
+					</label>
+				{/each}
 			</div>
-			<div class="space-y-2">
-				<Label>Role</Label>
-				<Select.Root type="single" bind:value={inviteRoleId}>
-					<Select.Trigger>
-						<span>
-							{roles.find((r) => r.id === inviteRoleId)?.name ?? 'Select a role'}
-						</span>
-					</Select.Trigger>
-					<Select.Content>
-						{#each roles as role}
-							<Select.Item value={role.id}>{role.name}</Select.Item>
-						{/each}
-					</Select.Content>
-				</Select.Root>
-			</div>
-			<div class="space-y-2">
-				<Label>Store Access (optional)</Label>
-				<p class="text-xs text-muted-foreground">
-					Leave empty to grant access to all stores (for admin roles).
-				</p>
-				<div class="space-y-2">
-					{#each stores as store}
-						<label class="flex items-center gap-2">
-							<input
-								type="checkbox"
-								checked={inviteStoreIds.includes(store.id)}
-								onchange={() => {
-									if (inviteStoreIds.includes(store.id)) {
-										inviteStoreIds = inviteStoreIds.filter((id) => id !== store.id);
-									} else {
-										inviteStoreIds = [...inviteStoreIds, store.id];
-									}
-								}}
-								class="h-4 w-4 rounded border-input"
-							/>
-							<span class="text-sm">{store.name}</span>
-						</label>
-					{/each}
-				</div>
-			</div>
-			<Dialog.Footer>
-				<Button type="button" variant="outline" onclick={() => (inviteDialogOpen = false)}>
-					Cancel
-				</Button>
-				<Button type="submit" disabled={inviteLoading}>
-					{inviteLoading ? 'Sending...' : 'Send Invitation'}
-				</Button>
-			</Dialog.Footer>
-		</form>
-	</Dialog.Content>
-</Dialog.Root>{/if}
+		</div>
+		<div class="flex justify-end gap-2 mt-4">
+			<Button type="button" variant="outline" onclick={() => (inviteDialogOpen = false)}>
+				Cancel
+			</Button>
+			<Button type="submit" disabled={inviteLoading}>
+				{inviteLoading ? 'Sending...' : 'Send Invitation'}
+			</Button>
+		</div>
+	</form>
+</SimpleDialog>

@@ -1,10 +1,10 @@
 <script lang="ts">
-	import { onMount, untrack } from 'svelte';
+	import { untrack } from 'svelte';
 	import { getClient, APIError } from '$lib/api/client.js';
 	import type { StoreResponse } from '$lib/api/types.js';
 	import * as Card from '$lib/components/ui/card/index.js';
 	import * as Table from '$lib/components/ui/table/index.js';
-	import * as Dialog from '$lib/components/ui/dialog/index.js';
+	import SimpleDialog from '$lib/components/SimpleDialog.svelte';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { Input } from '$lib/components/ui/input/index.js';
 	import { Label } from '$lib/components/ui/label/index.js';
@@ -14,7 +14,6 @@
 	let stores = $state<StoreResponse[]>([]);
 	let loading = $state(true);
 	let dialogOpen = $state(false);
-	let mounted = $state(false);
 	let error = $state<string | null>(null);
 	let success = $state<string | null>(null);
 
@@ -22,10 +21,6 @@
 	let formAddress = $state('');
 	let formPhone = $state('');
 	let formLoading = $state(false);
-
-	onMount(() => {
-		mounted = true;
-	});
 
 	// Use $effect for data loading - onMount doesn't fire reliably
 	// when the component is conditionally rendered by the parent layout
@@ -174,33 +169,27 @@
 	</Card.Root>
 </div>
 
-{#if mounted}<Dialog.Root bind:open={dialogOpen}>
-	<Dialog.Content>
-		<Dialog.Header>
-			<Dialog.Title>Create Store</Dialog.Title>
-			<Dialog.Description>Add a new store to your business</Dialog.Description>
-		</Dialog.Header>
-		<form onsubmit={handleCreate} class="space-y-4">
-			<div class="space-y-2">
-				<Label for="storeName">Store Name</Label>
-				<Input id="storeName" bind:value={formName} required />
-			</div>
-			<div class="space-y-2">
-				<Label for="storeAddress">Address (optional)</Label>
-				<Input id="storeAddress" bind:value={formAddress} />
-			</div>
-			<div class="space-y-2">
-				<Label for="storePhone">Phone (optional)</Label>
-				<Input id="storePhone" bind:value={formPhone} />
-			</div>
-			<Dialog.Footer>
-				<Button type="button" variant="outline" onclick={() => (dialogOpen = false)}>
-					Cancel
-				</Button>
-				<Button type="submit" disabled={formLoading}>
-					{formLoading ? 'Creating...' : 'Create'}
-				</Button>
-			</Dialog.Footer>
-		</form>
-	</Dialog.Content>
-</Dialog.Root>{/if}
+<SimpleDialog bind:open={dialogOpen} title="Create Store" description="Add a new store to your business">
+	<form onsubmit={handleCreate} class="space-y-4">
+		<div class="space-y-2">
+			<Label for="storeName">Store Name</Label>
+			<Input id="storeName" bind:value={formName} required />
+		</div>
+		<div class="space-y-2">
+			<Label for="storeAddress">Address (optional)</Label>
+			<Input id="storeAddress" bind:value={formAddress} />
+		</div>
+		<div class="space-y-2">
+			<Label for="storePhone">Phone (optional)</Label>
+			<Input id="storePhone" bind:value={formPhone} />
+		</div>
+		<div class="flex justify-end gap-2 mt-4">
+			<Button type="button" variant="outline" onclick={() => (dialogOpen = false)}>
+				Cancel
+			</Button>
+			<Button type="submit" disabled={formLoading}>
+				{formLoading ? 'Creating...' : 'Create'}
+			</Button>
+		</div>
+	</form>
+</SimpleDialog>

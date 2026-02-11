@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { page } from '$app/state';
-	import { onMount } from 'svelte';
+	import { untrack } from 'svelte';
 	import { getClient, APIError } from '$lib/api/client.js';
 	import type { RoleDetailResponse, FeatureResponse } from '$lib/api/types.js';
 	import * as Card from '$lib/components/ui/card/index.js';
@@ -14,11 +14,26 @@
 	let features = $state<FeatureResponse[]>([]);
 	let loading = $state(true);
 	let saving = $state(false);
+	let error = $state<string | null>(null);
 
 	// Permission state: featureId -> Set of actions
 	let permissionMap = $state<Map<string, Set<string>>>(new Map());
 
-	onMount(async () => {
+	// Use $effect for data loading - onMount doesn't fire reliably
+	// when the component is conditionally rendered by the parent layout
+	let initialized = $state(false);
+	$effect(() => {
+		if (!initialized) {
+			initialized = true;
+			untrack(() => {
+				loadRoleData();
+			});
+		}
+	});
+
+	async function loadRoleData() {
+		loading = true;
+		error = null;
 		try {
 			const api = getClient();
 			const [roleData, featureData] = await Promise.all([
@@ -26,6 +41,7 @@
 				api.get<FeatureResponse[]>('/v1/features')
 			]);
 			role = roleData;
+			// Keep the nested structure for tree display
 			features = featureData;
 
 			// Build permission map from existing role permissions
@@ -35,13 +51,11 @@
 			}
 			permissionMap = map;
 		} catch (err) {
-			if (err instanceof APIError) {
-				// err.message);
-			}
+			error = err instanceof APIError ? err.message : 'Failed to load role data';
 		} finally {
 			loading = false;
 		}
-	});
+	}
 
 	function toggleAction(featureId: string, action: string) {
 		const current = permissionMap.get(featureId) ?? new Set();
@@ -63,22 +77,37 @@
 		return permissionMap.get(featureId)?.has(action) ?? false;
 	}
 
-	// Get child features (non-parent features with actions)
-	const childFeatures = $derived(features.filter((f) => f.parent_id !== null && f.actions.length > 0));
-
-	// Get all unique actions across all features
+	// Get all unique actions across all child features in a specific order
 	const allActions = $derived.by(() => {
 		const actions = new Set<string>();
-		for (const f of childFeatures) {
-			for (const a of f.actions) {
-				actions.add(a);
+		for (const parent of features) {
+			if (parent.children) {
+				for (const child of parent.children) {
+					for (const action of child.actions) {
+						actions.add(action);
+					}
+				}
 			}
 		}
-		return Array.from(actions);
+		// Sort in the desired order: read, create, edit, delete
+		const actionOrder = ['read', 'create', 'edit', 'delete'];
+		return Array.from(actions).sort((a, b) => {
+			const indexA = actionOrder.indexOf(a.toLowerCase());
+			const indexB = actionOrder.indexOf(b.toLowerCase());
+			if (indexA === -1) return 1;
+			if (indexB === -1) return -1;
+			return indexA - indexB;
+		});
 	});
+
+	// Get parent features that have children with actions
+	const parentFeatures = $derived(
+		features.filter((f) => f.children && f.children.some((c) => c.actions.length > 0))
+	);
 
 	async function handleSave() {
 		saving = true;
+		error = null;
 		try {
 			const api = getClient();
 			const permissions = Array.from(permissionMap.entries())
@@ -89,13 +118,8 @@
 				}));
 
 			await api.put(`/v1/roles/${roleId}/permissions`, { permissions });
-			// 'Permissions saved');
 		} catch (err) {
-			if (err instanceof APIError) {
-				// err.message);
-			} else {
-				// 'An unexpected error occurred');
-			}
+			error = err instanceof APIError ? err.message : 'Failed to save permissions';
 		} finally {
 			saving = false;
 		}
@@ -107,6 +131,12 @@
 </svelte:head>
 
 <div class="space-y-6">
+	{#if error}
+		<div class="rounded-md border border-destructive/50 bg-destructive/10 p-3 text-sm text-destructive">
+			{error}
+		</div>
+	{/if}
+
 	{#if loading}
 		<p class="text-muted-foreground">Loading...</p>
 	{:else if role}
@@ -143,26 +173,37 @@
 						</Table.Row>
 					</Table.Header>
 					<Table.Body>
-						{#each childFeatures as feature}
-							<Table.Row>
-								<Table.Cell class="font-medium">
-									{feature.module} / {feature.name}
+						{#each parentFeatures as parent}
+							<!-- Parent row (header) -->
+							<Table.Row class="bg-muted/50">
+								<Table.Cell colspan={allActions.length + 1} class="font-semibold">
+									{parent.name}
 								</Table.Cell>
-								{#each allActions as action}
-									<Table.Cell class="text-center">
-										{#if feature.actions.includes(action)}
-											<input
-												type="checkbox"
-												checked={hasAction(feature.id, action)}
-												onchange={() => toggleAction(feature.id, action)}
-												class="h-4 w-4 rounded border-input"
-											/>
-										{:else}
-											<span class="text-muted-foreground">-</span>
-										{/if}
-									</Table.Cell>
-								{/each}
 							</Table.Row>
+							<!-- Child rows -->
+							{#if parent.children}
+								{#each parent.children.filter((c) => c.actions.length > 0) as child}
+									<Table.Row>
+										<Table.Cell class="pl-8">
+											{child.name}
+										</Table.Cell>
+										{#each allActions as action}
+											<Table.Cell class="text-center">
+												{#if child.actions.includes(action)}
+													<input
+														type="checkbox"
+														checked={hasAction(child.id, action)}
+														onchange={() => toggleAction(child.id, action)}
+														class="h-4 w-4 rounded border-input"
+													/>
+												{:else}
+													<span class="text-muted-foreground">-</span>
+												{/if}
+											</Table.Cell>
+										{/each}
+									</Table.Row>
+								{/each}
+							{/if}
 						{/each}
 					</Table.Body>
 				</Table.Root>

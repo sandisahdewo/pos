@@ -220,22 +220,24 @@ func (s *RoleService) ListFeatures(ctx context.Context) ([]model.FeatureResponse
 	}
 
 	// Build tree: separate parents and children
-	parentMap := make(map[uuid.UUID]*model.FeatureResponse)
+	parentMap := make(map[uuid.UUID]int) // Store index instead of pointer
 	var result []model.FeatureResponse
 
+	// First pass: collect all parent features
 	for _, f := range features {
 		resp := toFeatureResponse(f)
 		if resp.ParentID == nil {
+			parentMap[resp.ID] = len(result)
 			result = append(result, resp)
-			parentMap[resp.ID] = &result[len(result)-1]
 		}
 	}
 
+	// Second pass: attach children to parents
 	for _, f := range features {
 		resp := toFeatureResponse(f)
 		if resp.ParentID != nil {
-			if parent, ok := parentMap[*resp.ParentID]; ok {
-				parent.Children = append(parent.Children, resp)
+			if idx, ok := parentMap[*resp.ParentID]; ok {
+				result[idx].Children = append(result[idx].Children, resp)
 			}
 		}
 	}

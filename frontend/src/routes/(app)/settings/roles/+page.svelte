@@ -1,10 +1,10 @@
 <script lang="ts">
-	import { onMount, untrack } from 'svelte';
+	import { untrack } from 'svelte';
 	import { getClient, APIError } from '$lib/api/client.js';
 	import type { RoleResponse } from '$lib/api/types.js';
 	import * as Card from '$lib/components/ui/card/index.js';
 	import * as Table from '$lib/components/ui/table/index.js';
-	import * as Dialog from '$lib/components/ui/dialog/index.js';
+	import SimpleDialog from '$lib/components/SimpleDialog.svelte';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { Input } from '$lib/components/ui/input/index.js';
 	import { Label } from '$lib/components/ui/label/index.js';
@@ -14,17 +14,12 @@
 	let roles = $state<RoleResponse[]>([]);
 	let loading = $state(true);
 	let dialogOpen = $state(false);
-	let mounted = $state(false);
 	let error = $state<string | null>(null);
 	let success = $state<string | null>(null);
 
 	let formName = $state('');
 	let formDescription = $state('');
 	let formLoading = $state(false);
-
-	onMount(() => {
-		mounted = true;
-	});
 
 	let initialized = $state(false);
 	$effect(() => {
@@ -151,29 +146,23 @@
 	</Card.Root>
 </div>
 
-{#if mounted}<Dialog.Root bind:open={dialogOpen}>
-	<Dialog.Content>
-		<Dialog.Header>
-			<Dialog.Title>Create Role</Dialog.Title>
-			<Dialog.Description>Add a new role for your team</Dialog.Description>
-		</Dialog.Header>
-		<form onsubmit={handleCreate} class="space-y-4">
-			<div class="space-y-2">
-				<Label for="roleName">Role Name</Label>
-				<Input id="roleName" bind:value={formName} required />
-			</div>
-			<div class="space-y-2">
-				<Label for="roleDescription">Description (optional)</Label>
-				<Input id="roleDescription" bind:value={formDescription} />
-			</div>
-			<Dialog.Footer>
-				<Button type="button" variant="outline" onclick={() => (dialogOpen = false)}>
-					Cancel
-				</Button>
-				<Button type="submit" disabled={formLoading}>
-					{formLoading ? 'Creating...' : 'Create'}
-				</Button>
-			</Dialog.Footer>
-		</form>
-	</Dialog.Content>
-</Dialog.Root>{/if}
+<SimpleDialog bind:open={dialogOpen} title="Create Role" description="Add a new role for your team">
+	<form onsubmit={handleCreate} class="space-y-4">
+		<div class="space-y-2">
+			<Label for="roleName">Role Name</Label>
+			<Input id="roleName" bind:value={formName} required />
+		</div>
+		<div class="space-y-2">
+			<Label for="roleDescription">Description (optional)</Label>
+			<Input id="roleDescription" bind:value={formDescription} />
+		</div>
+		<div class="flex justify-end gap-2 mt-4">
+			<Button type="button" variant="outline" onclick={() => (dialogOpen = false)}>
+				Cancel
+			</Button>
+			<Button type="submit" disabled={formLoading}>
+				{formLoading ? 'Creating...' : 'Create'}
+			</Button>
+		</div>
+	</form>
+</SimpleDialog>

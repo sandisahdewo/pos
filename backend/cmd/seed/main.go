@@ -15,12 +15,19 @@ import (
 
 // Predefined UUIDs for features so they are stable across seeds.
 var (
-	masterDataID      = uuid.MustParse("10000000-0000-0000-0000-000000000001")
-	masterDataProduct = uuid.MustParse("10000000-0000-0000-0000-000000000002")
-	reportingID       = uuid.MustParse("10000000-0000-0000-0000-000000000003")
-	reportingSales    = uuid.MustParse("10000000-0000-0000-0000-000000000004")
-	purchaseID        = uuid.MustParse("10000000-0000-0000-0000-000000000005")
-	purchaseProduct   = uuid.MustParse("10000000-0000-0000-0000-000000000006")
+	masterDataID        = uuid.MustParse("10000000-0000-0000-0000-000000000001")
+	masterDataProduct   = uuid.MustParse("10000000-0000-0000-0000-000000000002")
+	reportingID         = uuid.MustParse("10000000-0000-0000-0000-000000000003")
+	reportingSales      = uuid.MustParse("10000000-0000-0000-0000-000000000004")
+	purchaseID          = uuid.MustParse("10000000-0000-0000-0000-000000000005")
+	purchaseProduct     = uuid.MustParse("10000000-0000-0000-0000-000000000006")
+	masterDataCategory  = uuid.MustParse("10000000-0000-0000-0000-000000000010")
+	masterDataUnit      = uuid.MustParse("10000000-0000-0000-0000-000000000011")
+	masterDataVariant   = uuid.MustParse("10000000-0000-0000-0000-000000000012")
+	masterDataWarehouse = uuid.MustParse("10000000-0000-0000-0000-000000000013")
+	masterDataSupplier  = uuid.MustParse("10000000-0000-0000-0000-000000000014")
+	purchaseOrder       = uuid.MustParse("10000000-0000-0000-0000-000000000015")
+	purchaseDelivery    = uuid.MustParse("10000000-0000-0000-0000-000000000016")
 )
 
 func main() {
@@ -105,6 +112,76 @@ func main() {
 			Module:    "purchase",
 			Actions:   []string{"read", "create", "edit", "delete"},
 			SortOrder: 6,
+		},
+		// Child: Master Data > Category
+		{
+			ID:        masterDataCategory,
+			ParentID:  pgtype.UUID{Bytes: masterDataID, Valid: true},
+			Name:      "Category",
+			Slug:      "master-data.category",
+			Module:    "master-data",
+			Actions:   []string{"read", "create", "edit", "delete"},
+			SortOrder: 7,
+		},
+		// Child: Master Data > Unit
+		{
+			ID:        masterDataUnit,
+			ParentID:  pgtype.UUID{Bytes: masterDataID, Valid: true},
+			Name:      "Unit",
+			Slug:      "master-data.unit",
+			Module:    "master-data",
+			Actions:   []string{"read", "create", "edit", "delete"},
+			SortOrder: 8,
+		},
+		// Child: Master Data > Variant
+		{
+			ID:        masterDataVariant,
+			ParentID:  pgtype.UUID{Bytes: masterDataID, Valid: true},
+			Name:      "Variant",
+			Slug:      "master-data.variant",
+			Module:    "master-data",
+			Actions:   []string{"read", "create", "edit", "delete"},
+			SortOrder: 9,
+		},
+		// Child: Master Data > Warehouse
+		{
+			ID:        masterDataWarehouse,
+			ParentID:  pgtype.UUID{Bytes: masterDataID, Valid: true},
+			Name:      "Warehouse",
+			Slug:      "master-data.warehouse",
+			Module:    "master-data",
+			Actions:   []string{"read", "create", "edit", "delete"},
+			SortOrder: 10,
+		},
+		// Child: Master Data > Supplier
+		{
+			ID:        masterDataSupplier,
+			ParentID:  pgtype.UUID{Bytes: masterDataID, Valid: true},
+			Name:      "Supplier",
+			Slug:      "master-data.supplier",
+			Module:    "master-data",
+			Actions:   []string{"read", "create", "edit", "delete"},
+			SortOrder: 11,
+		},
+		// Child: Purchase > Order
+		{
+			ID:        purchaseOrder,
+			ParentID:  pgtype.UUID{Bytes: purchaseID, Valid: true},
+			Name:      "Order",
+			Slug:      "purchase.order",
+			Module:    "purchase",
+			Actions:   []string{"read", "create", "edit", "delete"},
+			SortOrder: 12,
+		},
+		// Child: Purchase > Delivery
+		{
+			ID:        purchaseDelivery,
+			ParentID:  pgtype.UUID{Bytes: purchaseID, Valid: true},
+			Name:      "Delivery",
+			Slug:      "purchase.delivery",
+			Module:    "purchase",
+			Actions:   []string{"read", "create", "edit"},
+			SortOrder: 13,
 		},
 	}
 

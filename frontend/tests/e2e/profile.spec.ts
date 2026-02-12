@@ -119,8 +119,8 @@ test.describe('Profile Settings', () => {
 
 		// Try to change password with mismatched passwords
 		await page.getByLabel('Current Password').fill(password);
-		await page.getByLabel('New Password').fill('newpassword123');
-		await page.getByLabel('Confirm Password').fill('differentpassword');
+		await page.getByLabel('New Password', { exact: true }).fill('newpassword123');
+		await page.getByLabel('Confirm New Password').fill('differentpassword');
 		await page.getByRole('button', { name: 'Change Password' }).click();
 
 		// Should show error message

@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { getClient } from '$lib/api/client.js';
 	import { APIError } from '$lib/api/client.js';
+	import Alert from '$lib/components/Alert.svelte';
 	import * as Card from '$lib/components/ui/card/index.js';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { Input } from '$lib/components/ui/input/index.js';
@@ -50,11 +51,8 @@
 			</div>
 		{:else}
 			<form onsubmit={handleSubmit} class="space-y-4">
-				{#if error}
-					<div class="rounded-md bg-destructive/10 p-3 text-sm text-destructive">
-						{error}
-					</div>
-				{/if}
+				<Alert type="error" bind:message={error} />
+
 				<div class="space-y-2">
 					<Label for="email">Email</Label>
 					<Input

@@ -1,5 +1,4 @@
 <script lang="ts">
-	import { untrack } from 'svelte';
 	import { getClient, APIError } from '$lib/api/client.js';
 	import type {
 		UserDetailResponse,
@@ -11,11 +10,13 @@
 	import * as Card from '$lib/components/ui/card/index.js';
 	import * as Table from '$lib/components/ui/table/index.js';
 	import SimpleDialog from '$lib/components/SimpleDialog.svelte';
+	import Alert from '$lib/components/Alert.svelte';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { Input } from '$lib/components/ui/input/index.js';
 	import { Label } from '$lib/components/ui/label/index.js';
 	import { Badge } from '$lib/components/ui/badge/index.js';
 	import { Plus } from '@lucide/svelte';
+	import { createDataLoader } from '$lib/utils/data-loader.svelte.js';
 
 	let activeTab = $state<'users' | 'invitations'>('users');
 
@@ -24,8 +25,8 @@
 	let stores = $state<StoreResponse[]>([]);
 	let invitations = $state<InvitationResponse[]>([]);
 	let loading = $state(true);
-	let error = $state<string | null>(null);
-	let success = $state<string | null>(null);
+	let error = $state('');
+	let success = $state('');
 
 	let inviteDialogOpen = $state(false);
 	let inviteEmail = $state('');
@@ -33,19 +34,11 @@
 	let inviteStoreIds = $state<string[]>([]);
 	let inviteLoading = $state(false);
 
-	let initialized = $state(false);
-	$effect(() => {
-		if (!initialized) {
-			initialized = true;
-			untrack(() => {
-				loadData();
-			});
-		}
-	});
+	createDataLoader(loadData);
 
 	async function loadData() {
 		loading = true;
-		error = null;
+		error = '';
 		try {
 			const api = getClient();
 			const [usersRes, rolesData, storesData, invitationsData] = await Promise.all([
@@ -79,7 +72,7 @@
 			return;
 		}
 		inviteLoading = true;
-		error = null;
+		error = '';
 		try {
 			const api = getClient();
 			await api.post('/v1/invitations', {
@@ -88,7 +81,7 @@
 				store_ids: inviteStoreIds.length > 0 ? inviteStoreIds : undefined
 			});
 			success = 'Invitation sent';
-			error = null;
+			error = '';
 			inviteDialogOpen = false;
 			await loadData();
 		} catch (err) {
@@ -99,12 +92,12 @@
 	}
 
 	async function cancelInvitation(id: string) {
-		error = null;
+		error = '';
 		try {
 			const api = getClient();
 			await api.del(`/v1/invitations/${id}`);
 			success = 'Invitation cancelled';
-			error = null;
+			error = '';
 			await loadData();
 		} catch (err) {
 			error = err instanceof APIError ? err.message : 'Failed to cancel invitation';
@@ -125,17 +118,8 @@
 		</Button>
 	</div>
 
-	{#if error}
-		<div class="rounded-md border border-destructive/50 bg-destructive/10 p-3 text-sm text-destructive">
-			{error}
-		</div>
-	{/if}
-
-	{#if success}
-		<div class="rounded-md border border-green-500/50 bg-green-500/10 p-3 text-sm text-green-700 dark:text-green-400">
-			{success}
-		</div>
-	{/if}
+	<Alert type="error" bind:message={error} />
+	<Alert type="success" bind:message={success} autoDismiss={true} />
 
 	<div class="inline-flex h-9 items-center rounded-lg bg-muted p-1 text-muted-foreground">
 		<button
@@ -312,13 +296,13 @@
 					<label class="flex items-center gap-2">
 						<input
 							type="checkbox"
+							value={store.id}
 							checked={inviteStoreIds.includes(store.id)}
-							onchange={() => {
-								if (inviteStoreIds.includes(store.id)) {
-									inviteStoreIds = inviteStoreIds.filter((id) => id !== store.id);
-								} else {
-									inviteStoreIds = [...inviteStoreIds, store.id];
-								}
+							onchange={(e) => {
+								const target = e.currentTarget;
+								inviteStoreIds = target.checked
+									? [...inviteStoreIds, store.id]
+									: inviteStoreIds.filter((id) => id !== store.id);
 							}}
 							class="h-4 w-4 rounded border-input"
 						/>

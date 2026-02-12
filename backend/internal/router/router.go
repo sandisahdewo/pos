@@ -13,12 +13,21 @@ import (
 )
 
 type Handlers struct {
-	Auth       *handler.AuthHandler
-	Store      *handler.StoreHandler
-	Role       *handler.RoleHandler
-	Feature    *handler.FeatureHandler
-	User       *handler.UserHandler
-	Invitation *handler.InvitationHandler
+	Auth           *handler.AuthHandler
+	Store          *handler.StoreHandler
+	Role           *handler.RoleHandler
+	Feature        *handler.FeatureHandler
+	User           *handler.UserHandler
+	Invitation     *handler.InvitationHandler
+	Category       *handler.CategoryHandler
+	Unit           *handler.UnitHandler
+	Variant        *handler.VariantHandler
+	UnitConversion *handler.UnitConversionHandler
+	Warehouse      *handler.WarehouseHandler
+	Supplier       *handler.SupplierHandler
+	Product        *handler.ProductHandler
+	Stock          *handler.StockHandler
+	Upload         *handler.UploadHandler
 }
 
 func New(cfg *config.Config, queries *sqlc.Queries, h Handlers) chi.Router {
@@ -97,6 +106,78 @@ func New(cfg *config.Config, queries *sqlc.Queries, h Handlers) chi.Router {
 			r.Post("/invitations", h.Invitation.Create)
 			r.Get("/invitations", h.Invitation.List)
 			r.Delete("/invitations/{id}", h.Invitation.Cancel)
+
+			// Categories
+			r.Route("/categories", func(r chi.Router) {
+				r.With(middleware.RequirePermission("master-data.category", "read")).Get("/", h.Category.List)
+				r.With(middleware.RequirePermission("master-data.category", "create")).Post("/", h.Category.Create)
+				r.With(middleware.RequirePermission("master-data.category", "read")).Get("/{id}", h.Category.GetByID)
+				r.With(middleware.RequirePermission("master-data.category", "edit")).Put("/{id}", h.Category.Update)
+				r.With(middleware.RequirePermission("master-data.category", "delete")).Delete("/{id}", h.Category.Delete)
+				r.With(middleware.RequirePermission("master-data.category", "edit")).Put("/{id}/units", h.Category.UpdateUnits)
+				r.With(middleware.RequirePermission("master-data.category", "edit")).Put("/{id}/variants", h.Category.UpdateVariants)
+			})
+
+			// Units
+			r.Route("/units", func(r chi.Router) {
+				r.With(middleware.RequirePermission("master-data.unit", "read")).Get("/", h.Unit.List)
+				r.With(middleware.RequirePermission("master-data.unit", "create")).Post("/", h.Unit.Create)
+				r.With(middleware.RequirePermission("master-data.unit", "read")).Get("/{id}", h.Unit.GetByID)
+				r.With(middleware.RequirePermission("master-data.unit", "edit")).Put("/{id}", h.Unit.Update)
+				r.With(middleware.RequirePermission("master-data.unit", "delete")).Delete("/{id}", h.Unit.Delete)
+			})
+
+			// Variants
+			r.Route("/variants", func(r chi.Router) {
+				r.With(middleware.RequirePermission("master-data.variant", "read")).Get("/", h.Variant.List)
+				r.With(middleware.RequirePermission("master-data.variant", "create")).Post("/", h.Variant.Create)
+				r.With(middleware.RequirePermission("master-data.variant", "read")).Get("/{id}", h.Variant.GetByID)
+				r.With(middleware.RequirePermission("master-data.variant", "edit")).Put("/{id}", h.Variant.Update)
+				r.With(middleware.RequirePermission("master-data.variant", "delete")).Delete("/{id}", h.Variant.Delete)
+				r.With(middleware.RequirePermission("master-data.variant", "edit")).Post("/{id}/values", h.Variant.AddValue)
+				r.With(middleware.RequirePermission("master-data.variant", "edit")).Put("/{id}/values/{valueId}", h.Variant.UpdateValue)
+				r.With(middleware.RequirePermission("master-data.variant", "edit")).Delete("/{id}/values/{valueId}", h.Variant.DeleteValue)
+			})
+
+			// Unit conversions
+			r.Route("/unit-conversions", func(r chi.Router) {
+				r.With(middleware.RequirePermission("master-data.unit", "read")).Get("/", h.UnitConversion.List)
+				r.With(middleware.RequirePermission("master-data.unit", "create")).Post("/", h.UnitConversion.Create)
+				r.With(middleware.RequirePermission("master-data.unit", "read")).Get("/{id}", h.UnitConversion.GetByID)
+				r.With(middleware.RequirePermission("master-data.unit", "edit")).Put("/{id}", h.UnitConversion.Update)
+				r.With(middleware.RequirePermission("master-data.unit", "delete")).Delete("/{id}", h.UnitConversion.Delete)
+			})
+
+			// Warehouses
+			r.Route("/warehouses", func(r chi.Router) {
+				r.With(middleware.RequirePermission("master-data.warehouse", "read")).Get("/", h.Warehouse.List)
+				r.With(middleware.RequirePermission("master-data.warehouse", "create")).Post("/", h.Warehouse.Create)
+				r.With(middleware.RequirePermission("master-data.warehouse", "read")).Get("/{id}", h.Warehouse.GetByID)
+				r.With(middleware.RequirePermission("master-data.warehouse", "edit")).Put("/{id}", h.Warehouse.Update)
+				r.With(middleware.RequirePermission("master-data.warehouse", "delete")).Delete("/{id}", h.Warehouse.Delete)
+			})
+
+			// Suppliers
+			r.Route("/suppliers", func(r chi.Router) {
+				r.With(middleware.RequirePermission("master-data.supplier", "read")).Get("/", h.Supplier.List)
+				r.With(middleware.RequirePermission("master-data.supplier", "create")).Post("/", h.Supplier.Create)
+				r.With(middleware.RequirePermission("master-data.supplier", "read")).Get("/{id}", h.Supplier.GetByID)
+				r.With(middleware.RequirePermission("master-data.supplier", "edit")).Put("/{id}", h.Supplier.Update)
+				r.With(middleware.RequirePermission("master-data.supplier", "delete")).Delete("/{id}", h.Supplier.Delete)
+			})
+
+			// Products
+			r.Route("/products", func(r chi.Router) {
+				r.With(middleware.RequirePermission("master-data.product", "read")).Get("/", h.Product.List)
+				r.With(middleware.RequirePermission("master-data.product", "create")).Post("/", h.Product.Create)
+				r.With(middleware.RequirePermission("master-data.product", "read")).Get("/{id}", h.Product.GetByID)
+				r.With(middleware.RequirePermission("master-data.product", "edit")).Put("/{id}", h.Product.Update)
+				r.With(middleware.RequirePermission("master-data.product", "delete")).Delete("/{id}", h.Product.Deactivate)
+				r.With(middleware.RequirePermission("master-data.product", "read")).Get("/{id}/stock", h.Stock.GetByProduct)
+			})
+
+			// Uploads
+			r.Post("/uploads/images", h.Upload.UploadImage)
 		})
 	})
 

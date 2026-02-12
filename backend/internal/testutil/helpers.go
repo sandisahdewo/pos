@@ -215,6 +215,202 @@ func runMigrations(ctx context.Context, pool *pgxpool.Pool) error {
 			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 		)`,
+		// Categories
+		`CREATE TABLE IF NOT EXISTS categories (
+			id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+			tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+			name VARCHAR(255) NOT NULL,
+			description TEXT,
+			pricing_mode VARCHAR(50),
+			markup_value NUMERIC(12,4),
+			is_active BOOLEAN NOT NULL DEFAULT TRUE,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			UNIQUE (tenant_id, name),
+			CONSTRAINT chk_pricing_mode_markup CHECK (
+				(pricing_mode IS NULL AND markup_value IS NULL) OR
+				(pricing_mode IS NOT NULL AND markup_value IS NOT NULL)
+			)
+		)`,
+		// Units
+		`CREATE TABLE IF NOT EXISTS units (
+			id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+			tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+			name VARCHAR(255) NOT NULL,
+			description TEXT,
+			is_active BOOLEAN NOT NULL DEFAULT TRUE,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			UNIQUE (tenant_id, name)
+		)`,
+		// Variants
+		`CREATE TABLE IF NOT EXISTS variants (
+			id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+			tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+			name VARCHAR(255) NOT NULL,
+			description TEXT,
+			is_active BOOLEAN NOT NULL DEFAULT TRUE,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			UNIQUE (tenant_id, name)
+		)`,
+		// Variant values
+		`CREATE TABLE IF NOT EXISTS variant_values (
+			id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+			variant_id UUID NOT NULL REFERENCES variants(id) ON DELETE CASCADE,
+			value VARCHAR(255) NOT NULL,
+			sort_order INTEGER NOT NULL DEFAULT 0,
+			is_active BOOLEAN NOT NULL DEFAULT TRUE,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			UNIQUE (variant_id, value)
+		)`,
+		// Category units
+		`CREATE TABLE IF NOT EXISTS category_units (
+			id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+			category_id UUID NOT NULL REFERENCES categories(id) ON DELETE CASCADE,
+			unit_id UUID NOT NULL REFERENCES units(id) ON DELETE CASCADE,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			UNIQUE (category_id, unit_id)
+		)`,
+		// Category variants
+		`CREATE TABLE IF NOT EXISTS category_variants (
+			id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+			category_id UUID NOT NULL REFERENCES categories(id) ON DELETE CASCADE,
+			variant_id UUID NOT NULL REFERENCES variants(id) ON DELETE CASCADE,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			UNIQUE (category_id, variant_id)
+		)`,
+		// Unit conversions
+		`CREATE TABLE IF NOT EXISTS unit_conversions (
+			id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+			tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+			from_unit_id UUID NOT NULL REFERENCES units(id) ON DELETE CASCADE,
+			to_unit_id UUID NOT NULL REFERENCES units(id) ON DELETE CASCADE,
+			conversion_factor NUMERIC(18,8) NOT NULL,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			UNIQUE (tenant_id, from_unit_id, to_unit_id),
+			CONSTRAINT chk_different_units CHECK (from_unit_id != to_unit_id),
+			CONSTRAINT chk_positive_factor CHECK (conversion_factor > 0)
+		)`,
+		// Warehouses
+		`CREATE TABLE IF NOT EXISTS warehouses (
+			id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+			tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+			name VARCHAR(255) NOT NULL,
+			address TEXT,
+			phone VARCHAR(50),
+			is_active BOOLEAN NOT NULL DEFAULT TRUE,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			UNIQUE (tenant_id, name)
+		)`,
+		// Suppliers
+		`CREATE TABLE IF NOT EXISTS suppliers (
+			id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+			tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+			name VARCHAR(255) NOT NULL,
+			contact_name VARCHAR(255),
+			email VARCHAR(255),
+			phone VARCHAR(50),
+			address TEXT,
+			is_active BOOLEAN NOT NULL DEFAULT TRUE,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			UNIQUE (tenant_id, name)
+		)`,
+		// Products (enums + table)
+		`DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'sell_method') THEN CREATE TYPE sell_method AS ENUM ('fifo', 'lifo'); END IF; END$$`,
+		`DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'product_status') THEN CREATE TYPE product_status AS ENUM ('active', 'inactive'); END IF; END$$`,
+		`CREATE TABLE IF NOT EXISTS products (
+			id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+			tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+			category_id UUID NOT NULL REFERENCES categories(id),
+			name VARCHAR(255) NOT NULL,
+			description TEXT,
+			has_variants BOOLEAN NOT NULL DEFAULT FALSE,
+			sell_method sell_method NOT NULL DEFAULT 'fifo',
+			status product_status NOT NULL DEFAULT 'active',
+			tax_rate NUMERIC(5,2) DEFAULT 0,
+			discount_rate NUMERIC(5,2) DEFAULT 0,
+			min_quantity NUMERIC(12,4),
+			max_quantity NUMERIC(12,4),
+			pricing_mode VARCHAR(50),
+			markup_value NUMERIC(12,4),
+			fixed_price NUMERIC(12,4),
+			is_active BOOLEAN NOT NULL DEFAULT TRUE,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			UNIQUE (tenant_id, name)
+		)`,
+		// Product images
+		`CREATE TABLE IF NOT EXISTS product_images (
+			id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+			product_id UUID NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+			image_url TEXT NOT NULL,
+			sort_order INTEGER NOT NULL DEFAULT 0,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)`,
+		// Product variants
+		`CREATE TABLE IF NOT EXISTS product_variants (
+			id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+			product_id UUID NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+			sku VARCHAR(100) NOT NULL,
+			barcode VARCHAR(100),
+			unit_id UUID NOT NULL REFERENCES units(id),
+			retail_price NUMERIC(12,4) NOT NULL DEFAULT 0,
+			is_active BOOLEAN NOT NULL DEFAULT TRUE,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			UNIQUE (product_id, sku)
+		)`,
+		// Product variant values
+		`CREATE TABLE IF NOT EXISTS product_variant_values (
+			id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+			product_variant_id UUID NOT NULL REFERENCES product_variants(id) ON DELETE CASCADE,
+			variant_value_id UUID NOT NULL REFERENCES variant_values(id),
+			UNIQUE (product_variant_id, variant_value_id)
+		)`,
+		// Product variant images
+		`CREATE TABLE IF NOT EXISTS product_variant_images (
+			id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+			product_variant_id UUID NOT NULL REFERENCES product_variants(id) ON DELETE CASCADE,
+			image_url TEXT NOT NULL,
+			sort_order INTEGER NOT NULL DEFAULT 0,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)`,
+		// Price tiers
+		`CREATE TABLE IF NOT EXISTS price_tiers (
+			id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+			product_id UUID REFERENCES products(id) ON DELETE CASCADE,
+			product_variant_id UUID REFERENCES product_variants(id) ON DELETE CASCADE,
+			min_quantity INTEGER NOT NULL,
+			price NUMERIC(12,4) NOT NULL,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			CONSTRAINT chk_price_tier_target CHECK (
+				(product_id IS NOT NULL AND product_variant_id IS NULL) OR
+				(product_id IS NULL AND product_variant_id IS NOT NULL)
+			)
+		)`,
+		// Stock ledger
+		`DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'stock_reason') THEN CREATE TYPE stock_reason AS ENUM ('purchase_delivery', 'sale', 'adjustment', 'transfer_in', 'transfer_out'); END IF; END$$`,
+		`CREATE TABLE IF NOT EXISTS stock_ledger (
+			id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+			tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+			product_variant_id UUID NOT NULL REFERENCES product_variants(id),
+			warehouse_id UUID NOT NULL REFERENCES warehouses(id),
+			quantity NUMERIC(12,4) NOT NULL,
+			unit_id UUID NOT NULL REFERENCES units(id),
+			reason stock_reason NOT NULL,
+			reference_type VARCHAR(50),
+			reference_id UUID,
+			notes TEXT,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)`,
 	}
 
 	for _, stmt := range statements {
@@ -232,7 +428,14 @@ var (
 	ReportingID       = uuid.MustParse("10000000-0000-0000-0000-000000000003")
 	ReportingSales    = uuid.MustParse("10000000-0000-0000-0000-000000000004")
 	PurchaseID        = uuid.MustParse("10000000-0000-0000-0000-000000000005")
-	PurchaseProduct   = uuid.MustParse("10000000-0000-0000-0000-000000000006")
+	PurchaseProduct     = uuid.MustParse("10000000-0000-0000-0000-000000000006")
+	MasterDataCategory  = uuid.MustParse("10000000-0000-0000-0000-000000000010")
+	MasterDataUnit      = uuid.MustParse("10000000-0000-0000-0000-000000000011")
+	MasterDataVariant   = uuid.MustParse("10000000-0000-0000-0000-000000000012")
+	MasterDataWarehouse = uuid.MustParse("10000000-0000-0000-0000-000000000013")
+	MasterDataSupplier  = uuid.MustParse("10000000-0000-0000-0000-000000000014")
+	PurchaseOrder       = uuid.MustParse("10000000-0000-0000-0000-000000000015")
+	PurchaseDelivery    = uuid.MustParse("10000000-0000-0000-0000-000000000016")
 )
 
 func seedFeatures(ctx context.Context, q *sqlc.Queries) error {
@@ -243,6 +446,13 @@ func seedFeatures(ctx context.Context, q *sqlc.Queries) error {
 		{ID: ReportingSales, ParentID: pgtype.UUID{Bytes: ReportingID, Valid: true}, Name: "Sales", Slug: "reporting.sales", Module: "reporting", Actions: []string{"read"}, SortOrder: 4},
 		{ID: PurchaseID, Name: "Purchase", Slug: "purchase", Module: "purchase", Actions: nil, SortOrder: 5},
 		{ID: PurchaseProduct, ParentID: pgtype.UUID{Bytes: PurchaseID, Valid: true}, Name: "Product", Slug: "purchase.product", Module: "purchase", Actions: []string{"read", "create", "edit", "delete"}, SortOrder: 6},
+		{ID: MasterDataCategory, ParentID: pgtype.UUID{Bytes: MasterDataID, Valid: true}, Name: "Category", Slug: "master-data.category", Module: "master-data", Actions: []string{"read", "create", "edit", "delete"}, SortOrder: 7},
+		{ID: MasterDataUnit, ParentID: pgtype.UUID{Bytes: MasterDataID, Valid: true}, Name: "Unit", Slug: "master-data.unit", Module: "master-data", Actions: []string{"read", "create", "edit", "delete"}, SortOrder: 8},
+		{ID: MasterDataVariant, ParentID: pgtype.UUID{Bytes: MasterDataID, Valid: true}, Name: "Variant", Slug: "master-data.variant", Module: "master-data", Actions: []string{"read", "create", "edit", "delete"}, SortOrder: 9},
+		{ID: MasterDataWarehouse, ParentID: pgtype.UUID{Bytes: MasterDataID, Valid: true}, Name: "Warehouse", Slug: "master-data.warehouse", Module: "master-data", Actions: []string{"read", "create", "edit", "delete"}, SortOrder: 10},
+		{ID: MasterDataSupplier, ParentID: pgtype.UUID{Bytes: MasterDataID, Valid: true}, Name: "Supplier", Slug: "master-data.supplier", Module: "master-data", Actions: []string{"read", "create", "edit", "delete"}, SortOrder: 11},
+		{ID: PurchaseOrder, ParentID: pgtype.UUID{Bytes: PurchaseID, Valid: true}, Name: "Order", Slug: "purchase.order", Module: "purchase", Actions: []string{"read", "create", "edit", "delete"}, SortOrder: 12},
+		{ID: PurchaseDelivery, ParentID: pgtype.UUID{Bytes: PurchaseID, Valid: true}, Name: "Delivery", Slug: "purchase.delivery", Module: "purchase", Actions: []string{"read", "create", "edit"}, SortOrder: 13},
 	}
 	for _, f := range features {
 		if _, err := q.UpsertFeature(ctx, f); err != nil {

@@ -4,12 +4,16 @@ function uniqueEmail(): string {
 	return `test-${Date.now()}-${Math.random().toString(36).slice(2, 8)}@example.com`;
 }
 
+function uniqueTenant(): string {
+	return `Store Biz ${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+}
+
 async function registerAdmin(page: Page): Promise<{ email: string; password: string }> {
 	const email = uniqueEmail();
 	const password = 'password123';
 
 	await page.goto('/register');
-	await page.getByLabel('Business Name').fill('Store Test Biz');
+	await page.getByLabel('Business Name').fill(uniqueTenant());
 	await page.getByLabel('First Name').fill('Admin');
 	await page.getByLabel('Last Name').fill('Manager');
 	await page.getByLabel('Email').fill(email);
@@ -53,10 +57,10 @@ test.describe('Store Management', () => {
 		await page.getByLabel('Phone (optional)').fill('555-0200');
 
 		// Submit
-		await page.getByRole('button', { name: 'Create' }).click();
+		await page.getByRole('button', { name: 'Create', exact: true }).click();
 
-		// Should show success toast
-		await expect(page.locator('[data-sonner-toast][data-type="success"]')).toBeVisible({
+		// Should show success message
+		await expect(page.getByText('Store created successfully')).toBeVisible({
 			timeout: 10_000
 		});
 
@@ -74,8 +78,8 @@ test.describe('Store Management', () => {
 		await page.getByRole('button', { name: 'Create Store' }).click();
 		await page.getByLabel('Store Name').fill('North Branch');
 		await page.getByLabel('Address (optional)').fill('300 North St');
-		await page.getByRole('button', { name: 'Create' }).click();
-		await expect(page.locator('[data-sonner-toast][data-type="success"]')).toBeVisible({
+		await page.getByRole('button', { name: 'Create', exact: true }).click();
+		await expect(page.getByText('Store created successfully')).toBeVisible({
 			timeout: 10_000
 		});
 		await expect(page.getByText('North Branch')).toBeVisible();
@@ -84,7 +88,7 @@ test.describe('Store Management', () => {
 		await page.getByRole('button', { name: 'Create Store' }).click();
 		await page.getByLabel('Store Name').fill('South Branch');
 		await page.getByLabel('Address (optional)').fill('400 South St');
-		await page.getByRole('button', { name: 'Create' }).click();
+		await page.getByRole('button', { name: 'Create', exact: true }).click();
 
 		// All three stores should be visible
 		await expect(page.getByText('Main Store')).toBeVisible({ timeout: 10_000 });
@@ -100,7 +104,7 @@ test.describe('Store Management', () => {
 		// Create a store to deactivate
 		await page.getByRole('button', { name: 'Create Store' }).click();
 		await page.getByLabel('Store Name').fill('Temp Store');
-		await page.getByRole('button', { name: 'Create' }).click();
+		await page.getByRole('button', { name: 'Create', exact: true }).click();
 		await expect(page.getByText('Temp Store')).toBeVisible({ timeout: 10_000 });
 
 		// Deactivate the new store
@@ -108,8 +112,8 @@ test.describe('Store Management', () => {
 		const tempRow = page.locator('tr', { hasText: 'Temp Store' });
 		await tempRow.getByRole('button', { name: 'Deactivate' }).click();
 
-		// Should show success toast
-		await expect(page.locator('[data-sonner-toast][data-type="success"]')).toBeVisible({
+		// Should show success message
+		await expect(page.getByText('Store deactivated')).toBeVisible({
 			timeout: 10_000
 		});
 
@@ -117,24 +121,13 @@ test.describe('Store Management', () => {
 		await expect(tempRow.getByText('Inactive')).toBeVisible({ timeout: 10_000 });
 	});
 
-	test('store selector shows stores for admin user', async ({ page }) => {
+	test('dashboard shows accessible stores info for admin user', async ({ page }) => {
 		await registerAdmin(page);
 
-		// Create a second store so the selector appears
-		await page.goto('/settings/stores');
-		await expect(page.getByText('Main Store')).toBeVisible({ timeout: 10_000 });
-		await page.getByRole('button', { name: 'Create Store' }).click();
-		await page.getByLabel('Store Name').fill('Second Store');
-		await page.getByRole('button', { name: 'Create' }).click();
-		await expect(page.getByText('Second Store')).toBeVisible({ timeout: 10_000 });
-
-		// Navigate to dashboard where store selector should appear
+		// Admin with all_stores_access should see Accessible Stores: All on dashboard
 		await page.goto('/dashboard');
-
-		// Admin with all_stores_access should see a store selector
-		// The selector should show "All Stores" option for admin
-		const selector = page.locator('button', { hasText: /All Stores|Main Store/ });
-		await expect(selector).toBeVisible({ timeout: 10_000 });
+		await expect(page.getByText('Accessible Stores')).toBeVisible({ timeout: 10_000 });
+		await expect(page.getByText('All')).toBeVisible();
 	});
 
 	test('cannot create store with duplicate name in same tenant', async ({ page }) => {
@@ -145,10 +138,10 @@ test.describe('Store Management', () => {
 		// Try to create a store with the same name
 		await page.getByRole('button', { name: 'Create Store' }).click();
 		await page.getByLabel('Store Name').fill('Main Store');
-		await page.getByRole('button', { name: 'Create' }).click();
+		await page.getByRole('button', { name: 'Create', exact: true }).click();
 
-		// Should show error
-		await expect(page.locator('[data-sonner-toast][data-type="error"]')).toBeVisible({
+		// Should show error message (inline Alert)
+		await expect(page.getByText(/already exists|conflict/i)).toBeVisible({
 			timeout: 10_000
 		});
 	});

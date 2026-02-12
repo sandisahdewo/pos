@@ -46,11 +46,13 @@
 			<!-- Mobile menu button + Sheet -->
 			{#if mounted}
 				<Sheet.Root bind:open={mobileOpen}>
-					<Sheet.Trigger asChild>
-						<Button variant="ghost" size="icon" class="lg:hidden">
-							<Menu class="h-5 w-5" />
-							<span class="sr-only">Toggle menu</span>
-						</Button>
+					<Sheet.Trigger>
+						{#snippet child({ props })}
+							<Button {...props} variant="ghost" size="icon" class="lg:hidden">
+								<Menu class="h-5 w-5" />
+								<span class="sr-only">Toggle menu</span>
+							</Button>
+						{/snippet}
 					</Sheet.Trigger>
 					<Sheet.Content side="left" class="w-64 p-0">
 						<Sheet.Header class="sr-only">

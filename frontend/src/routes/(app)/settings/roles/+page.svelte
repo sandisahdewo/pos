@@ -1,39 +1,32 @@
 <script lang="ts">
-	import { untrack } from 'svelte';
 	import { getClient, APIError } from '$lib/api/client.js';
 	import type { RoleResponse } from '$lib/api/types.js';
 	import * as Card from '$lib/components/ui/card/index.js';
 	import * as Table from '$lib/components/ui/table/index.js';
 	import SimpleDialog from '$lib/components/SimpleDialog.svelte';
+	import Alert from '$lib/components/Alert.svelte';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { Input } from '$lib/components/ui/input/index.js';
 	import { Label } from '$lib/components/ui/label/index.js';
 	import { Badge } from '$lib/components/ui/badge/index.js';
 	import { Plus } from '@lucide/svelte';
+	import { createDataLoader } from '$lib/utils/data-loader.svelte.js';
 
 	let roles = $state<RoleResponse[]>([]);
 	let loading = $state(true);
 	let dialogOpen = $state(false);
-	let error = $state<string | null>(null);
-	let success = $state<string | null>(null);
+	let error = $state('');
+	let success = $state('');
 
 	let formName = $state('');
 	let formDescription = $state('');
 	let formLoading = $state(false);
 
-	let initialized = $state(false);
-	$effect(() => {
-		if (!initialized) {
-			initialized = true;
-			untrack(() => {
-				loadRoles();
-			});
-		}
-	});
+	createDataLoader(() => loadRoles());
 
 	async function loadRoles() {
 		loading = true;
-		error = null;
+		error = '';
 		try {
 			const api = getClient();
 			roles = await api.get<RoleResponse[]>('/v1/roles');
@@ -60,7 +53,7 @@
 				description: formDescription || undefined
 			});
 			success = 'Role created';
-			error = null;
+			error = '';
 			dialogOpen = false;
 			await loadRoles();
 		} catch (err) {
@@ -84,17 +77,8 @@
 		</Button>
 	</div>
 
-	{#if error}
-		<div class="rounded-md border border-destructive/50 bg-destructive/10 p-3 text-sm text-destructive">
-			{error}
-		</div>
-	{/if}
-
-	{#if success}
-		<div class="rounded-md border border-green-500/50 bg-green-500/10 p-3 text-sm text-green-700 dark:text-green-400">
-			{success}
-		</div>
-	{/if}
+	<Alert type="error" bind:message={error} />
+	<Alert type="success" bind:message={success} autoDismiss={true} />
 
 	<Card.Root>
 		<Card.Content class="p-0">

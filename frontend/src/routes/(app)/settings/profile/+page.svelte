@@ -6,21 +6,12 @@
 	import { Input } from '$lib/components/ui/input/index.js';
 	import { Label } from '$lib/components/ui/label/index.js';
 	import { Separator } from '$lib/components/ui/separator/index.js';
-
-	console.log('[profile] Initial - auth.user:', auth.user);
-	console.log('[profile] Initial - authState:', authState);
+	import Alert from '$lib/components/Alert.svelte';
 
 	// Local state for form fields, derived from auth.user
 	let firstName = $derived(auth.user?.first_name ?? '');
 	let lastName = $derived(auth.user?.last_name ?? '');
 	let email = $derived(auth.user?.email ?? '');
-
-	// Track changes to auth.user
-	$effect(() => {
-		console.log('[profile] $effect triggered - auth.user changed to:', auth.user);
-		console.log('[profile] $effect triggered - authState.user:', authState.user);
-		console.log('[profile] $effect - derived firstName:', firstName);
-	});
 
 	let profileLoading = $state(false);
 	let profileError = $state('');
@@ -109,16 +100,8 @@
 		</Card.Header>
 		<Card.Content>
 			<form onsubmit={handleProfileUpdate} class="space-y-4">
-				{#if profileError}
-					<div class="rounded-md bg-destructive/10 p-3 text-sm text-destructive">
-						{profileError}
-					</div>
-				{/if}
-				{#if profileSuccess}
-					<div class="rounded-md bg-green-500/10 p-3 text-sm text-green-700 dark:text-green-400">
-						{profileSuccess}
-					</div>
-				{/if}
+				<Alert type="error" bind:message={profileError} />
+				<Alert type="success" bind:message={profileSuccess} autoDismiss={true} />
 				<div class="grid grid-cols-2 gap-4">
 					<div class="space-y-2">
 						<Label for="firstName">First Name</Label>
@@ -149,16 +132,8 @@
 		</Card.Header>
 		<Card.Content>
 			<form onsubmit={handlePasswordChange} class="space-y-4">
-				{#if passwordError}
-					<div class="rounded-md bg-destructive/10 p-3 text-sm text-destructive">
-						{passwordError}
-					</div>
-				{/if}
-				{#if passwordSuccess}
-					<div class="rounded-md bg-green-500/10 p-3 text-sm text-green-700 dark:text-green-400">
-						{passwordSuccess}
-					</div>
-				{/if}
+				<Alert type="error" bind:message={passwordError} />
+				<Alert type="success" bind:message={passwordSuccess} autoDismiss={true} />
 				<div class="space-y-2">
 					<Label for="currentPassword">Current Password</Label>
 					<Input

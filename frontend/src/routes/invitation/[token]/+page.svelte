@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
-	import { getClient, APIError } from '$lib/api/client.js';
+	import { APIError } from '$lib/api/client.js';
 	import { auth } from '$lib/stores/auth.svelte.js';
 	import * as Card from '$lib/components/ui/card/index.js';
 	import { Button } from '$lib/components/ui/button/index.js';
@@ -18,6 +18,9 @@
 
 	const token = $derived(page.params.token);
 
+	// Ensure auth client is initialized (this page is outside (auth)/(app) route groups)
+	auth.initialize();
+
 	async function handleSubmit(e: Event) {
 		e.preventDefault();
 		error = '';
@@ -27,20 +30,19 @@
 		}
 		loading = true;
 		try {
-			const api = getClient();
+			// Use auth's client which is guaranteed to be initialized
+			const api = auth.getApiClient();
 			const res = await api.postPublic<LoginResponse>('/v1/auth/accept-invitation', {
 				token,
 				password,
 				first_name: firstName,
 				last_name: lastName
 			});
-			// The accept-invitation endpoint returns tokens like login/register
+			// Set up auth session with the returned tokens
 			if (res.tokens) {
-				localStorage.setItem('pos_tokens', JSON.stringify(res.tokens));
+				await auth.loginWithTokens(res.tokens);
 			}
-			// Re-initialize auth to pick up new tokens
-			await auth.initialize();
-			goto('/dashboard');
+			await goto('/dashboard');
 		} catch (err) {
 			if (err instanceof APIError) {
 				error = err.message;

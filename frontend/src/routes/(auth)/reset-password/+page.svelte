@@ -2,6 +2,7 @@
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
 	import { getClient, APIError } from '$lib/api/client.js';
+	import Alert from '$lib/components/Alert.svelte';
 	import * as Card from '$lib/components/ui/card/index.js';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { Input } from '$lib/components/ui/input/index.js';
@@ -11,7 +12,7 @@
 	let confirmPassword = $state('');
 	let loading = $state(false);
 	let error = $state('');
-	let success = $state(false);
+	let successMessage = $state('');
 
 	const token = $derived(page.url.searchParams.get('token') ?? '');
 
@@ -30,7 +31,7 @@
 		try {
 			const api = getClient();
 			await api.postPublic('/v1/auth/reset-password', { token, password });
-			success = true;
+			successMessage = 'Password reset successfully! Redirecting to login...';
 			setTimeout(() => goto('/login'), 2000);
 		} catch (err) {
 			if (err instanceof APIError) {
@@ -60,16 +61,9 @@
 			</p>
 		{:else}
 			<form onsubmit={handleSubmit} class="space-y-4">
-				{#if error}
-					<div class="rounded-md bg-destructive/10 p-3 text-sm text-destructive">
-						{error}
-					</div>
-				{/if}
-				{#if success}
-					<div class="rounded-md bg-green-500/10 p-3 text-sm text-green-700 dark:text-green-400">
-						Password reset successfully! Redirecting to login...
-					</div>
-				{/if}
+				<Alert type="error" bind:message={error} />
+				<Alert type="success" bind:message={successMessage} />
+
 				<div class="space-y-2">
 					<Label for="password">New Password</Label>
 					<Input

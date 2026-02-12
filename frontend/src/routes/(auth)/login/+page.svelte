@@ -2,10 +2,12 @@
 	import { goto } from '$app/navigation';
 	import { auth } from '$lib/stores/auth.svelte.js';
 	import { APIError } from '$lib/api/client.js';
+	import Alert from '$lib/components/Alert.svelte';
 	import * as Card from '$lib/components/ui/card/index.js';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { Input } from '$lib/components/ui/input/index.js';
 	import { Label } from '$lib/components/ui/label/index.js';
+
 	let email = $state('');
 	let password = $state('');
 	let loading = $state(false);
@@ -63,9 +65,8 @@
 					autocomplete="current-password"
 				/>
 			</div>
-			{#if error}
-				<p class="text-sm text-destructive">{error}</p>
-			{/if}
+
+			<Alert type="error" bind:message={error} />
 
 			<Button type="submit" class="w-full" disabled={loading}>
 				{loading ? 'Signing in...' : 'Sign In'}

@@ -9,6 +9,14 @@ function uniqueTenant(): string {
 	return `Biz-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
 }
 
+function decodeQuotedPrintable(str: string): string {
+	return str
+		.replace(/=\r?\n/g, '') // Remove soft line breaks
+		.replace(/=([0-9A-Fa-f]{2})/g, (_, hex: string) =>
+			String.fromCharCode(parseInt(hex, 16))
+		);
+}
+
 test.describe('Authentication', () => {
 	test.describe('Registration', () => {
 		test('should register a new account with first store', async ({ page }) => {
@@ -162,7 +170,7 @@ test.describe('Authentication', () => {
 			for (let i = 0; i < 10; i++) {
 				await page.waitForTimeout(1000);
 				const mailResponse = await request.get(
-					`http://localhost:8025/api/v2/search?kind=to&query=${encodeURIComponent(email)}`
+					`http://mailhog:8025/api/v2/search?kind=to&query=${encodeURIComponent(email)}`
 				);
 				expect(mailResponse.ok()).toBe(true);
 				mailData = await mailResponse.json();
@@ -170,11 +178,14 @@ test.describe('Authentication', () => {
 			}
 			expect(mailData.total).toBeGreaterThan(0);
 
-			// Extract token from the email body
-			const emailBody = mailData.items[0].Content.Body;
+			// Extract token from the email body (decode quoted-printable encoding)
+			const emailBody = decodeQuotedPrintable(mailData.items[0].Content.Body);
 			const tokenMatch = emailBody.match(/[?&]token=([a-fA-F0-9]+)/);
 			expect(tokenMatch).not.toBeNull();
 			const token = tokenMatch![1];
+
+			// Clear auth session so the (auth) layout doesn't redirect to /dashboard
+			await page.evaluate(() => localStorage.clear());
 
 			// Visit verification URL
 			await page.goto(`/verify-email?token=${token}`);

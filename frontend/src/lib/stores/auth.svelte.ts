@@ -325,6 +325,25 @@ class AuthStore {
 	}
 
 	/**
+	 * Get the API client (ensures it is initialized)
+	 */
+	getApiClient(): APIClient {
+		return this.ensureClient();
+	}
+
+	/**
+	 * Set up auth session from pre-obtained tokens (e.g., invitation acceptance)
+	 */
+	async loginWithTokens(tokens: AuthTokens): Promise<void> {
+		this.ensureClient();
+		this.setTokens(tokens);
+		await this.loadUser();
+		this.scheduleTokenRefresh();
+		this.broadcastAuthChange('login');
+		authState.initialized = true;
+	}
+
+	/**
 	 * Cleanup when no longer needed
 	 */
 	destroy(): void {

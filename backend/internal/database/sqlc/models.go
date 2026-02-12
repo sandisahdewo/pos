@@ -5,9 +5,167 @@
 package sqlc
 
 import (
+	"database/sql/driver"
+	"fmt"
+
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 )
+
+type ProductStatus string
+
+const (
+	ProductStatusActive   ProductStatus = "active"
+	ProductStatusInactive ProductStatus = "inactive"
+)
+
+func (e *ProductStatus) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = ProductStatus(s)
+	case string:
+		*e = ProductStatus(s)
+	default:
+		return fmt.Errorf("unsupported scan type for ProductStatus: %T", src)
+	}
+	return nil
+}
+
+type NullProductStatus struct {
+	ProductStatus ProductStatus `json:"product_status"`
+	Valid         bool          `json:"valid"` // Valid is true if ProductStatus is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullProductStatus) Scan(value interface{}) error {
+	if value == nil {
+		ns.ProductStatus, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.ProductStatus.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullProductStatus) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.ProductStatus), nil
+}
+
+type SellMethod string
+
+const (
+	SellMethodFifo SellMethod = "fifo"
+	SellMethodLifo SellMethod = "lifo"
+)
+
+func (e *SellMethod) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = SellMethod(s)
+	case string:
+		*e = SellMethod(s)
+	default:
+		return fmt.Errorf("unsupported scan type for SellMethod: %T", src)
+	}
+	return nil
+}
+
+type NullSellMethod struct {
+	SellMethod SellMethod `json:"sell_method"`
+	Valid      bool       `json:"valid"` // Valid is true if SellMethod is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullSellMethod) Scan(value interface{}) error {
+	if value == nil {
+		ns.SellMethod, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.SellMethod.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullSellMethod) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.SellMethod), nil
+}
+
+type StockReason string
+
+const (
+	StockReasonPurchaseDelivery StockReason = "purchase_delivery"
+	StockReasonSale             StockReason = "sale"
+	StockReasonAdjustment       StockReason = "adjustment"
+	StockReasonTransferIn       StockReason = "transfer_in"
+	StockReasonTransferOut      StockReason = "transfer_out"
+)
+
+func (e *StockReason) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = StockReason(s)
+	case string:
+		*e = StockReason(s)
+	default:
+		return fmt.Errorf("unsupported scan type for StockReason: %T", src)
+	}
+	return nil
+}
+
+type NullStockReason struct {
+	StockReason StockReason `json:"stock_reason"`
+	Valid       bool        `json:"valid"` // Valid is true if StockReason is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullStockReason) Scan(value interface{}) error {
+	if value == nil {
+		ns.StockReason, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.StockReason.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullStockReason) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.StockReason), nil
+}
+
+type Category struct {
+	ID          uuid.UUID          `json:"id"`
+	TenantID    uuid.UUID          `json:"tenant_id"`
+	Name        string             `json:"name"`
+	Description pgtype.Text        `json:"description"`
+	PricingMode pgtype.Text        `json:"pricing_mode"`
+	MarkupValue pgtype.Numeric     `json:"markup_value"`
+	IsActive    bool               `json:"is_active"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+}
+
+type CategoryUnit struct {
+	ID         uuid.UUID          `json:"id"`
+	CategoryID uuid.UUID          `json:"category_id"`
+	UnitID     uuid.UUID          `json:"unit_id"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+}
+
+type CategoryVariant struct {
+	ID         uuid.UUID          `json:"id"`
+	CategoryID uuid.UUID          `json:"category_id"`
+	VariantID  uuid.UUID          `json:"variant_id"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+}
 
 type EmailVerification struct {
 	ID        uuid.UUID          `json:"id"`
@@ -55,6 +213,73 @@ type PasswordReset struct {
 	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
 }
 
+type PriceTier struct {
+	ID               uuid.UUID          `json:"id"`
+	ProductID        pgtype.UUID        `json:"product_id"`
+	ProductVariantID pgtype.UUID        `json:"product_variant_id"`
+	MinQuantity      int32              `json:"min_quantity"`
+	Price            pgtype.Numeric     `json:"price"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+}
+
+type Product struct {
+	ID           uuid.UUID          `json:"id"`
+	TenantID     uuid.UUID          `json:"tenant_id"`
+	CategoryID   uuid.UUID          `json:"category_id"`
+	Name         string             `json:"name"`
+	Description  pgtype.Text        `json:"description"`
+	HasVariants  bool               `json:"has_variants"`
+	SellMethod   SellMethod         `json:"sell_method"`
+	Status       ProductStatus      `json:"status"`
+	TaxRate      pgtype.Numeric     `json:"tax_rate"`
+	DiscountRate pgtype.Numeric     `json:"discount_rate"`
+	MinQuantity  pgtype.Numeric     `json:"min_quantity"`
+	MaxQuantity  pgtype.Numeric     `json:"max_quantity"`
+	PricingMode  pgtype.Text        `json:"pricing_mode"`
+	MarkupValue  pgtype.Numeric     `json:"markup_value"`
+	FixedPrice   pgtype.Numeric     `json:"fixed_price"`
+	IsActive     bool               `json:"is_active"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
+}
+
+type ProductImage struct {
+	ID        uuid.UUID          `json:"id"`
+	ProductID uuid.UUID          `json:"product_id"`
+	ImageUrl  string             `json:"image_url"`
+	SortOrder int32              `json:"sort_order"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
+}
+
+type ProductVariant struct {
+	ID          uuid.UUID          `json:"id"`
+	ProductID   uuid.UUID          `json:"product_id"`
+	Sku         string             `json:"sku"`
+	Barcode     pgtype.Text        `json:"barcode"`
+	UnitID      uuid.UUID          `json:"unit_id"`
+	RetailPrice pgtype.Numeric     `json:"retail_price"`
+	IsActive    bool               `json:"is_active"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+}
+
+type ProductVariantImage struct {
+	ID               uuid.UUID          `json:"id"`
+	ProductVariantID uuid.UUID          `json:"product_variant_id"`
+	ImageUrl         string             `json:"image_url"`
+	SortOrder        int32              `json:"sort_order"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+}
+
+type ProductVariantValue struct {
+	ID               uuid.UUID `json:"id"`
+	ProductVariantID uuid.UUID `json:"product_variant_id"`
+	VariantValueID   uuid.UUID `json:"variant_value_id"`
+}
+
 type RefreshToken struct {
 	ID        uuid.UUID          `json:"id"`
 	UserID    uuid.UUID          `json:"user_id"`
@@ -84,6 +309,20 @@ type RolePermission struct {
 	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
 }
 
+type StockLedger struct {
+	ID               uuid.UUID          `json:"id"`
+	TenantID         uuid.UUID          `json:"tenant_id"`
+	ProductVariantID uuid.UUID          `json:"product_variant_id"`
+	WarehouseID      uuid.UUID          `json:"warehouse_id"`
+	Quantity         pgtype.Numeric     `json:"quantity"`
+	UnitID           uuid.UUID          `json:"unit_id"`
+	Reason           StockReason        `json:"reason"`
+	ReferenceType    pgtype.Text        `json:"reference_type"`
+	ReferenceID      pgtype.UUID        `json:"reference_id"`
+	Notes            pgtype.Text        `json:"notes"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+}
+
 type Store struct {
 	ID        uuid.UUID          `json:"id"`
 	TenantID  uuid.UUID          `json:"tenant_id"`
@@ -95,6 +334,19 @@ type Store struct {
 	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
 }
 
+type Supplier struct {
+	ID          uuid.UUID          `json:"id"`
+	TenantID    uuid.UUID          `json:"tenant_id"`
+	Name        string             `json:"name"`
+	ContactName pgtype.Text        `json:"contact_name"`
+	Email       pgtype.Text        `json:"email"`
+	Phone       pgtype.Text        `json:"phone"`
+	Address     pgtype.Text        `json:"address"`
+	IsActive    bool               `json:"is_active"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+}
+
 type Tenant struct {
 	ID        uuid.UUID          `json:"id"`
 	Name      string             `json:"name"`
@@ -102,6 +354,26 @@ type Tenant struct {
 	IsActive  bool               `json:"is_active"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
+}
+
+type Unit struct {
+	ID          uuid.UUID          `json:"id"`
+	TenantID    uuid.UUID          `json:"tenant_id"`
+	Name        string             `json:"name"`
+	Description pgtype.Text        `json:"description"`
+	IsActive    bool               `json:"is_active"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+}
+
+type UnitConversion struct {
+	ID               uuid.UUID          `json:"id"`
+	TenantID         uuid.UUID          `json:"tenant_id"`
+	FromUnitID       uuid.UUID          `json:"from_unit_id"`
+	ToUnitID         uuid.UUID          `json:"to_unit_id"`
+	ConversionFactor pgtype.Numeric     `json:"conversion_factor"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
 }
 
 type User struct {
@@ -133,4 +405,35 @@ type UserStore struct {
 	AssignedBy pgtype.UUID        `json:"assigned_by"`
 	CreatedAt  pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt  pgtype.Timestamptz `json:"updated_at"`
+}
+
+type Variant struct {
+	ID          uuid.UUID          `json:"id"`
+	TenantID    uuid.UUID          `json:"tenant_id"`
+	Name        string             `json:"name"`
+	Description pgtype.Text        `json:"description"`
+	IsActive    bool               `json:"is_active"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+}
+
+type VariantValue struct {
+	ID        uuid.UUID          `json:"id"`
+	VariantID uuid.UUID          `json:"variant_id"`
+	Value     string             `json:"value"`
+	SortOrder int32              `json:"sort_order"`
+	IsActive  bool               `json:"is_active"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
+}
+
+type Warehouse struct {
+	ID        uuid.UUID          `json:"id"`
+	TenantID  uuid.UUID          `json:"tenant_id"`
+	Name      string             `json:"name"`
+	Address   pgtype.Text        `json:"address"`
+	Phone     pgtype.Text        `json:"phone"`
+	IsActive  bool               `json:"is_active"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
 }

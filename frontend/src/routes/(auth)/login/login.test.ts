@@ -4,7 +4,6 @@ import LoginPage from './+page.svelte';
 
 const mockLogin = vi.fn();
 const mockGoto = vi.fn();
-const mockToastError = vi.fn();
 
 vi.mock('$app/navigation', () => ({
 	goto: (...args: unknown[]) => mockGoto(...args)
@@ -26,13 +25,6 @@ vi.mock('$lib/api/client.js', () => ({
 			this.status = status;
 			this.details = details;
 		}
-	}
-}));
-
-vi.mock('svelte-sonner', () => ({
-	toast: {
-		error: (...args: unknown[]) => mockToastError(...args),
-		success: vi.fn()
 	}
 }));
 
@@ -117,7 +109,7 @@ describe('Login Page', () => {
 		});
 	});
 
-	it('shows API error message in toast on failed login', async () => {
+	it('shows API error message in alert on failed login', async () => {
 		const APIErrorClass = (await import('$lib/api/client.js')).APIError;
 		mockLogin.mockRejectedValue(new APIErrorClass(401, 'Invalid email or password'));
 		render(LoginPage);
@@ -131,11 +123,11 @@ describe('Login Page', () => {
 		await fireEvent.click(submitButton);
 
 		await vi.waitFor(() => {
-			expect(mockToastError).toHaveBeenCalledWith('Invalid email or password');
+			expect(screen.getByText('Invalid email or password')).toBeDefined();
 		});
 	});
 
-	it('shows generic error toast for non-API errors', async () => {
+	it('shows generic error message for non-API errors', async () => {
 		mockLogin.mockRejectedValue(new Error('Network failure'));
 		render(LoginPage);
 
@@ -148,7 +140,7 @@ describe('Login Page', () => {
 		await fireEvent.click(submitButton);
 
 		await vi.waitFor(() => {
-			expect(mockToastError).toHaveBeenCalledWith('An unexpected error occurred');
+			expect(screen.getByText('An unexpected error occurred')).toBeDefined();
 		});
 	});
 
@@ -166,7 +158,7 @@ describe('Login Page', () => {
 		await fireEvent.click(submitButton);
 
 		await vi.waitFor(() => {
-			expect(mockToastError).toHaveBeenCalled();
+			expect(screen.getByText('Invalid credentials')).toBeDefined();
 		});
 		expect(mockGoto).not.toHaveBeenCalled();
 	});

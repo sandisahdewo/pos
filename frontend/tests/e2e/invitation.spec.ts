@@ -4,12 +4,24 @@ function uniqueEmail(): string {
 	return `test-${Date.now()}-${Math.random().toString(36).slice(2, 8)}@example.com`;
 }
 
+function uniqueTenant(): string {
+	return `Invite Biz ${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+}
+
+function decodeQuotedPrintable(str: string): string {
+	return str
+		.replace(/=\r?\n/g, '') // Remove soft line breaks
+		.replace(/=([0-9A-Fa-f]{2})/g, (_, hex: string) =>
+			String.fromCharCode(parseInt(hex, 16))
+		);
+}
+
 async function registerAdmin(page: Page): Promise<{ email: string; password: string }> {
 	const email = uniqueEmail();
 	const password = 'password123';
 
 	await page.goto('/register');
-	await page.getByLabel('Business Name').fill('Invite Test Biz');
+	await page.getByLabel('Business Name').fill(uniqueTenant());
 	await page.getByLabel('First Name').fill('Admin');
 	await page.getByLabel('Last Name').fill('Boss');
 	await page.getByLabel('Email').fill(email);
@@ -21,6 +33,15 @@ async function registerAdmin(page: Page): Promise<{ email: string; password: str
 	return { email, password };
 }
 
+async function sendInvitation(page: Page, inviteeEmail: string) {
+	await page.getByRole('button', { name: 'Invite User' }).click();
+	await page.getByLabel('Email').fill(inviteeEmail);
+	// Role selector is a native <select> element
+	await page.getByLabel('Role').selectOption({ label: 'Administrator' });
+	await page.getByRole('button', { name: 'Send Invitation' }).click();
+	await expect(page.getByText('Invitation sent')).toBeVisible({ timeout: 10_000 });
+}
+
 test.describe('Invitations', () => {
 	test('admin can invite a user', async ({ page }) => {
 		await registerAdmin(page);
@@ -30,24 +51,8 @@ test.describe('Invitations', () => {
 		await page.goto('/settings/users');
 		await expect(page.getByText('Users').first()).toBeVisible({ timeout: 10_000 });
 
-		// Click "Invite User"
-		await page.getByRole('button', { name: 'Invite User' }).click();
-
-		// Fill invite dialog
-		await expect(page.getByText('Send an invitation to join your team')).toBeVisible();
-		await page.getByLabel('Email').fill(inviteeEmail);
-
-		// Select a role (click the role selector trigger, then pick a role)
-		await page.locator('button:has-text("Select a role")').click();
-		await page.getByText('Administrator').click();
-
-		// Submit the invitation
-		await page.getByRole('button', { name: 'Send Invitation' }).click();
-
-		// Should close dialog and show success
-		await expect(page.locator('[data-sonner-toast][data-type="success"]')).toBeVisible({
-			timeout: 10_000
-		});
+		// Send the invitation
+		await sendInvitation(page, inviteeEmail);
 	});
 
 	test('invited user appears in pending invitations tab', async ({ page }) => {
@@ -56,21 +61,14 @@ test.describe('Invitations', () => {
 
 		// Send invitation
 		await page.goto('/settings/users');
-		await page.getByRole('button', { name: 'Invite User' }).click();
-		await page.getByLabel('Email').fill(inviteeEmail);
-		await page.locator('button:has-text("Select a role")').click();
-		await page.getByText('Administrator').click();
-		await page.getByRole('button', { name: 'Send Invitation' }).click();
-		await expect(page.locator('[data-sonner-toast][data-type="success"]')).toBeVisible({
-			timeout: 10_000
-		});
+		await sendInvitation(page, inviteeEmail);
 
-		// Switch to Pending Invitations tab
-		await page.getByRole('tab', { name: /Pending Invitations/ }).click();
+		// Switch to Pending Invitations tab (plain HTML button)
+		await page.getByRole('button', { name: /Pending Invitations/ }).click();
 
 		// Invitee email should appear
 		await expect(page.getByText(inviteeEmail)).toBeVisible({ timeout: 10_000 });
-		await expect(page.getByText('pending')).toBeVisible();
+		await expect(page.getByText('pending', { exact: true })).toBeVisible();
 	});
 
 	test('admin can cancel a pending invitation', async ({ page }) => {
@@ -79,17 +77,10 @@ test.describe('Invitations', () => {
 
 		// Send invitation
 		await page.goto('/settings/users');
-		await page.getByRole('button', { name: 'Invite User' }).click();
-		await page.getByLabel('Email').fill(inviteeEmail);
-		await page.locator('button:has-text("Select a role")').click();
-		await page.getByText('Administrator').click();
-		await page.getByRole('button', { name: 'Send Invitation' }).click();
-		await expect(page.locator('[data-sonner-toast][data-type="success"]')).toBeVisible({
-			timeout: 10_000
-		});
+		await sendInvitation(page, inviteeEmail);
 
 		// Switch to Pending Invitations tab
-		await page.getByRole('tab', { name: /Pending Invitations/ }).click();
+		await page.getByRole('button', { name: /Pending Invitations/ }).click();
 		await expect(page.getByText(inviteeEmail)).toBeVisible({ timeout: 10_000 });
 
 		// Cancel the invitation
@@ -99,36 +90,33 @@ test.describe('Invitations', () => {
 		await expect(page.getByText(inviteeEmail)).not.toBeVisible({ timeout: 10_000 });
 	});
 
-	test('invited user can accept invitation via MailHog token', async ({ page, request, browser }) => {
+	test('invited user can accept invitation via MailHog token', async ({
+		page,
+		request,
+		browser
+	}) => {
 		// Register admin
 		await registerAdmin(page);
 		const inviteeEmail = uniqueEmail();
 
 		// Send invitation
 		await page.goto('/settings/users');
-		await page.getByRole('button', { name: 'Invite User' }).click();
-		await page.getByLabel('Email').fill(inviteeEmail);
-		await page.locator('button:has-text("Select a role")').click();
-		await page.getByText('Administrator').click();
-		await page.getByRole('button', { name: 'Send Invitation' }).click();
-		await expect(page.locator('[data-sonner-toast][data-type="success"]')).toBeVisible({
-			timeout: 10_000
-		});
+		await sendInvitation(page, inviteeEmail);
 
 		// Fetch invitation token from MailHog
 		// Wait a moment for the background job to send the email
 		await page.waitForTimeout(2000);
 
 		const mailResponse = await request.get(
-			`http://localhost:8025/api/v2/search?kind=to&query=${encodeURIComponent(inviteeEmail)}`
+			`http://mailhog:8025/api/v2/search?kind=to&query=${encodeURIComponent(inviteeEmail)}`
 		);
 		expect(mailResponse.ok()).toBe(true);
 
 		const mailData = await mailResponse.json();
 		expect(mailData.total).toBeGreaterThan(0);
 
-		// Extract token from email body
-		const emailBody = mailData.items[0].Content.Body;
+		// Extract token from email body (decode quoted-printable encoding)
+		const emailBody = decodeQuotedPrintable(mailData.items[0].Content.Body);
 		const tokenMatch = emailBody.match(/invitation\/([a-fA-F0-9]+)/);
 		expect(tokenMatch).not.toBeNull();
 		const token = tokenMatch![1];
@@ -163,8 +151,8 @@ test.describe('Invitations', () => {
 		await page.getByLabel('Confirm Password').fill('password123');
 		await page.getByRole('button', { name: 'Accept & Create Account' }).click();
 
-		// Should show error
-		await expect(page.locator('[data-sonner-toast][data-type="error"]')).toBeVisible({
+		// Should show inline error message
+		await expect(page.getByText(/error|failed|invalid/i)).toBeVisible({
 			timeout: 10_000
 		});
 	});

@@ -1,42 +1,34 @@
 <script lang="ts">
-	import { untrack } from 'svelte';
 	import { getClient, APIError } from '$lib/api/client.js';
 	import type { StoreResponse } from '$lib/api/types.js';
 	import * as Card from '$lib/components/ui/card/index.js';
 	import * as Table from '$lib/components/ui/table/index.js';
 	import SimpleDialog from '$lib/components/SimpleDialog.svelte';
+	import Alert from '$lib/components/Alert.svelte';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { Input } from '$lib/components/ui/input/index.js';
 	import { Label } from '$lib/components/ui/label/index.js';
 	import { Badge } from '$lib/components/ui/badge/index.js';
 	import { Plus } from '@lucide/svelte';
+	import { createDataLoader } from '$lib/utils/data-loader.svelte.js';
 
 	let stores = $state<StoreResponse[]>([]);
 	let loading = $state(true);
 	let dialogOpen = $state(false);
-	let error = $state<string | null>(null);
-	let success = $state<string | null>(null);
+	let error = $state('');
+	let success = $state('');
 
 	let formName = $state('');
 	let formAddress = $state('');
 	let formPhone = $state('');
 	let formLoading = $state(false);
 
-	// Use $effect for data loading - onMount doesn't fire reliably
-	// when the component is conditionally rendered by the parent layout
-	let initialized = $state(false);
-	$effect(() => {
-		if (!initialized) {
-			initialized = true;
-			untrack(() => {
-				loadStores();
-			});
-		}
-	});
+	// Use createDataLoader for one-time initialization
+	createDataLoader(() => loadStores());
 
 	async function loadStores() {
 		loading = true;
-		error = null;
+		error = '';
 		try {
 			const api = getClient();
 			stores = await api.get<StoreResponse[]>('/v1/stores');
@@ -65,7 +57,7 @@
 				phone: formPhone || undefined
 			});
 			success = 'Store created successfully';
-			error = null;
+			error = '';
 			dialogOpen = false;
 			await loadStores();
 		} catch (err) {
@@ -80,7 +72,7 @@
 			const api = getClient();
 			await api.del(`/v1/stores/${store.id}`);
 			success = 'Store deactivated';
-			error = null;
+			error = '';
 			await loadStores();
 		} catch (err) {
 			error = err instanceof APIError ? err.message : 'Failed to deactivate store';
@@ -101,17 +93,8 @@
 		</Button>
 	</div>
 
-	{#if error}
-		<div class="rounded-md border border-destructive/50 bg-destructive/10 p-3 text-sm text-destructive">
-			{error}
-		</div>
-	{/if}
-
-	{#if success}
-		<div class="rounded-md border border-green-500/50 bg-green-500/10 p-3 text-sm text-green-700 dark:text-green-400">
-			{success}
-		</div>
-	{/if}
+	<Alert type="error" bind:message={error} />
+	<Alert type="success" bind:message={success} autoDismiss={true} />
 
 	<Card.Root>
 		<Card.Content class="p-0">

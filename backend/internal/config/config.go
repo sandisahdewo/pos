@@ -14,6 +14,16 @@ type Config struct {
 	JWT    JWTConfig
 	SMTP   SMTPConfig
 	Argon2 Argon2Config
+	S3     S3Config
+}
+
+type S3Config struct {
+	Endpoint  string
+	AccessKey string
+	SecretKey string
+	Bucket    string
+	Region    string
+	UseSSL    bool
 }
 
 type AppConfig struct {
@@ -118,6 +128,14 @@ func Load() (*Config, error) {
 			SaltLength:  getEnvUint32("ARGON2_SALT_LENGTH", 16),
 			KeyLength:   getEnvUint32("ARGON2_KEY_LENGTH", 32),
 		},
+		S3: S3Config{
+			Endpoint:  getEnv("S3_ENDPOINT", "localhost:9000"),
+			AccessKey: getEnv("S3_ACCESS_KEY", "minioadmin"),
+			SecretKey: getEnv("S3_SECRET_KEY", "minioadmin"),
+			Bucket:    getEnv("S3_BUCKET", "pos-uploads"),
+			Region:    getEnv("S3_REGION", "us-east-1"),
+			UseSSL:    getEnvBool("S3_USE_SSL", false),
+		},
 	}, nil
 }
 
@@ -130,6 +148,18 @@ func getEnv(key, fallback string) string {
 		return val
 	}
 	return fallback
+}
+
+func getEnvBool(key string, fallback bool) bool {
+	val := os.Getenv(key)
+	if val == "" {
+		return fallback
+	}
+	b, err := strconv.ParseBool(val)
+	if err != nil {
+		return fallback
+	}
+	return b
 }
 
 func getEnvUint32(key string, fallback uint32) uint32 {

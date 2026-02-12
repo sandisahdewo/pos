@@ -1,7 +1,8 @@
 <script lang="ts">
 	import { page } from '$app/state';
 	import { browser } from '$app/environment';
-	import { getClient, APIError } from '$lib/api/client.js';
+	import { APIError } from '$lib/api/client.js';
+	import { auth } from '$lib/stores/auth.svelte.js';
 	import * as Card from '$lib/components/ui/card/index.js';
 
 	let status = $state<'loading' | 'success' | 'error'>('loading');
@@ -20,7 +21,9 @@
 
 	async function verifyEmail() {
 		try {
-			const api = getClient();
+			// Use auth.getApiClient() to ensure client is initialized
+			// (child $effect runs before parent layout's $effect in Svelte 5)
+			const api = auth.getApiClient();
 			await api.postPublic('/v1/auth/verify-email', { token });
 			status = 'success';
 		} catch (err) {

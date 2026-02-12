@@ -1,4 +1,4 @@
-.PHONY: up down build logs restart migrate-up migrate-down migrate-create test-backend test-frontend test-e2e test sqlc lint seed
+.PHONY: up down build logs restart migrate-up migrate-down migrate-create migrate-drop migrate-fresh test-backend test-frontend test-e2e test sqlc lint seed
 
 # =============================================================================
 # Docker
@@ -24,16 +24,10 @@ restart:
 # =============================================================================
 
 migrate-up:
-	docker compose exec backend migrate \
-		-path /app/migrations \
-		-database "postgres://$${DB_USER}:$${DB_PASSWORD}@$${DB_HOST}:$${DB_PORT}/$${DB_NAME}?sslmode=$${DB_SSLMODE}" \
-		up
+	docker compose exec backend sh -c 'migrate -path /app/migrations -database "postgres://$$DB_USER:$$DB_PASSWORD@$$DB_HOST:$$DB_PORT/$$DB_NAME?sslmode=$$DB_SSLMODE" up'
 
 migrate-down:
-	docker compose exec backend migrate \
-		-path /app/migrations \
-		-database "postgres://$${DB_USER}:$${DB_PASSWORD}@$${DB_HOST}:$${DB_PORT}/$${DB_NAME}?sslmode=$${DB_SSLMODE}" \
-		down 1
+	docker compose exec backend sh -c 'migrate -path /app/migrations -database "postgres://$$DB_USER:$$DB_PASSWORD@$$DB_HOST:$$DB_PORT/$$DB_NAME?sslmode=$$DB_SSLMODE" down 1'
 
 migrate-create:
 	@read -p "Migration name: " name; \
@@ -41,12 +35,17 @@ migrate-create:
 		-path /app/migrations \
 		create -ext sql -dir /app/migrations -seq $$name
 
+migrate-drop:
+	docker compose exec backend sh -c 'migrate -path /app/migrations -database "postgres://$$DB_USER:$$DB_PASSWORD@$$DB_HOST:$$DB_PORT/$$DB_NAME?sslmode=$$DB_SSLMODE" drop -f'
+
+migrate-fresh: migrate-drop migrate-up seed
+
 # =============================================================================
 # Code Generation
 # =============================================================================
 
 sqlc:
-	docker compose exec backend sqlc generate
+	cd backend && sqlc generate
 
 # =============================================================================
 # Seeding
@@ -60,7 +59,7 @@ seed:
 # =============================================================================
 
 test-backend:
-	docker compose exec backend go test ./... -v -count=1
+	docker compose exec -e TEST_DATABASE_URL="postgres://pos_user:pos_password@postgres:5432/pos_db?sslmode=disable" backend go test ./... -v -count=1
 
 test-frontend:
 	docker compose exec frontend npx vitest run

@@ -10,7 +10,13 @@
 		User,
 		Store,
 		Shield,
-		Users
+		Users,
+		Boxes,
+		Ruler,
+		Palette,
+		ArrowLeftRight,
+		Warehouse,
+		Truck
 	} from '@lucide/svelte';
 	import { cn } from '$lib/utils.js';
 
@@ -52,7 +58,13 @@
 		{ label: 'Profile', href: '/settings/profile', icon: User },
 		{ label: 'Stores', href: '/settings/stores', icon: Store },
 		{ label: 'Roles', href: '/settings/roles', icon: Shield },
-		{ label: 'Users', href: '/settings/users', icon: Users }
+		{ label: 'Users', href: '/settings/users', icon: Users },
+		{ label: 'Categories', href: '/settings/categories', icon: Boxes, feature: 'master-data.category', action: 'read' },
+		{ label: 'Units', href: '/settings/units', icon: Ruler, feature: 'master-data.unit', action: 'read' },
+		{ label: 'Variants', href: '/settings/variants', icon: Palette, feature: 'master-data.variant', action: 'read' },
+		{ label: 'Conversions', href: '/settings/unit-conversions', icon: ArrowLeftRight, feature: 'master-data.unit', action: 'read' },
+		{ label: 'Warehouses', href: '/settings/warehouses', icon: Warehouse, feature: 'master-data.warehouse', action: 'read' },
+		{ label: 'Suppliers', href: '/settings/suppliers', icon: Truck, feature: 'master-data.supplier', action: 'read' }
 	];
 
 	function isActive(href: string): boolean {
@@ -96,18 +108,20 @@
 	<div class="flex flex-col gap-1">
 		<span class="px-3 py-1 text-xs font-medium uppercase text-muted-foreground">Settings</span>
 		{#each settingsItems as item}
-			<a
-				href={item.href}
-				class={cn(
-					'flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors',
-					isActive(item.href)
-						? 'bg-primary text-primary-foreground'
-						: 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
-				)}
-			>
-				<item.icon class="h-4 w-4" />
-				{item.label}
-			</a>
+			{#if canSeeItem(item)}
+				<a
+					href={item.href}
+					class={cn(
+						'flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors',
+						isActive(item.href)
+							? 'bg-primary text-primary-foreground'
+							: 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
+					)}
+				>
+					<item.icon class="h-4 w-4" />
+					{item.label}
+				</a>
+			{/if}
 		{/each}
 	</div>
 

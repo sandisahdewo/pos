@@ -1,0 +1,271 @@
+<script lang="ts">
+  import { Plus, Search, Pencil, Trash2, Tags } from 'lucide-svelte';
+  import {
+    Badge,
+    Button,
+    Card,
+    ConfirmDialog,
+    Input,
+    Modal,
+    PageHeader,
+    Select,
+    Table,
+    Textarea
+  } from '$lib/components/ui';
+  import {
+    categories,
+    colorOptions,
+    type Category,
+    type CategoryColor
+  } from '$lib/stores/categories.svelte';
+  import { products } from '$lib/stores/products.svelte';
+  import { taxRates } from '$lib/stores/taxRates.svelte';
+  import { toast } from '$lib/stores/toast.svelte';
+
+  let search = $state('');
+  let formOpen = $state(false);
+  let editingId = $state<string | null>(null);
+  let confirmOpen = $state(false);
+  let pendingDelete = $state<Category | null>(null);
+
+  type FormState = {
+    name: string;
+    slug: string;
+    description: string;
+    color: CategoryColor;
+    taxRateId: string;
+  };
+
+  const blankForm: FormState = {
+    name: '',
+    slug: '',
+    description: '',
+    color: 'brand',
+    taxRateId: ''
+  };
+
+  const taxRateOptions = $derived(
+    taxRates.items.map((t) => ({ value: t.id, label: `${t.name} (${t.rate}%)` }))
+  );
+
+  let form = $state<FormState>({ ...blankForm });
+  let errors = $state<Partial<Record<keyof FormState, string>>>({});
+
+  const filtered = $derived.by(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return categories.items;
+    return categories.items.filter(
+      (c) =>
+        c.name.toLowerCase().includes(q) ||
+        c.slug.toLowerCase().includes(q) ||
+        c.description.toLowerCase().includes(q)
+    );
+  });
+
+  const columns = [
+    { key: 'name' as const, label: 'Kategori' },
+    { key: 'slug' as const, label: 'Slug' },
+    { key: 'taxRateId' as const, label: 'Pajak', width: '110px' },
+    { key: 'description' as const, label: 'Deskripsi' },
+    { key: 'id' as const, label: 'Produk', align: 'right' as const, width: '100px' },
+    { key: 'color' as const, label: '', align: 'right' as const, width: '120px' }
+  ];
+
+  function taxLabel(id: string): string {
+    const t = taxRates.getById(id);
+    return t ? `${t.name}` : '—';
+  }
+
+  function openCreate() {
+    editingId = null;
+    form = { ...blankForm, taxRateId: taxRates.defaultId() };
+    errors = {};
+    formOpen = true;
+  }
+
+  function openEdit(cat: Category) {
+    editingId = cat.id;
+    form = {
+      name: cat.name,
+      slug: cat.slug,
+      description: cat.description,
+      color: cat.color,
+      taxRateId: cat.taxRateId
+    };
+    errors = {};
+    formOpen = true;
+  }
+
+  function validate(): boolean {
+    const next: typeof errors = {};
+    if (!form.name.trim()) next.name = 'Nama wajib diisi.';
+    if (form.slug && !/^[a-z0-9-]+$/.test(form.slug))
+      next.slug = 'Gunakan huruf kecil, angka, dan tanda hubung saja.';
+    errors = next;
+    return Object.keys(next).length === 0;
+  }
+
+  function save() {
+    if (!validate()) return;
+    if (editingId) {
+      categories.update(editingId, { ...form });
+      toast.success('Kategori diperbarui', form.name);
+    } else {
+      categories.add({ ...form });
+      toast.success('Kategori ditambahkan', form.name);
+    }
+    formOpen = false;
+  }
+
+  function askDelete(cat: Category) {
+    pendingDelete = cat;
+    confirmOpen = true;
+  }
+
+  function doDelete() {
+    if (!pendingDelete) return;
+    const name = pendingDelete.name;
+    categories.remove(pendingDelete.id);
+    pendingDelete = null;
+    toast.success('Kategori dihapus', name);
+  }
+</script>
+
+<svelte:head>
+  <title>Kategori · POS Admin</title>
+</svelte:head>
+
+<PageHeader
+  title="Kategori"
+  description="Kelompokkan produk ke dalam kategori yang dipakai di laporan dan terminal Kasir."
+  breadcrumb={[{ label: 'Data Master' }, { label: 'Kategori' }]}
+>
+  {#snippet actions()}
+    <Button onclick={openCreate}>
+      <Plus class="h-4 w-4" />
+      Tambah kategori
+    </Button>
+  {/snippet}
+</PageHeader>
+
+<Card padded={false}>
+  <div class="flex flex-wrap items-center gap-2 border-b border-slate-100 px-4 py-3">
+    <div class="min-w-[220px] flex-1">
+      <Input placeholder="Cari kategori…" bind:value={search}>
+        {#snippet leading()}<Search class="h-4 w-4" />{/snippet}
+      </Input>
+    </div>
+  </div>
+
+  <Table {columns} rows={filtered} rowKey={(c) => c.id}>
+    {#snippet cell({ row, column })}
+      {#if column.key === 'name'}
+        <div class="flex items-center gap-3">
+          <div
+            class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-slate-50 text-slate-500"
+          >
+            <Tags class="h-4 w-4" />
+          </div>
+          <div class="font-medium text-slate-900">{row.name}</div>
+        </div>
+      {:else if column.key === 'slug'}
+        <code class="rounded bg-slate-50 px-1.5 py-0.5 font-mono text-xs text-slate-600">
+          {row.slug}
+        </code>
+      {:else if column.key === 'taxRateId'}
+        <Badge variant="outline" size="sm">{taxLabel(row.taxRateId)}</Badge>
+      {:else if column.key === 'description'}
+        <span class="line-clamp-2 max-w-md text-sm text-slate-600">{row.description}</span>
+      {:else if column.key === 'id'}
+        <span class="font-medium text-slate-900">{products.countByCategory(row.id)}</span>
+      {:else if column.key === 'color'}
+        <div class="flex justify-end gap-1">
+          <Badge variant={row.color} dot>{row.color}</Badge>
+          <button
+            type="button"
+            class="ml-1 rounded-md p-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-700"
+            aria-label="Ubah"
+            onclick={() => openEdit(row)}
+          >
+            <Pencil class="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            class="rounded-md p-1.5 text-slate-500 hover:bg-rose-50 hover:text-rose-600"
+            aria-label="Hapus"
+            onclick={() => askDelete(row)}
+          >
+            <Trash2 class="h-4 w-4" />
+          </button>
+        </div>
+      {/if}
+    {/snippet}
+
+    {#snippet empty()}
+      <div class="flex flex-col items-center gap-1.5 py-6">
+        <p class="text-sm font-medium text-slate-600">Tidak ada kategori yang cocok</p>
+        <p class="text-xs text-slate-400">Coba kata kunci lain atau bersihkan pencarian.</p>
+      </div>
+    {/snippet}
+  </Table>
+</Card>
+
+<Modal
+  bind:open={formOpen}
+  size="lg"
+  title={editingId ? 'Ubah kategori' : 'Tambah kategori'}
+  description={editingId
+    ? 'Perbarui detail kategori di bawah.'
+    : 'Kategori membantu mengorganisir produk di terminal Kasir dan laporan.'}
+>
+  <div class="grid gap-4 sm:grid-cols-2">
+    <Input
+      label="Nama"
+      placeholder="mis. Minuman"
+      bind:value={form.name}
+      error={errors.name}
+    />
+    <Input
+      label="Slug"
+      placeholder="auto-generated"
+      hint="Kosongkan untuk dihasilkan dari nama."
+      bind:value={form.slug}
+      error={errors.slug}
+    />
+    <Select
+      label="Warna"
+      bind:value={form.color}
+      options={colorOptions}
+    />
+    <Select
+      label="Tarif pajak default"
+      bind:value={form.taxRateId}
+      options={taxRateOptions}
+      hint="Produk dalam kategori ini akan memakai tarif ini kecuali di-override."
+    />
+    <Textarea
+      class="sm:col-span-2"
+      label="Deskripsi"
+      placeholder="Produk seperti apa yang masuk kategori ini?"
+      bind:value={form.description}
+    />
+  </div>
+
+  {#snippet footer()}
+    <Button variant="outline" onclick={() => (formOpen = false)}>Batal</Button>
+    <Button onclick={save}>{editingId ? 'Simpan perubahan' : 'Tambah kategori'}</Button>
+  {/snippet}
+</Modal>
+
+<ConfirmDialog
+  bind:open={confirmOpen}
+  title="Hapus kategori?"
+  message={pendingDelete
+    ? `"${pendingDelete.name}" akan dihapus. ${products.countByCategory(
+        pendingDelete.id
+      )} produk saat ini menggunakan kategori ini dan akan menjadi tanpa kategori.`
+    : ''}
+  confirmLabel="Hapus"
+  onConfirm={doDelete}
+  onCancel={() => (pendingDelete = null)}
+/>

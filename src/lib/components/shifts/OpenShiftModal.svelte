@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { KeyRound, UserCog, Clock, Eye, EyeOff } from 'lucide-svelte';
-  import { Alert, Badge, Button, Input, Modal, Select, Textarea } from '$lib/components/ui';
+  import { KeyRound, Clock, Eye, EyeOff, CalendarCheck } from 'lucide-svelte';
+  import { Alert, Button, Input, Modal, Select, Textarea } from '$lib/components/ui';
   import CashCountInput from './CashCountInput.svelte';
   import { employees, roleLabels } from '$lib/stores/employees.svelte';
   import {
@@ -8,6 +8,7 @@
     plannedDurationHours
   } from '$lib/stores/shiftTemplates.svelte';
   import { shifts, type CashCount } from '$lib/stores/shifts.svelte';
+  import { shiftSchedule, toISODate } from '$lib/stores/shiftSchedule.svelte';
   import { toast } from '$lib/stores/toast.svelte';
 
   type Props = {
@@ -46,12 +47,24 @@
 
   const selectedTpl = $derived(templateId ? shiftTemplates.getById(templateId) : undefined);
 
+  const todayAssignments = $derived(shiftSchedule.forDate(toISODate(new Date())));
+  let prefilledFromSchedule = $state(false);
+
   $effect(() => {
     if (open) {
-      employeeId = '';
+      // Try to prefill from today's schedule — use the first non-completed assignment.
+      const candidate = todayAssignments.find((a) => a.status === 'planned');
+      if (candidate) {
+        employeeId = candidate.employeeId;
+        templateId = candidate.templateId;
+        prefilledFromSchedule = true;
+      } else {
+        employeeId = '';
+        templateId = '';
+        prefilledFromSchedule = false;
+      }
       pin = '';
       showPin = false;
-      templateId = '';
       openingCash = { total: 0 };
       notes = '';
       error = null;
@@ -84,6 +97,17 @@
       error = res.reason;
       return;
     }
+    // If we prefilled from a planned assignment that matches employee + template,
+    // mark it completed and link to the new shift session.
+    const planned = todayAssignments.find(
+      (a) =>
+        a.status === 'planned' &&
+        a.employeeId === employeeId &&
+        a.templateId === (templateId || '')
+    );
+    if (planned) {
+      shiftSchedule.markCompleted(planned.id, res.shift.id);
+    }
     const empName = employees.getById(employeeId)?.name ?? 'Kasir';
     toast.success(`Shift dibuka — ${empName}`, `Kas awal: Rp ${openingCash.total.toLocaleString('id-ID')}`);
     open = false;
@@ -100,6 +124,15 @@
   <div class="space-y-4">
     {#if error}
       <Alert variant="error" title="Tidak bisa membuka shift">{error}</Alert>
+    {/if}
+
+    {#if prefilledFromSchedule}
+      <Alert variant="info" title="Sesuai jadwal hari ini">
+        <span class="flex items-center gap-1.5">
+          <CalendarCheck class="h-4 w-4" />
+          Pegawai dan template dipilih otomatis berdasarkan jadwal. Anda tetap bisa mengubah jika ada pergantian.
+        </span>
+      </Alert>
     {/if}
 
     <div class="grid gap-3 sm:grid-cols-2">

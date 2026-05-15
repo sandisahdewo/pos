@@ -1,6 +1,7 @@
 <script lang="ts">
   import {
     CalendarClock,
+    CalendarDays,
     Clock,
     Plus,
     Search,
@@ -33,6 +34,7 @@
   } from '$lib/stores/shifts.svelte';
   import { employees, roleLabels } from '$lib/stores/employees.svelte';
   import { shiftTemplates } from '$lib/stores/shiftTemplates.svelte';
+  import { shiftSchedule, toISODate } from '$lib/stores/shiftSchedule.svelte';
   import OpenShiftModal from '$lib/components/shifts/OpenShiftModal.svelte';
   import { formatRupiah } from '$lib/utils/currency';
 
@@ -77,6 +79,9 @@
   });
 
   const active = $derived(shifts.active());
+  const todayPlanned = $derived(
+    shiftSchedule.forDate(toISODate(new Date())).filter((a) => a.status === 'planned')
+  );
   const closedToday = $derived.by(() => {
     const today = new Date().toISOString().slice(0, 10);
     return shifts.items.filter(
@@ -142,6 +147,10 @@
   breadcrumb={[{ label: 'Operasional' }, { label: 'Shift Kasir' }]}
 >
   {#snippet actions()}
+    <Button variant="outline" href="/shifts/schedule">
+      <CalendarDays class="h-4 w-4" />
+      Jadwal
+    </Button>
     {#if active}
       <Button href="/shifts/{active.id}" variant="outline">
         <ExternalLink class="h-4 w-4" />
@@ -155,6 +164,34 @@
     {/if}
   {/snippet}
 </PageHeader>
+
+{#if !active && todayPlanned.length > 0}
+  <div class="mb-4 rounded-card border-2 border-sky-200 bg-sky-50 px-4 py-3">
+    <div class="flex flex-wrap items-center gap-3">
+      <div class="flex h-10 w-10 items-center justify-center rounded-full bg-sky-100 text-sky-700">
+        <CalendarDays class="h-5 w-5" />
+      </div>
+      <div class="flex-1 min-w-0">
+        <div class="font-semibold text-slate-900">
+          Jadwal hari ini ({todayPlanned.length} shift terencana)
+        </div>
+        <div class="mt-1 flex flex-wrap gap-1.5">
+          {#each todayPlanned as a (a.id)}
+            {@const tpl = shiftTemplates.getById(a.templateId)}
+            <span
+              class="inline-flex items-center gap-1 rounded-full bg-white px-2 py-0.5 text-xs text-slate-700 ring-1 ring-sky-200"
+            >
+              <span class="font-medium">{tpl?.name ?? '—'}</span>
+              <span class="text-slate-400">·</span>
+              <span>{empName(a.employeeId)}</span>
+            </span>
+          {/each}
+        </div>
+      </div>
+      <Button size="sm" variant="outline" href="/shifts/schedule">Lihat kalender</Button>
+    </div>
+  </div>
+{/if}
 
 {#if active}
   {@const summary = salesSummary(active)}

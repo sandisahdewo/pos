@@ -1349,6 +1349,69 @@ A single open shift at a time, drawer is whichever cashier is logged in. Multi-c
 
 Cash in/out lives **inside** the shift session as `entries[]`, not as a global cash ledger. Reason: every cash entry happens within a shift context (someone authorized it on their watch), and a global "kas keluar" history can be derived later by flattening `shifts[].entries[]`. Keeps the data model tight; no orphan rows.
 
+### Shift schedule (jadwal shift)
+
+Owner/admin plans which employee works which template on which day — for one week, one month, or one year — without manually creating each day.
+
+```ts
+// src/lib/stores/shiftSchedule.svelte.ts
+type AssignmentStatus = 'planned' | 'completed' | 'absent' | 'replaced';
+type ShiftAssignment = {
+  id: string;
+  date: string;              // YYYY-MM-DD
+  templateId: string;
+  employeeId: string;
+  notes: string;
+  status: AssignmentStatus;
+  actualShiftId?: string;    // populated when the planned assignment turns into a real ShiftSession
+};
+```
+
+Store API:
+- `add`, `update`, `remove`, `getById`
+- `forDate(iso)` / `forRange(start, end)` / `forEmployee(id, opts)`
+- `bulkGenerate({ startDate, endDate, pattern, skipExisting?, notes? })` — `pattern` is `Record<dayOfWeek 0..6, WeekdayPattern[]>` where each slot is `{ templateId, employeeId }`. Walks the date range, emits assignments per slot for matching day-of-week, dedupes (date + template + employee) when `skipExisting`. Returns `{ created, skipped, invalid }`.
+- `markCompleted(assignmentId, shiftSessionId)` — flips `status` → `completed` and links to the real session.
+
+### `/shifts/schedule` — monthly calendar
+
+- 6-row × 7-column grid, week starts Senin (Indonesian convention).
+- Each cell shows up to 3 assignment chips (employee initials + template name), color-coded by template (5-color palette cycling by template index). Overflow shows `+N`.
+- Click empty cell → `AssignmentModal` (add single).
+- Click chip → `AssignmentModal` (edit/delete).
+- Month nav (chevrons + "Hari ini" button), legend showing template colors, total assignments count for the visible month.
+- Generate Massal CTA opens `BulkGenerateModal`.
+
+### `BulkGenerateModal`
+
+- Date range with quick buttons: **+1 minggu / +1 bulan / +1 tahun** (jump endDate relative to startDate).
+- Per-day-of-week section (Senin → Minggu order). Each day has 0+ slots; admin clicks "Tambah slot" to append `(template Select + employee Select)` rows.
+- "Tiru ke semua hari" button on a day's header — copies that day's slot list to every other day. Useful for uniform schedules ("kasir yang sama setiap hari").
+- "Lewati jadwal yang sudah ada" checkbox (default on) — bulkGenerate dedupes via `skipExisting`.
+- Submit toasts e.g., "12 jadwal dibuat · 3 dilewati (sudah ada)".
+
+### `AssignmentModal`
+
+- Template Select + Employee Select + notes Textarea.
+- Delete button visible when editing.
+- When the assignment was already `completed` (linked to a real shift), an info Alert warns that changes here don't affect the running shift.
+
+### POS prefill from today's schedule
+
+`OpenShiftModal` consults `shiftSchedule.forDate(today)` when it opens. If any `planned` assignment is found, it prefills `employeeId` and `templateId` from the first one and shows an info Alert "Sesuai jadwal hari ini". Cashier still types the PIN to verify. On successful `shifts.open()`, the prefilled assignment is auto-marked `completed` via `markCompleted`. Cashier can override the prefill freely (handles last-minute swaps).
+
+### `/shifts` schedule preview banner
+
+When there's no active shift but today has planned assignments, a sky-blue banner lists today's planned shifts (template · employee) at the top of `/shifts`, with a "Lihat kalender" button. Decays to nothing once a shift opens (the green active-shift banner takes precedence).
+
+### Decisions
+
+**Day-of-week pattern (not interval).** Bulk-generate keys the pattern by Sen/Sel/Rab/… instead of "every N days" or rrule-style recurrence. Most warmindo schedules cycle weekly with different staffing on weekends — `Record<0..6, slots[]>` covers this with zero ceremony.
+
+**Schedule prefills, doesn't lock.** OpenShiftModal prefills but allows override. Hard-locking to scheduled employees would block legitimate last-minute swaps; soft prefill captures the 90% common case while staying flexible.
+
+**Calendar starts Senin.** Indonesian week convention. Day headers ordered `[1, 2, 3, 4, 5, 6, 0]` to map Senin → Minggu.
+
 ---
 
 That's the master product. If you're picking this up cold, read this doc, then open `src/lib/stores/products.svelte.ts` and `src/lib/components/products/ProductForm.svelte` — those two files plus this doc are 90% of the surface area.

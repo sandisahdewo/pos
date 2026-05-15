@@ -19,6 +19,7 @@ export type CartSession = {
   lines: CartLine[];
   paymentMethod: PaymentMethod;
   paymentAmount: number;
+  dismissedPromoIds: string[];
   createdAt: string;
   updatedAt: string;
 };
@@ -35,6 +36,7 @@ function blank(label: string): CartSession {
     lines: [],
     paymentMethod: 'cash',
     paymentAmount: 0,
+    dismissedPromoIds: [],
     createdAt: nowIso(),
     updatedAt: nowIso()
   };

@@ -33,9 +33,22 @@ export type OrderLine = {
   extras: OrderLineExtra[];     // picked extras with snapshotted prices
   taxRatePct: number;           // snapshot of tax % at sale time
   lineSubtotal: number;         // = quantity × (unitPrice + sum extras)
-  lineTax: number;              // = lineSubtotal × taxRatePct / 100
-  lineTotal: number;            // = lineSubtotal + lineTax
+  linePromoDiscount?: number;   // discount applied to this line (line + order share); omitted means 0
+  lineSubtotalNet?: number;     // = lineSubtotal - linePromoDiscount; omitted means lineSubtotal
+  lineTax: number;              // = lineSubtotalNet × taxRatePct / 100
+  lineTotal: number;            // = lineSubtotalNet + lineTax
   batchAllocations: BatchAllocation[];  // populated by applyOrderToStock at charge time
+};
+
+export type OrderPromoApplication = {
+  promoId: string;
+  promoCode: string;
+  promoName: string;
+  kind: 'discount' | 'combo' | 'bogo' | 'member-tier';
+  level: 'line' | 'order';
+  affectedLineIds: string[];
+  discountAmount: number;
+  description: string;
 };
 
 export type Order = {
@@ -47,9 +60,12 @@ export type Order = {
   shiftId?: string;             // attribution when shifts feature is on
   paymentMethod: PaymentMethod; // method used at charge time (first payment)
   lines: OrderLine[];
-  subtotal: number;             // sum of line subtotals (pre-tax)
-  taxTotal: number;             // sum of line tax
-  total: number;                // subtotal + taxTotal
+  appliedPromos?: OrderPromoApplication[];  // snapshot of promo applications at sale time; omitted means none
+  promoDiscount?: number;       // total discount across all promos; omitted means 0
+  subtotal: number;             // sum of line subtotals (gross, pre-promo, pre-tax)
+  netSubtotal?: number;         // subtotal - promoDiscount; omitted means subtotal
+  taxTotal: number;             // sum of line tax (computed on net)
+  total: number;                // netSubtotal + taxTotal
   paidAmount: number;           // cumulative payments received; total when fully paid
   payments: OrderPayment[];     // chronological list of partial payments (incl. initial)
   status: OrderStatus;          // 'credit' when paidAmount < total, 'paid' when full, 'cancelled' otherwise

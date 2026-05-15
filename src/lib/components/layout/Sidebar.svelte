@@ -48,7 +48,8 @@
       items: [
         { label: 'Beranda', href: '/', icon: Home },
         { label: 'Kasir', href: '/pos', icon: ScanLine, badge: 'Baru' },
-        { label: 'Pesanan', href: '/orders', icon: Receipt }
+        { label: 'Pesanan', href: '/orders', icon: Receipt },
+        { label: 'Diskon & Promo', href: '/promotions', icon: BadgePercent }
       ]
     },
     {

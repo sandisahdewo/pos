@@ -1412,6 +1412,147 @@ When there's no active shift but today has planned assignments, a sky-blue banne
 
 **Calendar starts Senin.** Indonesian week convention. Day headers ordered `[1, 2, 3, 4, 5, 6, 0]` to map Senin → Minggu.
 
+## Diskon & Promo (built 2026-05-15)
+
+Promotion engine covering four kinds, auto-applied at POS with predictable stacking (max 1 line-level promo per line + max 1 order-level promo on top).
+
+### `Promotion`
+
+```ts
+// src/lib/stores/promotions.svelte.ts
+type PromoKind = 'discount' | 'combo' | 'bogo' | 'member-tier';
+type PromoLevel = 'line' | 'order';
+type DiscountUnit = 'percent' | 'fixed';
+
+type ComboItem = { productId: string; variantId?: string; quantity: number };
+
+type Promotion = {
+  id: string;
+  code: string;          // PRM-NNN
+  name: string;
+  kind: PromoKind;
+  level: PromoLevel;
+
+  // discount fields
+  discountUnit?: 'percent' | 'fixed';
+  discountValue?: number;
+
+  // combo fields
+  comboItems?: ComboItem[];
+  comboPrice?: number;
+
+  // bogo fields
+  buyQuantity?: number;
+  getQuantity?: number;
+  bogoProductId?: string;       // optional limit to a single product
+
+  // member-tier fields
+  memberPricelistId?: string;   // customer must be on this pricelist
+  memberPercentOff?: number;
+
+  // Scope (applies mainly to discount + bogo)
+  productIds?: string[];
+  categoryIds?: string[];
+  minimumPurchase?: number;     // order-level minimum
+
+  // Activation window
+  startDate?: string;
+  endDate?: string;
+  daysOfWeek?: number[];        // 0..6 (Sun..Sat)
+  hourStart?: string;
+  hourEnd?: string;             // wraps past midnight
+
+  // Tracking
+  status: 'active' | 'scheduled' | 'expired' | 'archived';
+  usageCount: number;
+  usageLimit?: number;
+
+  description: string;
+  notes: string;
+};
+```
+
+Helpers:
+- `isWithinPromoWindow(p, at)` — checks date / days-of-week / hour windows
+- `isPromoUsable(p, at)` — status === 'active' AND within window AND not over limit
+- `promotions.usableAt(at)` — list of currently-usable promos
+- `promotions.incrementUsage(id)` — bumps counter after a sale
+
+### Promo resolver
+
+```ts
+// src/lib/utils/promoResolver.ts
+type CartLineForPromo = { id, productId, variantId?, unitFactor, quantity, baseQuantity, unitPrice, subtotal };
+type AppliedPromo = { promoId, promoCode, promoName, kind, level, affectedLineIds, discountAmount, description };
+
+resolvePromos({ lines, customer, at, dismissedPromoIds }): AppliedPromo[];
+distributePromosAcrossLines(lines, applied): Map<lineId, { lineDiscount, orderDiscountShare }>;
+```
+
+Algorithm:
+1. **Combos consume across lines.** For each combo promo, count how many bundles can be claimed against `remaining[productId|variantId]` map. Bundle size = sum(item.quantity). Consume from `remaining`, push `AppliedPromo` with `discount = bundles × (originalPrice − comboPrice)`.
+2. **BOGO per (product, variant)** on remaining quantity. `bundles = floor(remainingQty / (buyQuantity + getQuantity))`, `discount = bundles × getQuantity × unitPrice`.
+3. **Line-level discount (% / Rp)** — pick the single best (max discount) per line, filtered by scope (`productIds` / `categoryIds`). Discount applies to the remaining (post-combo/bogo) subtotal share.
+4. **Order-level promo** — among all `level === 'order'` candidates (incl. `member-tier` which requires `customer.pricelistId === memberPricelistId`), pick the one yielding max discount on `netSubtotal = subtotal − lineDiscountTotal`.
+
+`distributePromosAcrossLines` then maps total promo discount back to per-line: line-level apportioned by subtotal share across affected lines; order-level apportioned across ALL lines by post-line-discount net subtotal.
+
+### POS cart integration
+
+```ts
+// In /pos
+const linesForPromo = $derived(...);   // shape from cart
+const appliedPromos = $derived(resolvePromos({ lines, customer, at: new Date(), dismissedPromoIds }));
+const promoDiscount = $derived(sum(applied.discountAmount));
+const promoDistribution = $derived(distributePromosAcrossLines(...));
+
+// Per-line net:
+lineDiscountFor(l) = distribution[l.id].lineDiscount + distribution[l.id].orderDiscountShare
+lineNetSubtotalFor(l) = max(0, lineSubtotal − lineDiscountFor(l))
+lineTaxNetFor(l) = lineNetSubtotalFor(l) × taxRate / 100
+cartTax = sum(lineTaxNetFor)              // tax recomputed on net (PPN on harga setelah diskon)
+cartNetSubtotal = cartSubtotal − promoDiscount
+cartTotal = cartNetSubtotal + cartTax
+```
+
+Cart panel renders an emerald "Promo aktif" stripe between Subtotal and Pajak, showing each applied promo with name + `−Rp X` + dismiss `×` button. Dismissed promos appear below in muted with "Pulihkan" to re-add. Saved on `CartSession.dismissedPromoIds: string[]` per tab.
+
+### Order snapshot
+
+```ts
+type OrderLine = { ..., linePromoDiscount?, lineSubtotalNet?, ... };
+type Order = { ..., appliedPromos?: OrderPromoApplication[], promoDiscount?, netSubtotal?, ... };
+```
+
+All new fields are optional so seed data remains valid. POS `charge()`:
+1. Re-maps each cart-line ID → fresh order-line ID
+2. Translates `affectedLineIds` in applied promos to order-line IDs
+3. Computes `linePromoDiscount`, `lineSubtotalNet`, `lineTax` (on net) per line
+4. Persists `appliedPromos`, `promoDiscount`, `netSubtotal` on the Order
+5. Calls `promotions.incrementUsage(promoId)` once per applied promo
+
+`/orders/[id]` receipt panel renders the applied promos as a green inset between subtotal and tax, plus a "Hemat Rp X" line under total.
+
+### Routes & sidebar
+
+- `/promotions` — list with stat cards (aktif now, total, berakhir 7 hari, total dipakai), filters by kind/status, table with kind icon + level badge + value summary + period + usage / limit. "Tambah promo" CTA.
+- `/promotions/[id]` — dynamic route; `id === 'new'` means create. Conditional sections per kind (discount → unit + value; combo → items list + price; bogo → buy/get/optional product; member-tier → pricelist + percent). Common scope/period/limit cards in right sidebar.
+- Sidebar: "Diskon & Promo" entry at the top group (next to Pesanan), icon `BadgePercent`.
+
+### Decisions
+
+**Auto-apply with dismiss.** Resolver runs on every cart change; cashier doesn't have to remember to apply. Dismiss button per promo gives explicit opt-out for edge cases (e.g., customer waives a combo to get bigger BOGO discount on other items). Dismissed list is per-cart-tab.
+
+**Stacking: best-line + best-order.** Each line gets at most one line-level promo (combo > bogo > discount priority via consumption order). One order-level promo on top. Predictable, common, and prevents negative-total bugs.
+
+**Tax recomputed on net.** PPN in Indonesia is charged on harga jual, so discount must come pre-tax. Each line's tax is recomputed using its net (post-discount) subtotal, ensuring `cartTotal` = `(subtotal − discount) + tax_on_net`.
+
+**Combo consumes across lines.** A combo of (Mi + Es Teh) where customer has 3 Mi and 2 Es Teh yields 2 bundles. Remaining 1 Mi can still receive other line-level promos (e.g., BOGO if applicable). Combo isn't "all-or-nothing".
+
+**Per-line tax handled via redistribution.** Order-level discount distributes proportionally across all lines by their post-line-discount net subtotal, then each line's tax recomputes. This is more complex than a flat `taxTotal -= discount × rate` but matches how Indonesian receipts must show line-level tax.
+
+**Optional fields on Order/OrderLine.** New promo fields are all optional so existing seed data (17 orders) and existing helpers (`/utang`, `/piutang`, `/orders`) work without modification. `order.total` is already post-promo, so credit math and aging continue to be correct.
+
 ---
 
 That's the master product. If you're picking this up cold, read this doc, then open `src/lib/stores/products.svelte.ts` and `src/lib/components/products/ProductForm.svelte` — those two files plus this doc are 90% of the surface area.

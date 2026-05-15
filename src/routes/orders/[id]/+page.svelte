@@ -202,6 +202,16 @@
             <dt class="text-slate-500">Subtotal</dt>
             <dd class="text-slate-700">{formatRupiah(order.subtotal)}</dd>
           </div>
+          {#if order.appliedPromos && order.appliedPromos.length > 0}
+            <div class="space-y-1 rounded-md border border-emerald-100 bg-emerald-50/50 px-2 py-1.5">
+              {#each order.appliedPromos as p (p.promoId)}
+                <div class="flex items-center justify-between text-xs">
+                  <span class="truncate text-emerald-800" title={p.description}>{p.promoName}</span>
+                  <span class="font-semibold text-emerald-700">−{formatRupiah(p.discountAmount)}</span>
+                </div>
+              {/each}
+            </div>
+          {/if}
           {#if order.taxTotal > 0}
             <div class="flex justify-between">
               <dt class="text-slate-500">Pajak</dt>
@@ -212,6 +222,11 @@
             <dt class="text-base font-semibold text-slate-900">Total</dt>
             <dd class="text-xl font-bold text-slate-900">{formatRupiah(order.total)}</dd>
           </div>
+          {#if order.promoDiscount && order.promoDiscount > 0}
+            <div class="-mt-1 text-right text-xs text-emerald-600">
+              Hemat {formatRupiah(order.promoDiscount)}
+            </div>
+          {/if}
         </dl>
       </Card>
     </div>

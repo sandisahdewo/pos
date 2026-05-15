@@ -13,7 +13,9 @@
     Clock,
     LogOut,
     Wallet,
-    AlertCircle
+    AlertCircle,
+    BadgePercent,
+    RotateCcw
   } from 'lucide-svelte';
   import {
     Badge,
@@ -59,6 +61,13 @@
   import { locations } from '$lib/stores/locations.svelte';
   import { settings } from '$lib/stores/settings.svelte';
   import { cartSessions, type CartLine } from '$lib/stores/cartSessions.svelte';
+  import { promotions, type Promotion } from '$lib/stores/promotions.svelte';
+  import {
+    resolvePromos,
+    distributePromosAcrossLines,
+    type CartLineForPromo,
+    type AppliedPromo
+  } from '$lib/utils/promoResolver';
   import { shifts, salesSummary } from '$lib/stores/shifts.svelte';
   import { employees } from '$lib/stores/employees.svelte';
   import { shiftTemplates } from '$lib/stores/shiftTemplates.svelte';
@@ -240,8 +249,85 @@
   const cartSubtotal = $derived(
     session.lines.reduce((s, l) => s + lineSubtotalFor(l), 0)
   );
-  const cartTax = $derived(session.lines.reduce((s, l) => s + lineTaxFor(l), 0));
-  const cartTotal = $derived(cartSubtotal + cartTax);
+
+  // Build per-line input for the promo resolver, then resolve against active promos.
+  const linesForPromo = $derived.by<CartLineForPromo[]>(() => {
+    return session.lines.map((line) => {
+      const r = resolveLine(line);
+      const subtotal = lineSubtotalFor(line);
+      return {
+        id: line.id,
+        productId: line.productId,
+        variantId: line.variantId,
+        unitFactor: line.unitFactor,
+        quantity: line.quantity,
+        baseQuantity: line.quantity * line.unitFactor,
+        unitPrice: r.unitPrice,
+        subtotal
+      };
+    });
+  });
+
+  const cartCustomer = $derived(session.customerId ? customers.getById(session.customerId) : undefined);
+
+  const appliedPromos = $derived<AppliedPromo[]>(
+    resolvePromos({
+      lines: linesForPromo,
+      customer: cartCustomer,
+      at: new Date(),
+      dismissedPromoIds: session.dismissedPromoIds ?? []
+    })
+  );
+
+  const promoDiscount = $derived(
+    appliedPromos.reduce((s, p) => s + p.discountAmount, 0)
+  );
+
+  // Distribute discount across lines, then recompute per-line tax on the NET subtotal.
+  const promoDistribution = $derived(
+    distributePromosAcrossLines(linesForPromo, appliedPromos)
+  );
+
+  function lineDiscountFor(line: CartLine): number {
+    const d = promoDistribution.get(line.id);
+    return (d?.lineDiscount ?? 0) + (d?.orderDiscountShare ?? 0);
+  }
+
+  function lineNetSubtotalFor(line: CartLine): number {
+    return Math.max(0, lineSubtotalFor(line) - lineDiscountFor(line));
+  }
+
+  function lineTaxNetFor(line: CartLine): number {
+    const r = resolveLine(line);
+    return (lineNetSubtotalFor(line) * r.taxRatePct) / 100;
+  }
+
+  const cartTax = $derived(session.lines.reduce((s, l) => s + lineTaxNetFor(l), 0));
+  const cartNetSubtotal = $derived(Math.max(0, cartSubtotal - promoDiscount));
+  const cartTotal = $derived(cartNetSubtotal + cartTax);
+
+  // Compute potentially-applicable promos that the user has dismissed, so we can
+  // offer a "Pulihkan" affordance for each.
+  const dismissedPromoEntries = $derived<Promotion[]>(
+    (session.dismissedPromoIds ?? [])
+      .map((id) => promotions.getById(id))
+      .filter((p): p is Promotion => p !== undefined)
+  );
+
+  function dismissPromo(promoId: string) {
+    if (!session.dismissedPromoIds) session.dismissedPromoIds = [];
+    if (!session.dismissedPromoIds.includes(promoId)) {
+      session.dismissedPromoIds = [...session.dismissedPromoIds, promoId];
+      cartSessions.touch();
+    }
+  }
+
+  function restorePromo(promoId: string) {
+    session.dismissedPromoIds = (session.dismissedPromoIds ?? []).filter(
+      (id) => id !== promoId
+    );
+    cartSessions.touch();
+  }
 
   const cashShortcuts = [100_000, 50_000, 20_000, 10_000];
   const paymentChange = $derived(session.paymentAmount - cartTotal);
@@ -465,11 +551,16 @@
         return;
       }
     }
+    // Map cart-line ids to fresh order-line ids so we can rewrite promo applications
+    // to point at the persisted order lines.
+    const orderLineIdByCart = new Map<string, string>();
     const lines: OrderLine[] = session.lines.map((cl) => {
+      const orderLineId = crypto.randomUUID();
+      orderLineIdByCart.set(cl.id, orderLineId);
       const r = resolveLine(cl);
       if (!r.product) {
         return {
-          id: crypto.randomUUID(),
+          id: orderLineId,
           productId: cl.productId,
           variantId: cl.variantId,
           productName: 'Unknown',
@@ -482,15 +573,19 @@
           extras: [],
           taxRatePct: 0,
           lineSubtotal: 0,
+          linePromoDiscount: 0,
+          lineSubtotalNet: 0,
           lineTax: 0,
           lineTotal: 0,
           batchAllocations: []
         };
       }
       const sub = lineSubtotalFor(cl);
-      const tax = lineTaxFor(cl);
+      const disc = lineDiscountFor(cl);
+      const subNet = Math.max(0, sub - disc);
+      const tax = (subNet * r.taxRatePct) / 100;
       return {
-        id: crypto.randomUUID(),
+        id: orderLineId,
         productId: r.product.id,
         variantId: r.variant?.id,
         productName: r.product.name,
@@ -503,11 +598,27 @@
         extras: r.extras,
         taxRatePct: r.taxRatePct,
         lineSubtotal: sub,
+        linePromoDiscount: disc,
+        lineSubtotalNet: subNet,
         lineTax: tax,
-        lineTotal: sub + tax,
+        lineTotal: subNet + tax,
         batchAllocations: []
       };
     });
+
+    // Translate cart-line ids in appliedPromos to the new order-line ids.
+    const orderAppliedPromos = appliedPromos.map((p) => ({
+      promoId: p.promoId,
+      promoCode: p.promoCode,
+      promoName: p.promoName,
+      kind: p.kind,
+      level: p.level,
+      affectedLineIds: p.affectedLineIds
+        .map((id) => orderLineIdByCart.get(id))
+        .filter((x): x is string => !!x),
+      discountAmount: p.discountAmount,
+      description: p.description
+    }));
 
     // Determine payment outcome:
     // - Non-cash (qris/card/transfer): always treated as paid in full.
@@ -523,14 +634,22 @@
       employeeId: shiftsOn && activeShift ? activeShift.employeeId : undefined,
       shiftId: shiftsOn && activeShift ? activeShift.id : undefined,
       lines,
+      appliedPromos: orderAppliedPromos.length > 0 ? orderAppliedPromos : undefined,
+      promoDiscount: promoDiscount > 0 ? promoDiscount : undefined,
       paymentMethod: session.paymentMethod,
       subtotal: cartSubtotal,
+      netSubtotal: cartNetSubtotal,
       taxTotal: cartTax,
       total: cartTotal,
       paidAmount: willBePaid ? cartTotal : receivedNow,
       status: orderStatus,
       notes: ''
     });
+
+    // Increment usage counter on each unique applied promo.
+    for (const p of orderAppliedPromos) {
+      promotions.incrementUsage(p.promoId);
+    }
 
     applyOrderToStock(created);
 
@@ -1069,6 +1188,54 @@
             <dt class="text-slate-500">Subtotal</dt>
             <dd class="text-slate-700">{formatRupiah(cartSubtotal)}</dd>
           </div>
+
+          {#if appliedPromos.length > 0}
+            <div class="space-y-1 rounded-md border border-emerald-100 bg-emerald-50/70 px-2 py-1.5">
+              {#each appliedPromos as p (p.promoId)}
+                <div class="flex items-center justify-between gap-2">
+                  <div class="flex min-w-0 items-center gap-1.5">
+                    <BadgePercent class="h-3.5 w-3.5 shrink-0 text-emerald-600" />
+                    <span class="truncate text-xs font-medium text-emerald-800" title={p.description}>
+                      {p.promoName}
+                    </span>
+                  </div>
+                  <div class="flex items-center gap-1.5">
+                    <span class="text-sm font-semibold text-emerald-700">
+                      −{formatRupiah(p.discountAmount)}
+                    </span>
+                    <button
+                      type="button"
+                      class="rounded p-0.5 text-emerald-700/70 hover:bg-emerald-100 hover:text-rose-600"
+                      aria-label="Hapus promo dari transaksi"
+                      title="Hapus promo dari transaksi ini"
+                      onclick={() => dismissPromo(p.promoId)}
+                    >
+                      <X class="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                </div>
+              {/each}
+            </div>
+          {/if}
+
+          {#if dismissedPromoEntries.length > 0}
+            <div class="space-y-1">
+              {#each dismissedPromoEntries as p (p.id)}
+                <div class="flex items-center justify-between gap-2 text-xs text-slate-400">
+                  <span class="truncate line-through" title={p.description}>{p.name}</span>
+                  <button
+                    type="button"
+                    class="flex items-center gap-1 rounded px-1 py-0.5 text-slate-500 hover:bg-slate-100 hover:text-slate-700"
+                    onclick={() => restorePromo(p.id)}
+                  >
+                    <RotateCcw class="h-3 w-3" />
+                    Pulihkan
+                  </button>
+                </div>
+              {/each}
+            </div>
+          {/if}
+
           {#if cartTax > 0}
             <div class="flex justify-between">
               <dt class="text-slate-500">Pajak</dt>
@@ -1079,6 +1246,11 @@
             <dt class="text-base font-semibold text-slate-900">Total</dt>
             <dd class="text-xl font-bold text-slate-900">{formatRupiah(cartTotal)}</dd>
           </div>
+          {#if promoDiscount > 0}
+            <div class="-mt-1 text-right text-xs text-emerald-600">
+              Hemat {formatRupiah(promoDiscount)}
+            </div>
+          {/if}
         </dl>
 
         <div class="mt-3">

@@ -26,7 +26,29 @@ const seed: Payout[] = [
     method: 'transfer',
     coversPeriodStart: '2026-04-01',
     coversPeriodEnd: '2026-04-30',
-    notes: 'Pembayaran awal untuk penjualan konsinyasi April.'
+    notes: 'Pembayaran awal untuk penjualan konsinyasi April (2 mug White via ORD-2026-002).'
+  },
+  {
+    id: 'payout_2',
+    code: 'PAYOUT-2026-002',
+    supplierId: 'sup_3',
+    amount: 150000,
+    paidAt: '2026-05-10',
+    method: 'transfer',
+    coversPeriodStart: '2026-05-01',
+    coversPeriodEnd: '2026-05-10',
+    notes: 'Pembayaran cicilan tengah bulan (mug Black ORD-003/009).'
+  },
+  {
+    id: 'payout_3',
+    code: 'PAYOUT-2026-003',
+    supplierId: 'sup_3',
+    amount: 80000,
+    paidAt: '2026-05-15',
+    method: 'cash',
+    coversPeriodStart: '2026-05-11',
+    coversPeriodEnd: '2026-05-15',
+    notes: 'Cicilan tunai saat Studio Karya Lokal mampir.'
   }
 ];
 

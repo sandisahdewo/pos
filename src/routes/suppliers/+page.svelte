@@ -76,7 +76,7 @@
     { key: 'name' as const, label: 'Pemasok' },
     { key: 'contactPerson' as const, label: 'Kontak' },
     { key: 'phone' as const, label: 'Telepon' },
-    { key: 'leadTimeDays' as const, label: 'Lead time', align: 'right' as const, width: '110px' },
+    { key: 'leadTimeDays' as const, label: 'Waktu tunggu', align: 'right' as const, width: '120px' },
     { key: 'status' as const, label: 'Status' },
     { key: 'id' as const, label: '', align: 'right' as const, width: '120px' }
   ];
@@ -110,7 +110,7 @@
     if (form.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email))
       next.email = 'Masukkan email yang valid atau kosongkan.';
     if (!Number.isInteger(form.leadTimeDays) || form.leadTimeDays < 0)
-      next.leadTimeDays = 'Lead time harus bilangan bulat non-negatif.';
+      next.leadTimeDays = 'Waktu tunggu harus bilangan bulat non-negatif.';
     errors = next;
     return Object.keys(next).length === 0;
   }
@@ -272,12 +272,12 @@
       {#snippet leading()}<Phone class="h-4 w-4" />{/snippet}
     </Input>
     <Input
-      label="Lead time (hari)"
+      label="Waktu tunggu (hari)"
       type="number"
       step="1"
       min="0"
       bind:value={form.leadTimeDays}
-      hint="Estimasi hari dari order ke pengiriman."
+      hint="Estimasi hari dari kita order ke barang sampai."
       error={errors.leadTimeDays}
     />
     <Input

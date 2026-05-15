@@ -13,6 +13,7 @@ export type Customer = {
   pricelistId: string;
   taxId: string;
   status: CustomerStatus;
+  creditAllowed: boolean;       // izin transaksi piutang/bon. Default false. Walk-in selalu false.
   notes: string;
   joinedAt: string;
 };
@@ -30,6 +31,7 @@ const seed: Customer[] = [
     pricelistId: 'pl_vip',
     taxId: '',
     status: 'active',
+    creditAllowed: true,
     notes: 'VIP member since 2024. Prefers iced coffee.',
     joinedAt: '2024-06-15'
   },
@@ -43,6 +45,7 @@ const seed: Customer[] = [
     pricelistId: 'pl_wholesale',
     taxId: '01.234.567.8-901.000',
     status: 'active',
+    creditAllowed: true,
     notes: 'Net-30 terms. Bulk beverage orders.',
     joinedAt: '2025-02-20'
   },
@@ -56,6 +59,7 @@ const seed: Customer[] = [
     pricelistId: 'pl_wholesale',
     taxId: '02.345.678.9-012.000',
     status: 'active',
+    creditAllowed: true,
     notes: 'Reseller. Weekly cola case orders.',
     joinedAt: '2025-04-10'
   },
@@ -69,7 +73,8 @@ const seed: Customer[] = [
     pricelistId: 'pl_retail',
     taxId: '',
     status: 'active',
-    notes: 'Regular Saturday customer.',
+    creditAllowed: false,
+    notes: 'Regular Saturday customer. Tunai saja.',
     joinedAt: '2025-08-04'
   }
 ];

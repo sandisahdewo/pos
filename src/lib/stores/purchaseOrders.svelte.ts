@@ -6,6 +6,16 @@ import { stockMovements } from './stockMovements.svelte';
 export type PurchaseOrderType = 'standard' | 'consignment';
 export type PurchaseOrderStatus = 'draft' | 'sent' | 'partial' | 'received' | 'cancelled';
 
+export type PurchaseOrderPaymentMethod = 'cash' | 'transfer' | 'other';
+
+export type PurchaseOrderPayment = {
+  id: string;
+  amount: number;
+  method: PurchaseOrderPaymentMethod;
+  at: string;        // ISO datetime
+  notes: string;
+};
+
 export type PurchaseOrderLine = {
   id: string;
   productId: string;
@@ -28,10 +38,15 @@ export type PurchaseOrder = {
   expectedDate: string;
   receivedDate: string;
   lines: PurchaseOrderLine[];
+  paidAmount: number;                   // cumulative payments to supplier (for standard POs only)
+  payments: PurchaseOrderPayment[];     // chronological partial payments
   notes: string;
 };
 
-export type PurchaseOrderInput = Omit<PurchaseOrder, 'id' | 'code'>;
+export type PurchaseOrderInput = Omit<PurchaseOrder, 'id' | 'code' | 'paidAmount' | 'payments'> & {
+  paidAmount?: number;
+  payments?: PurchaseOrderPayment[];
+};
 
 const seed: PurchaseOrder[] = [
   {
@@ -65,6 +80,16 @@ const seed: PurchaseOrder[] = [
         notes: ''
       }
     ],
+    paidAmount: 200000,
+    payments: [
+      {
+        id: 'popay_seed_1',
+        amount: 200000,
+        method: 'transfer',
+        at: '2026-04-23T09:00:00.000Z',
+        notes: 'DP 40% setelah barang diterima — sisa Net-14 dari supplier.'
+      }
+    ],
     notes: 'Monthly coffee order.'
   },
   {
@@ -88,6 +113,8 @@ const seed: PurchaseOrder[] = [
         notes: ''
       }
     ],
+    paidAmount: 0,
+    payments: [],
     notes: 'Pastry delivery, cash on delivery.'
   },
   {
@@ -134,6 +161,8 @@ const seed: PurchaseOrder[] = [
         notes: 'Brand Blue, premium'
       }
     ],
+    paidAmount: 0,
+    payments: [],
     notes: 'Quarterly consignment refresh. Pay only as items sell.'
   },
   {
@@ -167,6 +196,8 @@ const seed: PurchaseOrder[] = [
         notes: '6-pack'
       }
     ],
+    paidAmount: 0,
+    payments: [],
     notes: 'Weekly beverage restock.'
   },
   {
@@ -210,6 +241,16 @@ const seed: PurchaseOrder[] = [
         notes: 'Croissant baru'
       }
     ],
+    paidAmount: 100000,
+    payments: [
+      {
+        id: 'popay_seed_2',
+        amount: 100000,
+        method: 'cash',
+        at: '2026-05-13T07:30:00.000Z',
+        notes: 'DP tunai saat order — sisa dibayar saat antar besok.'
+      }
+    ],
     notes: 'Pengiriman bahan segar pagi — semua butuh tanggal kedaluwarsa saat diterima.'
   }
 ];
@@ -232,10 +273,58 @@ class PurchaseOrdersStore {
     const po: PurchaseOrder = {
       ...input,
       id: `po_${this.nextId++}`,
-      code: this.generateCode()
+      code: this.generateCode(),
+      paidAmount: input.paidAmount ?? 0,
+      payments: input.payments ?? []
     };
     this.items.push(po);
     return po;
+  }
+
+  // Record a payment toward a standard (non-consignment) PO. Tracks supplier
+  // utang separately from receive() — paying doesn't affect stock; receiving
+  // doesn't affect payments. Consignment POs use /payouts instead.
+  recordPayment(
+    poId: string,
+    args: {
+      amount: number;
+      method: PurchaseOrderPaymentMethod;
+      notes?: string;
+      at?: string;
+    }
+  ): { ok: boolean; reason?: string; po?: PurchaseOrder } {
+    const idx = this.items.findIndex((p) => p.id === poId);
+    if (idx === -1) return { ok: false, reason: 'PO not found.' };
+    const po = this.items[idx];
+    if (po.type === 'consignment')
+      return {
+        ok: false,
+        reason: 'PO konsinyasi memakai Pembayaran Konsinyasi, bukan Utang.'
+      };
+    if (po.status === 'cancelled')
+      return { ok: false, reason: 'PO sudah dibatalkan.' };
+    if (!Number.isFinite(args.amount) || args.amount <= 0)
+      return { ok: false, reason: 'Jumlah pembayaran harus lebih dari 0.' };
+    const total = poTotal(po);
+    const outstanding = total - po.paidAmount;
+    if (args.amount > outstanding + 0.0001)
+      return {
+        ok: false,
+        reason: `Jumlah melebihi sisa utang (${outstanding}).`
+      };
+    const payment: PurchaseOrderPayment = {
+      id: `popay_${crypto.randomUUID()}`,
+      amount: args.amount,
+      method: args.method,
+      at: args.at ?? new Date().toISOString(),
+      notes: args.notes ?? ''
+    };
+    this.items[idx] = {
+      ...po,
+      paidAmount: po.paidAmount + args.amount,
+      payments: [...po.payments, payment]
+    };
+    return { ok: true, po: this.items[idx] };
   }
 
   update(id: string, patch: Partial<PurchaseOrderInput>): PurchaseOrder | undefined {

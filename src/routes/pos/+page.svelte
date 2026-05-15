@@ -18,9 +18,12 @@
     Collapsible,
     ConfirmDialog,
     Input,
+    Modal,
     MoneyInput,
     PageHeader,
-    Select
+    Select,
+    Textarea,
+    Toggle
   } from '$lib/components/ui';
   import {
     computeSalePrice,
@@ -40,7 +43,7 @@
   import { pricelists } from '$lib/stores/pricelists.svelte';
   import { categories } from '$lib/stores/categories.svelte';
   import { units } from '$lib/stores/units.svelte';
-  import { customers } from '$lib/stores/customers.svelte';
+  import { customers, type CustomerType } from '$lib/stores/customers.svelte';
   import {
     applyOrderToStock,
     orders,
@@ -225,6 +228,17 @@
     cartSessions.touch();
   }
 
+  // For cash sales, paymentAmount drives outcome: < total → credit (piutang),
+  // >= total → paid. Non-cash always treated as full payment.
+  const isPartialCash = $derived(isCash && session.paymentAmount < cartTotal);
+  const selectedCustomer = $derived(
+    session.customerId ? customers.getById(session.customerId) : undefined
+  );
+  const customerCreditAllowed = $derived(!!selectedCustomer?.creditAllowed);
+  const creditOutstanding = $derived(
+    isPartialCash ? Math.max(0, cartTotal - Math.max(0, session.paymentAmount)) : 0
+  );
+
   const chargeConfirmMessage = $derived.by(() => {
     const head = `${session.lines.length} item · ${formatRupiah(cartTotal)} via ${session.paymentMethod.toUpperCase()}`;
     if (isCash && session.paymentAmount > 0) {
@@ -232,10 +246,24 @@
       const tail =
         diff >= 0
           ? `Kembalian ${formatRupiah(diff)}`
-          : `Kurang ${formatRupiah(Math.abs(diff))}`;
+          : `Sisa ${formatRupiah(Math.abs(diff))} jadi piutang`;
       return `${head} · Diterima ${formatRupiah(session.paymentAmount)} · ${tail}. Stok akan dikurangi.`;
     }
+    if (isPartialCash) {
+      return `${head} · Semua jadi piutang (${formatRupiah(cartTotal)}). Stok akan dikurangi.`;
+    }
     return `${head}. Stok akan dikurangi.`;
+  });
+
+  // Validation hint shown next to the Bayar button when credit is needed but
+  // the selected customer / payment combo doesn't allow it.
+  const creditBlocker = $derived.by(() => {
+    if (!isPartialCash) return '';
+    if (!session.customerId)
+      return 'Sisa kurang dari total. Pilih pelanggan yang diizinkan kredit untuk transaksi piutang.';
+    if (!customerCreditAllowed)
+      return `${selectedCustomer?.name ?? 'Pelanggan'} belum diizinkan transaksi piutang. Lengkapi pembayaran atau ubah izin di Pelanggan.`;
+    return '';
   });
 
   function addToCart(
@@ -389,6 +417,25 @@
 
   function charge() {
     if (session.lines.length === 0) return;
+    // Piutang validation: partial cash payment requires a customer who's
+    // explicitly allowed to take credit. Block with a clear toast otherwise.
+    if (isPartialCash) {
+      if (!session.customerId) {
+        toast.error(
+          'Piutang ditolak',
+          'Pelanggan walk-in tidak diizinkan transaksi piutang. Pilih pelanggan terdaftar atau lengkapi pembayaran.'
+        );
+        return;
+      }
+      const cust = customers.getById(session.customerId);
+      if (!cust?.creditAllowed) {
+        toast.error(
+          'Piutang ditolak',
+          `${cust?.name ?? 'Pelanggan'} belum diizinkan transaksi piutang. Aktifkan opsi "Boleh berbelanja secara kredit" di profil pelanggan.`
+        );
+        return;
+      }
+    }
     const lines: OrderLine[] = session.lines.map((cl) => {
       const r = resolveLine(cl);
       if (!r.product) {
@@ -433,6 +480,14 @@
       };
     });
 
+    // Determine payment outcome:
+    // - Non-cash (qris/card/transfer): always treated as paid in full.
+    // - Cash >= total: paid in full (excess = change, not stored).
+    // - Cash < total (incl. 0): credit. paidAmount = paymentAmount.
+    const receivedNow = isCash ? Math.max(0, Math.min(session.paymentAmount, cartTotal)) : cartTotal;
+    const willBePaid = isCash ? session.paymentAmount >= cartTotal : true;
+    const orderStatus: 'paid' | 'credit' = willBePaid ? 'paid' : 'credit';
+
     const created = orders.add({
       pricelistId: activePricelistId,
       customerId: session.customerId || undefined,
@@ -441,16 +496,25 @@
       subtotal: cartSubtotal,
       taxTotal: cartTax,
       total: cartTotal,
-      status: 'paid',
+      paidAmount: willBePaid ? cartTotal : receivedNow,
+      status: orderStatus,
       notes: ''
     });
 
     applyOrderToStock(created);
 
-    toast.success(
-      `Transaksi selesai · ${created.code}`,
-      `${formatRupiah(cartTotal)} via ${session.paymentMethod.toUpperCase()}`
-    );
+    if (orderStatus === 'credit') {
+      const sisa = cartTotal - (willBePaid ? cartTotal : receivedNow);
+      toast.success(
+        `Transaksi piutang · ${created.code}`,
+        `Diterima ${formatRupiah(receivedNow)}, sisa piutang ${formatRupiah(sisa)}`
+      );
+    } else {
+      toast.success(
+        `Transaksi selesai · ${created.code}`,
+        `${formatRupiah(cartTotal)} via ${session.paymentMethod.toUpperCase()}`
+      );
+    }
 
     cartSessions.completeActive();
   }
@@ -470,6 +534,71 @@
     if (!pendingCloseTabId) return;
     cartSessions.close(pendingCloseTabId);
     pendingCloseTabId = null;
+  }
+
+  // === Quick-add customer modal ===
+  let addCustomerOpen = $state(false);
+  type NewCustomerForm = {
+    name: string;
+    phone: string;
+    type: CustomerType;
+    pricelistId: string;
+    creditAllowed: boolean;
+    notes: string;
+  };
+  const blankNewCustomer = (): NewCustomerForm => ({
+    name: '',
+    phone: '',
+    type: 'individual',
+    pricelistId: pricelists.defaultId(),
+    creditAllowed: false,
+    notes: ''
+  });
+  let newCustomerForm = $state<NewCustomerForm>(blankNewCustomer());
+  let newCustomerError = $state<string>('');
+
+  const newCustomerTypeOptions = [
+    { value: 'individual' as const, label: 'Individu' },
+    { value: 'business' as const, label: 'Bisnis' }
+  ];
+
+  const newCustomerPricelistOptions = $derived(
+    pricelists.items.map((p) => ({
+      value: p.id,
+      label: p.isDefault ? `${p.name} (utama)` : p.name
+    }))
+  );
+
+  function openAddCustomer() {
+    newCustomerForm = blankNewCustomer();
+    newCustomerError = '';
+    addCustomerOpen = true;
+  }
+
+  function saveNewCustomer() {
+    newCustomerError = '';
+    if (!newCustomerForm.name.trim()) {
+      newCustomerError = 'Nama pelanggan wajib diisi.';
+      return;
+    }
+    const created = customers.add({
+      name: newCustomerForm.name.trim(),
+      type: newCustomerForm.type,
+      email: '',
+      phone: newCustomerForm.phone.trim(),
+      address: '',
+      pricelistId: newCustomerForm.pricelistId,
+      taxId: '',
+      status: 'active',
+      creditAllowed: newCustomerForm.creditAllowed,
+      notes: newCustomerForm.notes.trim(),
+      joinedAt: new Date().toISOString().slice(0, 10)
+    });
+    // Auto-select the new customer for the active session
+    session.customerId = created.id;
+    cartSessions.touch();
+    addCustomerOpen = false;
+    toast.success('Pelanggan ditambahkan', `${created.name} aktif di tab saat ini.`);
   }
 </script>
 
@@ -684,8 +813,19 @@
       </div>
 
       <div class="border-b border-slate-100 p-4">
+        <div class="mb-1.5 flex items-center justify-between gap-2">
+          <span class="text-sm font-medium text-slate-700">Pelanggan</span>
+          <button
+            type="button"
+            class="inline-flex items-center gap-1 rounded-md border border-dashed border-slate-300 px-2 py-1 text-[11px] font-medium text-slate-600 hover:border-brand-400 hover:bg-brand-50 hover:text-brand-700"
+            onclick={openAddCustomer}
+            title="Tambah pelanggan baru"
+          >
+            <Plus class="h-3 w-3" />
+            Tambah
+          </button>
+        </div>
         <Select
-          label="Pelanggan"
           value={session.customerId}
           options={customerOptions}
           onchange={(e) => {
@@ -902,18 +1042,37 @@
                 class="mt-2 flex items-baseline justify-between border-t border-slate-200 pt-2"
               >
                 <dt class="text-sm font-medium text-slate-600">
-                  {paymentChange >= 0 ? 'Kembalian' : 'Kurang'}
+                  {paymentChange >= 0 ? 'Kembalian' : 'Sisa piutang'}
                 </dt>
                 <dd
                   class="text-base font-semibold {paymentChange >= 0
                     ? 'text-emerald-600'
-                    : 'text-rose-600'}"
+                    : 'text-amber-700'}"
                 >
                   {formatRupiah(Math.abs(paymentChange))}
                 </dd>
               </div>
             {/if}
           </div>
+        {/if}
+
+        {#if isPartialCash}
+          {#if creditBlocker}
+            <div class="mt-3 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800">
+              <p class="font-semibold">Piutang tidak diizinkan</p>
+              <p class="mt-0.5">{creditBlocker}</p>
+            </div>
+          {:else}
+            <div class="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+              <p class="font-semibold">
+                Transaksi piutang · {formatRupiah(creditOutstanding)}
+              </p>
+              <p class="mt-0.5">
+                Sisa {formatRupiah(creditOutstanding)} akan dicatat sebagai piutang
+                {selectedCustomer ? `untuk ${selectedCustomer.name}` : ''}. Bisa dilunasi nanti di Piutang Pelanggan.
+              </p>
+            </div>
+          {/if}
         {/if}
 
         <div class="mt-3 grid grid-cols-[auto_1fr] gap-2">
@@ -927,10 +1086,10 @@
           <Button
             size="lg"
             onclick={() => (confirmChargeOpen = true)}
-            disabled={session.lines.length === 0}
+            disabled={session.lines.length === 0 || !!creditBlocker}
           >
             <Receipt class="h-4 w-4" />
-            Bayar {formatRupiah(cartTotal)}
+            {isPartialCash && !creditBlocker ? 'Catat piutang' : `Bayar ${formatRupiah(cartTotal)}`}
           </Button>
         </div>
       </div>
@@ -969,3 +1128,50 @@
   onConfirm={doCloseTab}
   onCancel={() => (pendingCloseTabId = null)}
 />
+
+<Modal
+  bind:open={addCustomerOpen}
+  size="md"
+  title="Tambah pelanggan"
+  description="Pelanggan baru akan langsung dipilih untuk tab Kasir saat ini. Lengkapi detail lain nanti di menu Pelanggan."
+>
+  <div class="grid gap-4">
+    <Input
+      label="Nama"
+      placeholder="mis. Budi Santoso"
+      bind:value={newCustomerForm.name}
+      error={newCustomerError && !newCustomerForm.name.trim() ? newCustomerError : ''}
+    />
+    <Input
+      label="Telepon"
+      placeholder="+62 ..."
+      bind:value={newCustomerForm.phone}
+    />
+    <div class="grid gap-3 sm:grid-cols-2">
+      <Select label="Tipe" bind:value={newCustomerForm.type} options={newCustomerTypeOptions} />
+      <Select
+        label="Daftar harga"
+        bind:value={newCustomerForm.pricelistId}
+        options={newCustomerPricelistOptions}
+      />
+    </div>
+    <Toggle
+      bind:checked={newCustomerForm.creditAllowed}
+      label="Izinkan transaksi piutang/bon"
+      description="Saat aktif, kasir bisa menyelesaikan transaksi dengan pembayaran kurang dari total."
+    />
+    <Textarea
+      label="Catatan (opsional)"
+      placeholder="Preferensi, termin pembayaran, dll."
+      bind:value={newCustomerForm.notes}
+    />
+    {#if newCustomerError && newCustomerForm.name.trim()}
+      <p class="text-sm text-rose-600">{newCustomerError}</p>
+    {/if}
+  </div>
+
+  {#snippet footer()}
+    <Button variant="outline" onclick={() => (addCustomerOpen = false)}>Batal</Button>
+    <Button onclick={saveNewCustomer}>Tambah & pilih</Button>
+  {/snippet}
+</Modal>

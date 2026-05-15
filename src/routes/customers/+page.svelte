@@ -17,6 +17,7 @@
     ConfirmDialog,
     Input,
     Modal,
+    Toggle,
     PageHeader,
     Select,
     Table,
@@ -52,6 +53,7 @@
     pricelistId: string;
     taxId: string;
     status: CustomerStatus;
+    creditAllowed: boolean;
     notes: string;
     joinedAt: string;
   };
@@ -65,6 +67,7 @@
     pricelistId: pricelists.defaultId(),
     taxId: '',
     status: 'active',
+    creditAllowed: false,
     notes: '',
     joinedAt: new Date().toISOString().slice(0, 10)
   });
@@ -143,6 +146,7 @@
       pricelistId: c.pricelistId,
       taxId: c.taxId,
       status: c.status,
+      creditAllowed: c.creditAllowed,
       notes: c.notes,
       joinedAt: c.joinedAt
     };
@@ -352,6 +356,13 @@
     {/if}
     <Input class="sm:col-span-2" label="Alamat" placeholder="Jalan, kota" bind:value={form.address} />
     <Select label="Status" bind:value={form.status} options={statusOptions} />
+    <div class="sm:col-span-2">
+      <Toggle
+        bind:checked={form.creditAllowed}
+        label="Boleh berbelanja secara kredit (piutang/bon)"
+        description="Saat aktif, kasir bisa menyelesaikan transaksi dengan pembayaran kurang dari total. Sisa akan tercatat di Piutang Pelanggan."
+      />
+    </div>
     <Textarea
       class="sm:col-span-2"
       label="Catatan"

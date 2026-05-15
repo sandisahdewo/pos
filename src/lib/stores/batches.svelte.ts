@@ -52,10 +52,10 @@ const seed: Batch[] = [
     supplierId: 'sup_1',
     unitCost: 5000,
     qtyReceived: 120,
-    qtyRemaining: 120,
+    qtyRemaining: 116,
     receivedAt: '2026-04-22',
     locationId: 'loc_gudang',
-    notes: 'Initial seed (received via PO-2026-001).'
+    notes: 'Initial seed (received via PO-2026-001). 4 unit terjual ke ORD-2026-013 (piutang).'
   },
   {
     id: 'batch_2',
@@ -65,10 +65,10 @@ const seed: Batch[] = [
     supplierId: 'sup_1',
     unitCost: 12000,
     qtyReceived: 80,
-    qtyRemaining: 80,
+    qtyRemaining: 78,
     receivedAt: '2026-04-22',
     locationId: 'loc_gudang',
-    notes: 'Initial seed (received via PO-2026-001).'
+    notes: 'Initial seed (received via PO-2026-001). 2 unit terjual ke ORD-2026-013 (piutang).'
   },
   {
     id: 'batch_3',
@@ -92,10 +92,10 @@ const seed: Batch[] = [
     supplierId: 'sup_3',
     unitCost: 50000,
     qtyReceived: 18,
-    qtyRemaining: 18,
+    qtyRemaining: 12,
     receivedAt: '2026-03-01',
     locationId: 'loc_gudang',
-    notes: 'Initial seed (prior consignment receipt — White colorway).'
+    notes: 'Initial seed (prior consignment receipt — White colorway). 5 unit terjual + 1 unit di ORD-2026-014 (piutang).'
   },
   {
     id: 'batch_5',
@@ -106,10 +106,10 @@ const seed: Batch[] = [
     supplierId: 'sup_3',
     unitCost: 50000,
     qtyReceived: 12,
-    qtyRemaining: 12,
+    qtyRemaining: 8,
     receivedAt: '2026-03-01',
     locationId: 'loc_gudang',
-    notes: 'Initial seed (prior consignment receipt — Black colorway).'
+    notes: 'Initial seed (prior consignment receipt — Black colorway). 4 unit terjual via ORD-2026-003/009/012.'
   },
   {
     id: 'batch_6',
@@ -120,10 +120,10 @@ const seed: Batch[] = [
     supplierId: 'sup_3',
     unitCost: 60000,
     qtyReceived: 6,
-    qtyRemaining: 4,
+    qtyRemaining: 3,
     receivedAt: '2026-03-01',
     locationId: 'loc_gudang',
-    notes: 'Initial seed (prior consignment receipt — Brand Blue colorway). 2 unit dikembalikan ke konsinyor.'
+    notes: 'Initial seed (prior consignment receipt — Brand Blue colorway). 2 unit dikembalikan ke konsinyor, 1 unit terjual via ORD-2026-010.'
   },
   {
     id: 'batch_7',

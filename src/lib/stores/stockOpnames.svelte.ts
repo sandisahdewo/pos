@@ -183,28 +183,28 @@ const seedOpnames: StockOpname[] = [
         id: 'opl_seed_4_1',
         productId: 'prd_4',
         variantId: 'v_1',
-        expectedQty: 18,
-        countedQty: 18,
+        expectedQty: 13,
+        countedQty: 13,
         unitCost: 50000,
-        notes: ''
+        notes: '5 unit terjual sebelum opname.'
       },
       {
         id: 'opl_seed_4_2',
         productId: 'prd_4',
         variantId: 'v_2',
-        expectedQty: 12,
-        countedQty: 12,
+        expectedQty: 9,
+        countedQty: 9,
         unitCost: 50000,
-        notes: ''
+        notes: '3 unit terjual sebelum opname.'
       },
       {
         id: 'opl_seed_4_3',
         productId: 'prd_4',
         variantId: 'v_3',
-        expectedQty: 4,
-        countedQty: 4,
+        expectedQty: 3,
+        countedQty: 3,
         unitCost: 60000,
-        notes: '2 unit sudah dikembalikan minggu lalu.'
+        notes: '2 unit dikembalikan, 1 unit terjual.'
       }
     ]
   },
@@ -342,8 +342,8 @@ const seedOpnames: StockOpname[] = [
         id: 'opl_seed_9_1',
         productId: 'prd_4',
         variantId: 'v_1',
-        expectedQty: 18,
-        countedQty: 18,
+        expectedQty: 13,
+        countedQty: 13,
         unitCost: 50000,
         notes: ''
       },
@@ -351,7 +351,7 @@ const seedOpnames: StockOpname[] = [
         id: 'opl_seed_9_2',
         productId: 'prd_4',
         variantId: 'v_2',
-        expectedQty: 12,
+        expectedQty: 8,
         countedQty: null,
         unitCost: 50000,
         notes: ''
@@ -360,7 +360,7 @@ const seedOpnames: StockOpname[] = [
         id: 'opl_seed_9_3',
         productId: 'prd_4',
         variantId: 'v_3',
-        expectedQty: 4,
+        expectedQty: 3,
         countedQty: null,
         unitCost: 60000,
         notes: ''

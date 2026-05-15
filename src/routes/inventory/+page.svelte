@@ -59,6 +59,12 @@
   import { purchaseOrders } from '$lib/stores/purchaseOrders.svelte';
   import { locations, type Location } from '$lib/stores/locations.svelte';
   import { settings } from '$lib/stores/settings.svelte';
+  import {
+    daysOfSupply,
+    formatRunway,
+    runwayBandFor,
+    runwayBandVariant
+  } from '$lib/utils/forecast';
   import { toast } from '$lib/stores/toast.svelte';
   import { formatRupiah } from '$lib/utils/currency';
 
@@ -716,6 +722,8 @@
         {@const u = unitFor(row.unitId)}
         {@const packs = packagingBreakdown(row)}
         {@const expSoon = expiringSoonSummary(row)}
+        {@const runway = daysOfSupply(row.id, undefined, 30)}
+        {@const band = runwayBandFor(runway)}
         <div class="text-right">
           <div title="Total stok dalam satuan dasar">
             <span class="text-base font-semibold text-slate-900">{total}</span>
@@ -769,6 +777,20 @@
             <div class="mt-1.5 inline-flex items-center gap-1 rounded bg-rose-50 px-1.5 py-0.5 text-[10px] font-semibold text-rose-700">
               <AlertTriangle class="h-3 w-3" />
               {expirySoonLabel(expSoon)}
+            </div>
+          {/if}
+
+          {#if band === 'critical' || band === 'low' || band === 'watch'}
+            <div
+              class="mt-1.5 inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-semibold
+                {band === 'critical'
+                ? 'bg-rose-50 text-rose-700'
+                : band === 'low'
+                  ? 'bg-amber-50 text-amber-800'
+                  : 'bg-sky-50 text-sky-700'}"
+              title="Berdasarkan rata-rata penjualan 30 hari terakhir"
+            >
+              Habis ≤ {formatRunway(runway)}
             </div>
           {/if}
 

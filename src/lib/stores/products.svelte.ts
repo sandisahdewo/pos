@@ -90,7 +90,7 @@ export type Product = {
   status: ProductStatus;
   description: string;
   taxRateId?: string;
-  defaultSupplierId?: string;
+  suppliers: ProductSupplier[];   // multi-supplier list; at most one isPrimary
   imageUrl: string;
   units: ProductPackaging[];
   attributes: ProductAttribute[];
@@ -99,6 +99,18 @@ export type Product = {
   extras: ProductExtra[];
   requiresBatchLabel?: boolean;   // print a thermal label per received batch (perishables, lot-tracked items)
   requiresExpiration?: boolean;   // capture expiration date on every batch; FIFO walks expiration ASC
+};
+
+// Per-(product, supplier) sourcing config. A product can have multiple supplier
+// rows — one marked primary, others as alternatives. PO creation uses the
+// primary by default but admin can pick any in the Buat PO modals.
+export type ProductSupplier = {
+  supplierId: string;
+  isPrimary: boolean;
+  unitCost: number;              // this supplier's unit cost (overrides product.cost for PO autofill)
+  leadTimeDays?: number;         // override Supplier.leadTimeDays for this product (undefined = use supplier's default)
+  supplierSku: string;            // supplier's catalog code / their SKU for this product
+  notes: string;
 };
 
 export function isAdvanced(p: Product): boolean {
@@ -127,9 +139,53 @@ export function priceWithTax(price: number, rate: TaxRate | undefined): number {
   return price * (1 + rate.rate / 100);
 }
 
+// The "primary" supplier entry on this product, or undefined when none set.
+// If none flagged primary but at least one supplier row exists, falls back to
+// the first row so callers always have something sensible.
+export function primarySupplier(p: Product): ProductSupplier | undefined {
+  if (!p.suppliers || p.suppliers.length === 0) return undefined;
+  return p.suppliers.find((s) => s.isPrimary) ?? p.suppliers[0];
+}
+
+// Backward-compatible: same shape as before (returns the Supplier object for
+// the primary entry), so existing call sites keep working without changes.
 export function defaultSupplier(p: Product): Supplier | undefined {
-  if (!p.defaultSupplierId) return undefined;
-  return suppliers.getById(p.defaultSupplierId);
+  const ps = primarySupplier(p);
+  if (!ps) return undefined;
+  return suppliers.getById(ps.supplierId);
+}
+
+// Resolve all active Supplier objects for this product, in order (primary first).
+export function suppliersFor(p: Product): Supplier[] {
+  const rows = [...(p.suppliers ?? [])].sort(
+    (a, b) => Number(b.isPrimary) - Number(a.isPrimary)
+  );
+  const out: Supplier[] = [];
+  for (const ps of rows) {
+    const s = suppliers.getById(ps.supplierId);
+    if (s) out.push(s);
+  }
+  return out;
+}
+
+// Per-supplier unit cost for this product (falls back to product.cost when the
+// product doesn't have a matching supplier row).
+export function costFromSupplier(p: Product, supplierId: string): number {
+  const ps = (p.suppliers ?? []).find((s) => s.supplierId === supplierId);
+  return ps?.unitCost ?? p.cost ?? 0;
+}
+
+// Per-(product, supplier) lead-time. Uses the override on the ProductSupplier
+// row when set, otherwise falls back to Supplier.leadTimeDays.
+export function productLeadDays(p: Product, supplierId?: string): number {
+  const target = supplierId
+    ? (p.suppliers ?? []).find((s) => s.supplierId === supplierId)
+    : primarySupplier(p);
+  if (!target) return 0;
+  if (typeof target.leadTimeDays === 'number' && target.leadTimeDays >= 0) {
+    return target.leadTimeDays;
+  }
+  return suppliers.getById(target.supplierId)?.leadTimeDays ?? 0;
 }
 
 function componentBaseCost(c: CompositeComponent): number {
@@ -379,7 +435,24 @@ const seed: Product[] = [
     prices: [retail({ kind: 'fixed', value: 25000 })],
     status: 'active',
     description: 'Double-shot espresso, 60ml.',
-    defaultSupplierId: 'sup_1',
+    suppliers: [
+      {
+        supplierId: 'sup_1',
+        isPrimary: true,
+        unitCost: 5000,
+        leadTimeDays: 7,
+        supplierSku: 'KN-ESP-2026',
+        notes: 'Single-origin Sumatra blend; bulanan.'
+      },
+      {
+        supplierId: 'sup_4',
+        isPrimary: false,
+        unitCost: 5400,
+        leadTimeDays: 3,
+        supplierSku: '',
+        notes: 'Cadangan saat Kopi Nusantara overdue.'
+      }
+    ],
     imageUrl: 'https://picsum.photos/seed/pos-espresso/240/240',
     units: [],
     attributes: [],
@@ -398,7 +471,15 @@ const seed: Product[] = [
     prices: [retail({ kind: 'markup_pct', value: 175 })],
     status: 'active',
     description: 'Whole milk latte with single-origin espresso.',
-    defaultSupplierId: 'sup_1',
+    suppliers: [
+      {
+        supplierId: 'sup_1',
+        isPrimary: true,
+        unitCost: 12000,
+        supplierSku: 'KN-LAT-2026',
+        notes: ''
+      }
+    ],
     imageUrl: 'https://picsum.photos/seed/pos-latte/240/240',
     units: [],
     attributes: [],
@@ -417,7 +498,24 @@ const seed: Product[] = [
     prices: [retail({ kind: 'markup_amount', value: 17000 })],
     status: 'active',
     description: 'Flaky all-butter croissant, baked daily.',
-    defaultSupplierId: 'sup_2',
+    suppliers: [
+      {
+        supplierId: 'sup_2',
+        isPrimary: true,
+        unitCost: 8000,
+        leadTimeDays: 1,
+        supplierSku: 'RS-CRO-PLAIN',
+        notes: 'Pengiriman pagi setiap hari.'
+      },
+      {
+        supplierId: 'sup_4',
+        isPrimary: false,
+        unitCost: 9200,
+        leadTimeDays: 3,
+        supplierSku: '',
+        notes: 'Frozen, hanya untuk darurat (kualitas turun).'
+      }
+    ],
     imageUrl: 'https://picsum.photos/seed/pos-croissant/240/240',
     units: [],
     attributes: [],
@@ -438,7 +536,16 @@ const seed: Product[] = [
     prices: [retail({ kind: 'fixed', value: 150000 })],
     status: 'active',
     description: 'Ceramic mug with embossed logo. Three colorways. Supplied on consignment.',
-    defaultSupplierId: 'sup_3',
+    suppliers: [
+      {
+        supplierId: 'sup_3',
+        isPrimary: true,
+        unitCost: 50000,
+        leadTimeDays: 14,
+        supplierSku: 'KL-MUG-12OZ',
+        notes: 'Konsinyasi quarterly refresh.'
+      }
+    ],
     imageUrl: 'https://picsum.photos/seed/pos-mug/240/240',
     units: [],
     attributes: [
@@ -501,7 +608,16 @@ const seed: Product[] = [
     ],
     status: 'active',
     description: 'Classic cola, 330mL can. Sold individually, by 6-pack or by case.',
-    defaultSupplierId: 'sup_4',
+    suppliers: [
+      {
+        supplierId: 'sup_4',
+        isPrimary: true,
+        unitCost: 3500,
+        leadTimeDays: 3,
+        supplierSku: 'GA-COLA-330',
+        notes: ''
+      }
+    ],
     imageUrl: 'https://picsum.photos/seed/pos-cola/240/240',
     units: [
       {
@@ -539,7 +655,15 @@ const seed: Product[] = [
     prices: [retail({ kind: 'fixed', value: 5000 })],
     status: 'archived',
     description: 'Discontinued sparkling water SKU.',
-    defaultSupplierId: 'sup_4',
+    suppliers: [
+      {
+        supplierId: 'sup_4',
+        isPrimary: true,
+        unitCost: 2500,
+        supplierSku: '',
+        notes: ''
+      }
+    ],
     imageUrl: '',
     units: [],
     attributes: [],
@@ -558,6 +682,7 @@ const seed: Product[] = [
     prices: [retail({ kind: 'fixed', value: 40000 })],
     status: 'active',
     description: 'One espresso + one butter croissant. Save Rp 10.000 vs buying separately.',
+    suppliers: [],
     imageUrl: 'https://picsum.photos/seed/pos-combo/240/240',
     units: [],
     attributes: [],
@@ -582,7 +707,24 @@ const seed: Product[] = [
     prices: [retail({ kind: 'fixed', value: 4000 })],
     status: 'active',
     description: 'Telur ayam segar — bahan baku untuk olahan dapur. Pelacakan batch wajib karena perishable.',
-    defaultSupplierId: 'sup_2',
+    suppliers: [
+      {
+        supplierId: 'sup_2',
+        isPrimary: true,
+        unitCost: 2500,
+        leadTimeDays: 1,
+        supplierSku: 'RS-TLR-30',
+        notes: 'Datang dalam tray 30 butir.'
+      },
+      {
+        supplierId: 'sup_4',
+        isPrimary: false,
+        unitCost: 2700,
+        leadTimeDays: 3,
+        supplierSku: '',
+        notes: 'Cadangan saat Roti Sejahtera sold out.'
+      }
+    ],
     imageUrl: 'https://picsum.photos/seed/pos-telur/240/240',
     units: [
       {
@@ -610,7 +752,16 @@ const seed: Product[] = [
     prices: [retail({ kind: 'markup_pct', value: 30 })],
     status: 'active',
     description: 'Daging sapi giling segar dalam gram. Disimpan dingin; cek tanggal kedaluwarsa per batch.',
-    defaultSupplierId: 'sup_2',
+    suppliers: [
+      {
+        supplierId: 'sup_2',
+        isPrimary: true,
+        unitCost: 130,
+        leadTimeDays: 1,
+        supplierSku: 'RS-DGC-KG',
+        notes: 'Pesan per kg, dikirim chilled pagi.'
+      }
+    ],
     imageUrl: 'https://picsum.photos/seed/pos-daging/240/240',
     units: [
       {

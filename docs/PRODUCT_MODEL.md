@@ -871,8 +871,704 @@ These exist in the mental model but aren't built:
 | **Product kind** | The discriminator `'goods' \| 'composite'` chosen at the top of the product form. Filters which feature chips (packagings, components) appear. |
 | **Per-variant recipe** | Each variant of a composite product can have its own `components` array, so e.g. Combo Small / Medium / Large can have different ingredient quantities. |
 | **Extras / modifiers** | Optional add-ons picked at sale time (sauces, toppings, gift wrap). Each has a price delta and optional stock impact. Apply to either kind. |
-| **Lead time** | Typical days from placing an order to receiving goods. Stored on Supplier. Used for reorder-point math (future). |
+| **Lead time / Waktu tunggu** | Typical days from placing an order to receiving goods. Stored on `Supplier.leadTimeDays` (global per supplier) with optional per-product override on `ProductSupplier.leadTimeDays`. Used for reorder-point math on /forecast. UI label: "Waktu tunggu". |
+| **Buffer / Cadangan** | Extra days of safety stock added on top of waktu tunggu in the reorder formula. `bufferDays` arg defaults to 7. UI label: "Cadangan". |
+
+---
+
+## Newer features (built 2026-05-15)
+
+The sections above describe the foundation. The features below extend it — payment lifecycle on orders + POs, the two finance pages, the per-product history view + reusable timeline component, the forecast subsystem, and a few POS terminal improvements. All described at the code-shape level (types, helpers, file paths); rationale for each lives in [Part II — Key design decisions](#key-design-decisions).
+
+### Customer credit flag (`Customer.creditAllowed`)
+
+```ts
+// src/lib/stores/customers.svelte.ts
+type Customer = {
+  ...existing fields...
+  creditAllowed: boolean;  // default false. Walk-in always treated as false.
+};
+```
+
+Toggled per customer in the customer form (and in the inline "Tambah" modal on `/pos`). When `false`, the POS terminal refuses to complete any transaction where `paymentAmount < total`. Default seed: `cust_1`, `cust_2`, `cust_3` are `true`; `cust_4` (Siti Rahayu, walk-in regular) stays `false`.
+
+### Order payments lifecycle (`status: 'credit'`)
+
+```ts
+// src/lib/stores/orders.svelte.ts
+export type OrderStatus = 'paid' | 'credit' | 'cancelled';
+
+export type OrderPayment = {
+  id: string;        // opay_<uuid>
+  amount: number;
+  method: PaymentMethod;
+  at: string;        // ISO datetime
+  notes: string;
+};
+
+export type Order = {
+  ...existing fields...
+  paidAmount: number;        // cumulative payments received
+  payments: OrderPayment[];  // chronological, includes the initial payment
+};
+```
+
+**Behaviors:**
+- `orders.add(input)` auto-seeds the first `OrderPayment` from the cart's `paymentMethod` + `paidAmount` when `paidAmount > 0`. So a fully-paid order has `payments: [oneEntry]` and a fully-credit order has `payments: []`.
+- `orders.recordPayment(orderId, { amount, method, notes? })` appends a payment, increments `paidAmount`, flips status to `'paid'` when `paidAmount >= total`. Rejects overpay (`amount > outstanding`) and cancelled orders.
+- `orderStatusLabels.credit = 'Piutang'`.
+
+**POS validation** (`charge()` in `/pos/+page.svelte`):
+- Computes `isPartialCash = isCash && paymentAmount < cartTotal`.
+- If partial cash AND walk-in → blocked with toast.
+- If partial cash AND customer without `creditAllowed` → blocked with toast.
+- Otherwise: `paidAmount = isCash ? min(paymentAmount, cartTotal) : cartTotal`, `status = paidAmount >= total ? 'paid' : 'credit'`.
+- Inline amber banner shows expected sisa piutang; rose banner explains rejection.
+- Button copy switches from `Bayar Rp X` → `Catat piutang` when partial-cash + permitted.
+
+### PurchaseOrder payments lifecycle
+
+```ts
+// src/lib/stores/purchaseOrders.svelte.ts
+export type PurchaseOrderPaymentMethod = 'cash' | 'transfer' | 'other';
+
+export type PurchaseOrderPayment = {
+  id: string;        // popay_<uuid>
+  amount: number;
+  method: PurchaseOrderPaymentMethod;
+  at: string;
+  notes: string;
+};
+
+export type PurchaseOrder = {
+  ...existing fields...
+  paidAmount: number;
+  payments: PurchaseOrderPayment[];
+};
+```
+
+`purchaseOrders.recordPayment(poId, { amount, method, notes? })`:
+- Rejects consignment POs (use `/payouts` instead).
+- Rejects cancelled POs.
+- Rejects overpay.
+- Appends payment, increments `paidAmount`. (No status field flip — `PurchaseOrderStatus` is about receipt lifecycle, not payment.)
+
+`poTotal(po) - po.paidAmount` is the outstanding utang.
+
+Default seed: `PO-2026-001` paid 200k of 490k, `PO-2026-005` paid 100k of 477k. Drives non-empty `/utang` on first paint.
+
+### `/utang` — Accounts payable to suppliers
+
+`src/routes/utang/+page.svelte`. Standalone page; not an extension of `/payouts` (consignment payouts are deliberately separate, see [decision](#separate-utang--piutang-pages)).
+
+**Row set:** every standard PO with status in `{sent, partial, received}` and `outstanding > 0` (default). Cancelled and drafts excluded.
+
+**Stat cards:** total committed, total paid, total outstanding.
+
+**Filters:** search (code/supplier/notes), supplier Select, status (`'open' | 'paid' | ''`), date range.
+
+**Row actions:** Detail modal (payment timeline + Buka PO link) + Bayar modal (calls `purchaseOrders.recordPayment`).
+
+### `/piutang` — Accounts receivable from customers
+
+`src/routes/piutang/+page.svelte`. Standalone page.
+
+**Row set:** orders with `customerId` set AND (`status === 'credit'` OR `status === 'paid' && payments.length > 1`). The second clause keeps historical multi-payment lifecycle orders visible in the "paid" view.
+
+**Per-customer rekap card** (above the main table): groups outstanding by `customerId`, sorted by outstanding desc. Click a row to filter the main table. Shows a red "Piutang tidak diizinkan" badge when the customer's `creditAllowed` is false (data-integrity safety net).
+
+**Stat cards:** total dijual on credit, total received, total outstanding.
+
+**Filters:** search, customer, status (`'open' | 'paid' | ''`), date range.
+
+**Row actions:** Detail modal (payment timeline + Buka pesanan link) + Terima modal (calls `orders.recordPayment`).
+
+### `<MovementTimeline>` component
+
+```svelte
+<!-- src/lib/components/inventory/MovementTimeline.svelte -->
+<script lang="ts">
+  type Props = {
+    movements: StockMovement[];
+    emptyTitle?: string;
+    emptyHint?: string;
+    onImageClick?: (movement: StockMovement) => void;
+  };
+</script>
+```
+
+Vertical timeline (left border + colored dots). Each row: kind Badge with up/down arrow, signed colored qty delta, "→ sisa N", `Intl.DateTimeFormat('id-ID')` timestamp, performer, clickable reference code (link based on `reference.kind` → `/purchase-orders/[id]`, `/orders/[id]`, `/stock-opname/[id]`), reason badge, 40×40 image thumbnail, notes line.
+
+Used by:
+- Opname Selidiki panel (`/stock-opname/[id]`).
+- Per-product history page (`/inventory/[productId]/history`).
+
+### `/inventory/[productId]/history` — Per-product timeline
+
+`src/routes/inventory/[productId]/history/+page.svelte`. Full-page audit story for one product.
+
+**Header card:** product name + SKU. Back link to `/inventory`. Audit-off empty state when toggle is disabled.
+
+**5 stat cards:**
+- **Stok saat ini** — `stockOf(productId, variantFilter?)` with per-location breakdown when locations on.
+- **Diterima** — sum of `receive` qtyDelta in window.
+- **Terjual** — net of `sale` − `sale-cancel` deltas.
+- **Penyesuaian** — split `+/-` of `adjust-in` / `adjust-out`, with shrinkage value (`Σ |negative adjust × unitCost|`) in IDR.
+- **Pemindahan** — separate ↑ `move-in` / ↓ `move-out` totals.
+
+**Filter strip:** search, variant Select (when product has variants), kind, location (when on), reason, date range.
+
+**Timeline:** `<MovementTimeline>` fed with `stockMovements.forProduct(productId, variantId?)` filtered by the strip. Image preview Modal for clicked thumbs.
+
+**Entry points to this page:**
+- `/inventory` row Activity icon (when `auditOn`).
+- "Lihat riwayat lengkap" link in the inventory Batches modal footer.
+- "Buka riwayat lengkap" link in the opname Selidiki panel footer.
+
+### Forecast subsystem
+
+```ts
+// src/lib/utils/forecast.ts
+export function dailySalesRate(productId, variantId?, windowDays = 30): number;
+export function currentStockFor(productId, variantId?): number;
+export function daysOfSupply(productId, variantId?, windowDays = 30): number;
+export function suggestedReorderQty({
+  productId, variantId?, windowDays?, leadDays?, bufferDays?
+}): number;
+export function runwayBandFor(days): 'critical' | 'low' | 'watch' | 'ok' | 'inactive';
+export const runwayBandLabels: Record<RunwayBand, string>;
+export const runwayBandVariant: Record<RunwayBand, 'danger'|'warning'|'info'|'success'|'neutral'>;
+export function formatRunway(days): string;        // '5.2 hari', 'Tidak ada penjualan', etc.
+export function leadDaysFor(productId): number;     // resolves Supplier.leadTimeDays via Product.defaultSupplierId
+export function forecastSubjects(): ForecastSubject[]; // flat list of (product, variant?) pairs
+```
+
+**Method:** sums non-cancelled `order.lines.quantity × unitFactor` for matching `(productId, variantId)` over the window, divides by windowDays. Works for goods + composites because every order line carries the parent productId (composites count "1 combo per line" regardless of how many ingredient units it consumed). Sales of ingredients via composites also count at the ingredient level via `applyOrderToStock` → `deductComponents` movements.
+
+**Composite support:** `currentStockFor` picks `producibleStock` / `producibleVariantStock` for composites; `stockOf` for goods.
+
+**Suggested reorder formula:** `ceil(rate × (lead + buffer))` where `lead = Supplier.leadTimeDays` and `buffer = bufferDays` arg (default 7).
+
+**Bands:**
+| Band | Days of supply | Use |
+|---|---|---|
+| `critical` | ≤3 (or negative) | Reorder hari ini |
+| `low` | 4–7 | Reorder minggu ini |
+| `watch` | 8–14 | Pantau, siapkan PO |
+| `ok` | >14 | Belum perlu tindakan |
+| `inactive` | `Infinity` (no sales) | Tidak ada data |
+
+### `/forecast` — Prediksi Stok page
+
+`src/routes/forecast/+page.svelte`.
+
+**5 colored stat cards** counting items per band (Kritis / Menipis / Perhatikan / Aman / Tidak ada penjualan), filtered by category + location.
+
+**Filter strip:** search, window (7/14/30/60/90), category, location (when on), urgency band, "Sembunyikan tanpa penjualan" toggle.
+
+**Tunable buffer-days input** in the strip between header and rows — affects suggested reorder live.
+
+**Table** sorted by runway asc, with rows: product+variant (linked to `/inventory/[id]/history`, with optional "Komposit" badge), stock with unit suffix, velocity ("~24/hari pcs"), runway Badge, suggested reorder qty with "lead 7h + buffer 7h" sub-line, supplier name (or "Belum di-set").
+
+**Empty states** differentiate "no products" / "no products + hide-no-sales" / "no match for filter."
+
+### Per-row forecast badge on `/inventory`
+
+Small pill in the stock cell, shown only when `daysOfSupply(row.id, undefined, 30)` lands in `critical` / `low` / `watch` band. Colored rose / amber / sky to match band. Hidden for `ok` and `inactive` to avoid clutter. Title attr: "Berdasarkan rata-rata penjualan 30 hari terakhir."
+
+### POS card quick-pick (variants + packagings)
+
+Product cards in `/pos` grow a button strip below the main click area:
+
+- **Has variants only** — one button per variant: `+ White ·N`, `+ Black ·N` (with per-variant available stock). Disables individual buttons when that variant has 0 stock.
+- **Has packagings only** — `+ base` plus one per packaging: `+ Pack ·6`, `+ Box ·24`. Each tap = new cart line at that unit.
+- **Both** — variant strip wins; packaging is switched on the cart line after add.
+- **Neither** — no strip; main card click still adds 1 base unit.
+
+Main click on the card still adds **first variant + base unit** (backward compatibility — cashier in a hurry doesn't have to aim).
+
+`addToCart(p, variantId?, unitId?, unitFactor = 1)`.
+
+### Inline "+ Tambah" customer on `/pos`
+
+Small dashed-border button next to the Pelanggan label in the cart sidebar. Opens a focused modal:
+- Name (required)
+- Phone
+- Type (Individu/Bisnis)
+- Daftar harga
+- `creditAllowed` Toggle
+- Notes
+
+Save → calls `customers.add(...)` with empty defaults for the rest (email/address/taxId), sets `joinedAt` to today, then auto-sets `session.customerId = created.id` so the new customer is immediately active in the tab.
+
+### Atur Stok reason + image
+
+```ts
+// src/lib/stores/stockMovements.svelte.ts
+export type StockAdjustmentReason =
+  | 'damaged' | 'expired' | 'lost' | 'sample'
+  | 'found' | 'initial-seed' | 'correction' | 'other';
+
+export const adjustmentReasonLabels: Record<StockAdjustmentReason, string>;
+export const adjustmentReasonsForOut: StockAdjustmentReason[];  // damaged/expired/lost/sample/correction/other
+export const adjustmentReasonsForIn: StockAdjustmentReason[];   // found/initial-seed/correction/other
+
+export type StockMovement = {
+  ...existing fields...
+  reason?: StockAdjustmentReason;
+  imageUrl?: string;   // optional data URL via FileReader.readAsDataURL
+};
+```
+
+`batches.adjustStock(...)` gains `reason?` and `imageUrl?` args; forwards both to `stockMovements.log` for every emitted row (both positive new-batch path and negative LIFO walk).
+
+`/inventory` Atur stok modal:
+- Required Alasan Select. Options switch based on Add/Subtract mode — picking Tambah shows only intake reasons, Kurangi shows only outflow reasons. Mode toggle resets the selection.
+- Foto bukti uploader (dashed drop zone) → FileReader → data URL. 96×96 preview with "Hapus foto" button.
+- Save validates reason set. If notes left blank, auto-fills with the reason label.
+
+`/stock-movements`:
+- Notes column renders 32×32 thumbnail (clickable → opens full image in a Modal with caption `MOV-… · Product · Reason`) + reason Badge + existing notes text.
+- Toolbar gains a reason filter Select.
+- Search matches the reason label too.
+
+### Three move flows (scan basket, bulk picker)
+
+In addition to the existing per-row `Pindah` modal:
+
+**`/inventory/move/scan`** — scan-first basket. Top: destination Select. Center: large autofocused input that accepts `BATCH-YYYY-NNN`, variant SKU, or product SKU (parent SKU rejected on multi-variant products). Enter → `resolveToken` resolves to a specific batch and adds (or increments) a row in the basket. Each basket row has its own qty stepper + unit selector (when product has packagings — qty stored in BASE, display in chosen unit, steppers move by `factor`). Submit fires `moveStock` per item with a shared `transferGroupId`. Input refocuses after each scan and after submit for hands-free workflow.
+
+**`/inventory/move/bulk`** — from-location batch picker. Pick source location once → batch list at source sorted by expiry asc. Each row: checkbox + per-row unit selector + qty input (default = batch qtyRemaining, capped). "Pilih semua" / "Pilih yang mendekati kedaluwarsa" / "Bersihkan" quick-actions. Submit moves all selected with shared `transferGroupId`.
+
+Both flows: `batches.moveStock` accepts an optional `transferGroupId` so multi-batch transfers group as one logical operation in the ledger.
+
+### Sidebar additions
+
+New nav items added by these features:
+- "Lokasi" — Data Master group (gated on `locationsEnabled`).
+- "Opname Stok" — Katalog group (gated on `auditTrailEnabled`).
+- "Riwayat Stok" — Wawasan group (gated on `auditTrailEnabled`).
+- "Prediksi Stok" — Wawasan group (always shown).
+- "Utang Pembelian" — new **Keuangan** group.
+- "Piutang Pelanggan" — new **Keuangan** group.
+
+`/payouts` (Pembayaran Konsinyasi) stays under Pengadaan (consignment-specific).
+
+### Helpers quick reference (additions)
+
+| Helper | Returns | Notes |
+|---|---|---|
+| `orders.recordPayment(id, { amount, method, notes? })` | `{ ok, reason?, order? }` | Appends `OrderPayment`, updates `paidAmount`, flips status to `'paid'` when fully covered. Rejects overpay/cancelled. |
+| `purchaseOrders.recordPayment(id, { amount, method, notes? })` | `{ ok, reason?, po? }` | Same for POs. Rejects consignment POs (use `/payouts`) + cancelled + overpay. |
+| `dailySalesRate(productId, variantId?, windowDays = 30)` | `number` | Σ `quantity × unitFactor` for non-cancelled order lines in window ÷ windowDays. |
+| `currentStockFor(productId, variantId?)` | `number` | Picks `producibleStock`/`producibleVariantStock` for composites, `stockOf` for goods. |
+| `daysOfSupply(productId, variantId?, windowDays = 30)` | `number` | `currentStock / rate`; `Infinity` when no sales. |
+| `suggestedReorderQty({ productId, variantId?, leadDays?, bufferDays? = 7 })` | `number` | `ceil(rate × (lead + buffer))`. 0 when no sales. |
+| `runwayBandFor(days)` | `'critical'\|'low'\|'watch'\|'ok'\|'inactive'` | ≤3 / ≤7 / ≤14 / >14 / no-sales. |
+| `formatRunway(days)` | `string` | "5.2 hari" / "Tidak ada penjualan" / "Sudah habis" / "<1 hari". |
+| `leadDaysFor(productId)` | `number` | Resolves `Product.defaultSupplierId` → `Supplier.leadTimeDays`. |
+| `forecastSubjects()` | `ForecastSubject[]` | Flat list of (product, variant?) pairs for forecast iteration. |
+| `customers.add({ ..., creditAllowed })` | `Customer` | Extends existing add; `creditAllowed` defaults false in form, true in seed for selected customers. |
+
+### File map (additions)
+
+```
+src/lib/stores/
+  customers.svelte.ts         + creditAllowed field on Customer
+  orders.svelte.ts            + OrderStatus 'credit', OrderPayment, paidAmount, payments, recordPayment
+  purchaseOrders.svelte.ts    + PurchaseOrderPaymentMethod, PurchaseOrderPayment, paidAmount, payments, recordPayment
+  stockMovements.svelte.ts    + StockAdjustmentReason types + labels + option lists; movement reason/imageUrl fields
+  batches.svelte.ts           + adjustStock reason/imageUrl args; moveStock transferGroupId; moveProductStock wrapper
+
+src/lib/utils/
+  forecast.ts                 NEW — daily rate, days of supply, reorder, runway bands, subject iterator
+
+src/lib/components/inventory/
+  MovementTimeline.svelte     NEW — reusable vertical timeline component
+
+src/routes/
+  customers/+page.svelte      + creditAllowed Toggle in form
+  pos/+page.svelte            + quick-pick variant/packaging buttons, + Tambah customer modal, piutang validation
+  inventory/+page.svelte      + forecast badge in stock cell, Riwayat row action, reason+image in Atur modal,
+                               Lihat batch modal "Lihat riwayat lengkap" footer
+  inventory/[productId]/history/+page.svelte  NEW
+  inventory/move/scan/+page.svelte            NEW
+  inventory/move/bulk/+page.svelte            NEW
+  stock-movements/+page.svelte                + reason filter, reason badge + image thumb + preview modal
+  stock-opname/[id]/+page.svelte              + multi-packaging count input, Selidiki uses MovementTimeline,
+                                                "Buka riwayat lengkap" footer link
+  utang/+page.svelte          NEW
+  piutang/+page.svelte        NEW
+  forecast/+page.svelte       NEW
+```
+
+### Seed data summary (drives non-empty first-paint demos)
+
+- **14 orders** (`ORD-2026-001..014`): 1 cancelled (Espresso), 4 paid Telur/Daging (referenced from movements), 7 paid consignment-mug sales (drive `/payouts` owed for `sup_3`), 2 credit orders (`ORD-013` Andi partial 100k/166.5k, `ORD-014` PT Distributor full credit 122.1k → drive `/piutang`).
+- **26 movements** total. Anchored to seed batches; each batch's final qtyAfter matches its current `qtyRemaining` for full reconciliation.
+- **10 opnames** (`OPN-2026-001..010`): 1 with Telur shrinkage (cross-linked from `mov_seed_10`), 6 zero-variance completed, 2 drafts, 1 cancelled.
+- **3 payouts** to `sup_3` (200k + 150k + 80k = 430k paid of 510k owed → 80k outstanding).
+- **2 PO partial payments** (PO-2026-001 200k of 490k, PO-2026-005 100k of 477k).
+- Batches reconciled: `batch_1` 116/120, `batch_2` 78/80, `batch_4` 12/18, `batch_5` 8/12, `batch_6` 3/6, others unchanged.
 
 ---
 
 That's the master product. If you're picking this up cold, read this doc, then open `src/lib/stores/products.svelte.ts` and `src/lib/components/products/ProductForm.svelte` — those two files plus this doc are 90% of the surface area.
+
+---
+
+# Part II — Business plan, decisions, and rationale
+
+> Everything below is the **why**. The sections above are the **what** (data shapes, helpers, code paths). When the two disagree, the sections below are the intent; sections above are the implementation.
+>
+> **Last reviewed:** 2026-05-15
+
+## Vision & positioning
+
+A point-of-sale + inventory admin tool for **small-to-medium Indonesian retail**. Target persona: warmindo / warung / café owner who manages a single store and wants to grow into multi-zone storage, consignment supply, audit-grade accountability, and credit-customer (bon/piutang) sales without buying enterprise software.
+
+**Promise:** start as simple as a paper notebook ("ketik produk, cetak harga, terima uang"), but every feature the owner needs as they grow — multi-location stock, cycle count for theft detection, piutang ledger for regular customers, consignment tracking, stock forecasting — is one toggle away and uses the data they're already entering.
+
+**Positioning:**
+- **Not** ERP-class (no general ledger, no chart of accounts, no double-entry). Focused on operational reality of a small store.
+- **Not** SaaS-templated. Indonesian-language UI, IDR-only pricing, tax rules (PPN 11% / exempt) baked in.
+- **Not** "POS for restaurants only" nor "POS for retail only" — supports both: composite recipes (mie ayam = noodle + chicken + sauce) AND retail packaging (1 pcs / 1 box of 24).
+
+## Target user
+
+**Primary persona: Pak/Bu Warmindo Owner**
+- Single physical store (warmindo, warung, kelontong, café, small toko).
+- Sells goods (drinks, snacks, packaged food) AND prepared items (recipes from ingredients).
+- 50–500 SKUs.
+- 1–4 staff: owner + cashier(s); maybe a kitchen worker.
+- Phone or shared desktop/tablet; rarely both.
+- 2–10 suppliers; some consign mugs/merch.
+- 0–30 "langganan tetap" who might "bon dulu, bayar minggu depan."
+- Currently tracks stock in a notebook or spreadsheet; loses 5–15% to shrinkage they can't trace.
+
+**Secondary persona: Kasir**
+- Fast pick (variant + packaging shortcut buttons), fast scan (USB scanner), clear blockers when transaction is rejected.
+- Doesn't manage inventory directly; might do moves and opname.
+
+**Anti-persona:** multi-branch chain (out of scope), restaurant with full table-service / reservations / kitchen tickets, B2B distributor primarily on net-90 invoices.
+
+## Constraints & defaults
+
+| Aspect | Choice | Why |
+|---|---|---|
+| Currency | IDR only | Domestic Indonesian retail. `formatRupiah` uses `id-ID`, 0 fraction digits. |
+| Language | Bahasa Indonesia | UI labels, errors, badges, notes. English in code/comments. |
+| Tax | PPN 11% default, `tax_exempt` available | Per UU HPP. Fallback: product → category → default. Bahan Segar defaults exempt. |
+| Date locale | `id-ID` | Display via `Intl.DateTimeFormat`. ISO 8601 for storage. |
+| Time zone | Local (browser) | No multi-TZ handling. |
+| Scale | Single store, multi-zone | One physical location with internal zones (Etalase, Rak, Gudang). |
+| Persistence | In-memory only | `$state` singletons; refresh wipes runtime data. Backend deferred. |
+| Auth | Hardcoded user | `user.current.name` for performer attribution. Blocked on backend. |
+| Decimal qty | Allowed via packaging factor | Base units always integer (pcs, g, mL). Fractional packaging input rounds on store. |
+| Negative stock | Not allowed | Atur stok / opname enforce min 0. Sales blocked when `stockOf <= 0`. |
+
+## Architecture philosophy
+
+### Opt-in features for small stores
+Every non-trivial workflow (multi-zone storage, audit trail, opname) is **gated behind a toggle in /settings**, designed off-by-default for production (currently `true` for dev convenience). A warmindo with 20 SKUs and one cashier should not see "Pindahkan stok" / "Riwayat Stok" / "Opname Stok" until they enable them.
+
+When a toggle is **off**: data layer keeps working (every batch carries `locationId: 'loc_gudang'`; `stockMovements.log` no-ops). UI surface vanishes (sidebar entries hide, row actions hide, page-level empty states explain enabling). Toggling on later = zero migration.
+
+### Audit-first when enabled
+When audit toggle is on, **every** batch mutation writes a `StockMovement` row — no exceptions. Sales (per-allocation), receives, manual adjustments, moves, opname reconciliations, consignment returns. The ledger is the single source of truth for "what happened, to what, when, where, by whom, with what reason."
+
+### Frontend-first scaffold
+`$state`-backed singletons are the "stores," seeded with realistic data. Lets the user iterate on UX without committing to a backend stack. Forces clean separation between UI and "API" (store method calls). Backend migration becomes mostly mechanical (store methods → API endpoints; `$state` arrays → SQL queries).
+
+### Single source of truth for stock
+Stock lives **only** on `Batch.qtyRemaining`. No scalar `Product.stock` / `Variant.stock`. Every derived value (`stockOf`, `stockBreakdown`, `stockByLocation`, `producibleStock`, `producibleVariantStock`, `totalStock`) computed at read. Eliminates "displayed stock ≠ actual stock" bug class. Cost is similarly derived (`currentCost` = weighted average of owned batches).
+
+### Reverse-only audit operations
+Non-destructive where possible:
+- `moveStock` full-remainder transfer mutates `locationId` in place but logs `move-relocate` for traceability.
+- Partial transfers create sibling batches preserving `unitCost`, `expiresAt`, `receivedAt`, supplier, source PO.
+- Cancelled orders don't delete `batchAllocations`; they replay them in reverse to restock.
+- Manual `adjust-out` decrements existing batches LIFO (newest first) to preserve FIFO order for future sales.
+
+## Feature inventory
+
+Grouped by domain. Each lists its surfaces and key behaviors.
+
+### Product catalog
+**Surfaces:** `/products`, `/products/new`, `/products/[id]/edit`, master-data CRUD for category/unit/pricelist/tax/supplier.
+
+- **Two product kinds:** `goods` (bought finished) and `composite` (made from other products — bundles, BOM recipes).
+- **Variants** (Red/M, Black/L) with own SKU, cost, prices, barcode, image, FIFO stock queue.
+- **Packagings** (1 pcs / 6-pack / 24-box) with own pricing entries + barcode.
+- **Attributes** (Color, Size) drive variant generator; `regenerateVariants` preserves manual edits.
+- **Extras / modifiers** (extra shot, almond milk) — optional add-ons with price delta + optional component deductions.
+- **Tax fallback chain:** product → category → default.
+- **Default supplier** soft reference; used for autofill at PO creation + forecast reorder math.
+
+### Inventory: batches + locations
+**Surfaces:** `/inventory`, `/inventory/[id]/history`, `/locations`, `/inventory/move/scan`, `/inventory/move/bulk`, `/inventory/batches/[id]/label`, `/inventory/po/[poId]/labels`.
+
+- **Batches** are SoT: `{ id, code (BATCH-YYYY-NNN), productId, variantId?, ownership, supplierId?, unitCost, qtyReceived, qtyRemaining, receivedAt, expiresAt?, locationId, notes }`.
+- **FIFO depletion** sorts by `expiresAt` ASC then `receivedAt` ASC.
+- **Locations** (opt-in): Etalase / Rak Belakang / Gudang, each with `customerVisible` + `kind`. One flagged `isDefaultReceipt`.
+- **Three move flows** ([decision](#three-move-flows-not-one)): per-row modal, scan basket, bulk picker.
+- **Stock adjustments** — Atur stok modal with required reason enum + optional photo (FileReader → data URL).
+- **Expiry tracking** — `requiresExpiration` products require date at receive/adjust. Per-product expiry-soon warning on inventory.
+- **Per-product history** — `/inventory/[id]/history` with timeline + stats (Diterima, Terjual, Penyesuaian, Pemindahan, Shrinkage value).
+
+### Audit trail & opname
+**Surfaces:** `/stock-movements`, `/stock-opname`, `/stock-opname/new`, `/stock-opname/[id]`.
+
+- **StockMovement ledger** — every mutation logs `{ kind, qtyDelta, qtyAfter, unitCost, reference, performedBy, at, reason?, imageUrl?, notes }`. Nine kinds: `receive`, `sale`, `sale-cancel`, `adjust-in`, `adjust-out`, `move-out`, `move-in`, `move-relocate`, `return-consignor`.
+- **Opname workflow** — admin picks location + category + product subset → system snapshots `expectedQty` per (product, variant) → admin enters `countedQty` → system reconciles non-zero variance via `batches.adjustStock` with opname reference.
+- **Multi-packaging count input** — per-row unit selector on opname count screen. Admin counts "3 trays" → system records `30 pcs` + shows "= 30 pcs" hint.
+- **Selidiki investigation** — per-row button → side panel with `MovementTimeline` (last 30 days for that product/variant at that location). For tracing missing units.
+- **Reusable `<MovementTimeline>`** component shared by Selidiki + per-product history page.
+
+### POS terminal (Kasir)
+**Surface:** `/pos`.
+
+- **Multi-tab cart sessions** — tab strip with customer name + line count + close.
+- **Product grid** — click adds 1 base unit.
+- **Quick-pick buttons:**
+  - Packagings: button strip (`+ pcs`, `+ Box ·24`). One tap = new cart line at that unit.
+  - Variants: button strip (`+ White`, `+ Black`). One tap = new cart line for that variant. Variants win when both present (packaging switched on cart line).
+- **+ Tambah** customer button next to Pelanggan label → inline add-customer modal, auto-selects new customer.
+- **Pricelist resolution** — customer's `pricelistId` drives `priceForQty`. Pricelist name shown.
+- **Scan/search** — Enter resolves to product SKU / variant SKU / batch code.
+- **Tax-inclusive line totals.**
+- **Payment methods:** Tunai, QRIS, Kartu, Transfer.
+- **Cash partial payment** ([decision](#piutang-requires-per-customer-permission)):
+  - Walk-in → blocked.
+  - Customer without `creditAllowed` → blocked.
+  - Customer with `creditAllowed` → order saved as `'credit'`, `paidAmount = paymentAmount`, sisa = piutang.
+
+### Procurement: Purchase Orders
+**Surfaces:** `/purchase-orders`, `/purchase-orders/new`, `/purchase-orders/[id]`, `/purchase-orders/[id]/edit`.
+
+- **PO types:** `standard` (utang per PO total) and `consignment` (utang per-sale via `/payouts`).
+- **Statuses:** `draft` → `sent` → `partial`/`received` → `cancelled`. Transitions explicit.
+- **Goods receipt** creates one `Batch` per line, snapshotting unit cost / supplier / source PO line. Supports partial fulfillment. Auto-flips status.
+- **Per-line expiry** — `requiresExpiration` products require `expiresAt` at receive.
+- **Label printing** — single-batch + per-PO bulk for thermal-printer output.
+
+### Finance: Utang, Piutang, Konsinyasi
+**`/utang` — Accounts Payable to suppliers (standard POs):**
+- Lists every `standard` PO with `paidAmount < poTotal`.
+- Stat cards: committed / paid / outstanding. Filter by supplier / status / date.
+- **Catat pembayaran** modal → `purchaseOrders.recordPayment` with amount + method.
+- Detail modal: full payment timeline.
+
+**`/piutang` — Accounts Receivable from customers:**
+- Lists orders with `status: 'credit'` OR `status: 'paid'` with multi-payment lifecycle.
+- Per-customer rekap card (sorted by outstanding desc; click to filter table).
+- Stat cards: dijual / received / outstanding.
+- **Catat penerimaan** modal → `orders.recordPayment`. Flips to `paid` when fully covered.
+- Detail modal: full payment timeline per order.
+
+**`/payouts` — Consignment-specific payable:**
+- Reads `consignmentOwedBySupplier` (walks paid orders' `batchAllocations` where `ownership === 'consignment'`).
+- Outstanding = total per supplier − sum of payouts.
+- Return-to-consignor flow (`batches.returnToConsignor`) decrements without payable impact.
+
+### Forecasting
+**Surface:** `/forecast`.
+
+- **Simple moving-average daily rate** over a window (7/14/30/60/90 days).
+- **Bands:** 🔴 Kritis (≤3d), 🟠 Menipis (≤7d), 🟡 Perhatikan (≤14d), 🟢 Aman (>14d), ⚪ Tidak ada penjualan.
+- **Suggested reorder qty** = `ceil(rate × (supplier.leadTimeDays + bufferDays))`. Buffer tunable inline.
+- **Filter** by category / location / urgency / hide-no-sales. Composite products forecast via `producibleStock` ÷ composite-line velocity.
+- **Inventory row badge** mirrors runway (only when band is critical/low/watch).
+
+### Master data
+`/employees`, `/suppliers`, `/categories`, `/units`, `/pricelists`, `/taxes`, `/locations` (opt-in), `/products`, `/customers`. List page with search/filter + modal CRUD (products and POs use dedicated `/new` and `/[id]/edit` pages when forms get tall).
+
+## Key design decisions
+
+### Consignment as PO type, not product flag
+**Decision:** Product is "on consignment" iff at least one non-cancelled consignment-type PO references it.
+**Why:** Reality. Same SKU can be retailed (owned) AND consigned (titipan) from different suppliers. A product-level flag forces an artificial decision.
+**Alternative considered:** `Product.isConsigned: boolean`. Rejected as too coarse.
+
+### Batches as single source of truth (no scalar stock)
+**Decision:** Stock lives on `Batch.qtyRemaining`. No scalar `Product.stock` / `Variant.stock`.
+**Why:** Removes "displayed ≠ actual" bug class. FIFO depletion, cost-per-batch, consignment flag fall out naturally.
+**Alternative:** Scalar updated on every sale/receive. Rejected for sync bugs.
+
+### Locations as opt-in feature
+**Decision:** `Location` resource + `Batch.locationId` always present in data layer; UI gated by `settings.inventory.locationsEnabled`.
+**Why:** Small stores keep everything in one place. Multi-zone adds real cognitive overhead.
+**Alternative:** Always show locations. Rejected for friction.
+
+### Three move flows (not one)
+**Decision:** Per-row modal (review and decide) + scan basket (phone in warehouse) + bulk picker (weekly refill).
+**Why:** Different physical contexts call for different inputs. Unifying makes all three worse.
+**Alternative:** One unified UI. Rejected.
+
+### Required reason + photo on manual adjustments
+**Decision:** Atur stok requires typed reason (`damaged`/`expired`/`lost`/`sample`/`found`/`initial-seed`/`correction`/`other`). Optional photo upload via FileReader → data URL.
+**Why:** Audit value. Without reason, "manual adjust" rows are unqueryable. Photo proof matters for insurance / disputes / supplier returns.
+**Alternative:** Free-text notes only. Rejected as not queryable.
+
+### Atur stok and opname coexist
+**Decision:** Keep both. Atur surgical ("known cause, known qty"); Opname procedural ("count and discover").
+**Why:** Forcing single broken egg through multi-step opname is friction staff will skip by faking numbers. Atur is 3 clicks; Opname for one item is ~7.
+**Alternative:** Remove Atur, route everything through Opname. Rejected.
+
+### Quick-pick buttons on POS cards
+**Decision:** Variant or packaging button strip on product cards. Main click still adds first variant + base unit.
+**Why:** Tap-twice (open dropdown, change unit) is slow during a queue.
+**Alternative:** Dropdown-only. Rejected for queue speed.
+
+### Separate /utang and /piutang pages
+**Decision:** Dedicated pages, not extension of `/payouts`.
+**Why:** They model different things. Utang = standard PO payables. Piutang = customer receivables. Payouts = consignment-specific (consignor owns the goods).
+**Alternative:** Extend `/payouts`. Rejected.
+
+### Piutang requires per-customer permission
+**Decision:** `Customer.creditAllowed: boolean` (default `false`). Walk-in cannot do piutang. POS rejects partial cash for customers without the flag.
+**Why:** Without explicit permission, every walk-in could rack up uncollectable debt.
+**Alternative:** Allow for any selected customer. Rejected as too leaky.
+
+### Simple moving average for forecast
+**Decision:** Daily rate = `sum(qty over window) / windowDays`. No seasonality, trend, or exponential smoothing.
+**Why:** Accurate enough at warmindo scale. Day-of-week / seasonality fix specific issues but add complexity not yet justified. Forecast page labels itself "panduan, bukan kebenaran absolut."
+**Alternative:** Exponential smoothing / weekday weights / ML. Deferred until simple-average is failing.
+
+### Opt-in toggle defaults
+**Decision:** `locationsEnabled` and `auditTrailEnabled` currently default `true` for dev convenience.
+**Why for production:** Should flip to `false` before first real deploy so small stores see simple flow first. Release-prep checklist item.
+
+## Opt-in toggles (in `/settings`)
+
+### `inventory.locationsEnabled`
+- **On:** "Lokasi" sidebar entry; `/inventory` gains location filter + breakdown chips + Pindahkan action + Scan/Bulk move pages; `/products` location breakdown; `/pos` location chips ("Etalase · 5 / Gudang · 90" or "Ambil dari: Gudang · 80"); Atur stok modal location Select.
+- **Off:** All location UI hidden. Stock still tracked per batch with `locationId: 'loc_gudang'`. Toggle on later = instant unlock.
+
+### `inventory.auditTrailEnabled`
+- **On:** "Opname Stok" + "Riwayat Stok" sidebar; every batch mutation logs `StockMovement`; Atur stok requires reason; opname workflow available; investigation panels and per-product history populated.
+- **Off:** No log writes. Pages accessible direct via URL but show "Aktifkan di Pengaturan" empty state.
+
+**Future toggles to add:**
+- `inventory.compositeEnabled` — hide BOM / recipe products for stores that only resell.
+- `sales.piutangEnabled` — hide customer credit flow for cash-only stores.
+- `sales.taxEnabled` — for non-PKP stores that don't charge PPN.
+
+## Data model decisions (for backend planning)
+
+### Variants in separate table
+When backend lands: `products` and `product_variants` as separate tables with FK. Every `variantId` slot in current code becomes a real FK.
+
+### Polymorphic pricelist entries
+Pricing exists at three scopes today: product, variant, packaging. Backend: one `pricelist_entries` table with polymorphic scope (`scope_kind`, `scope_id`) + `pricelist_id` + JSONB `pricing` + JSONB `tiers`.
+
+### Polymorphic composite components
+`product.components`, `variant.components`, `extra.components` are the same shape. Backend: single `composite_components` table with polymorphic parent.
+
+### Global SKU uniqueness
+SKU unique across `products.sku` and `product_variants.sku` so POS scan resolver matches without ambiguity. Partial unique index OR app-level overlap check.
+
+### JSONB for attributes config
+`Product.attributes` and `variant.values` as JSONB columns. Less normalized but always whole-blob read/write.
+
+### BatchAllocation snapshot for audit
+Every order line carries `batchAllocations` snapshotted at sale time. Survives batch mutations / deletions / supplier renames. Keeps consignor payout correct, cancellation restock accurate, per-product history reconstructible.
+
+### Audit log append-only
+`stockMovements.items` is conceptually immutable. Store doesn't expose update/remove. Backend: append-only table with tamper-evident hash-chain for real audit (out of scope for scaffold).
+
+### Performer via name string
+`StockMovement.performedBy` is a string snapshot. Becomes `employeeId` FK when auth lands.
+
+## Roadmap & deferred
+
+### Near-term (2–4 weeks)
+| Item | Why now | Effort |
+|---|---|---|
+| localStorage persistence | Refresh wipes everything; biggest dev-UX gap. | S |
+| Receipt printing | POS sale loop incomplete. | S–M |
+| Line-level refunds | Currently only whole-order cancel. | M |
+| Per-customer outstanding view on `/customers/[id]` | Customer-side piutang history. | S |
+| Forecast → "Buat PO" action | One-click prefill PO from forecast row. | M |
+
+### Mid-term (1–3 months)
+| Item | Why | Effort |
+|---|---|---|
+| Backend integration | Production persistence. Supabase (Postgres + Auth + Storage) target. | XL |
+| Auth + per-employee permissions | Real performer tracking; role-based access. | L |
+| Reports / Laporan | Sales summary, top products, shrinkage trend, expiring batches. | M |
+| Image upload backend | Replace data-URLs with object storage. | M |
+| Mobile-optimized POS | Thumb-friendly `/pos` and scan flow. | M |
+| CSV import for products | Bulk SKU load via SheetJS. | M |
+| Order discounts | Line + order level. | M |
+
+### Long-term (3–12 months)
+| Item | Why | Effort |
+|---|---|---|
+| Multi-branch / multi-store | `Store` axis above `Location`. | XL |
+| Accounting integration | GL entries from sales/PO/payout. | XL |
+| Per-location reorder points | "Etalase low for X, auto-suggest transfer." | M |
+| Transfer audit log | Dedicated Transfer entity. | M |
+| Tamper-evident ledger | Hash-chain on movement rows. | M |
+| Customer pricing auto-apply at checkout | Currently half-built. | S |
+| Loyalty / points | Per-customer balance + redemption. | L |
+| Day-of-week weighted forecast | Weekend spikes matter. | M |
+
+### Explicitly out of scope (won't build)
+- Restaurant table service / reservations / kitchen tickets — different domain.
+- Multi-currency — IDR only.
+- Multi-tenant SaaS — single-tenant deployment per store.
+- Built-in payment processing — cashier records method; reconciliation external.
+- Built-in printer driver — browser print + ESC/POS via separate tooling.
+
+## Additional Bahasa Indonesia terms
+
+(Supplements the technical glossary above with business-flavored terms.)
+
+| Term | English | Meaning here |
+|---|---|---|
+| Warmindo | "warung makan Indonesia mie" | Small Indonesian eatery serving instant noodles + light meals. Primary persona. |
+| Warung | small shop / kiosk | Generic small Indonesian retail. |
+| Etalase | display case / shelf | Customer-facing storage zone. Default `customerVisible: true`. |
+| Gudang | warehouse / storeroom | Bulk storage, not customer-facing. Default location for PO receipts. |
+| Rak (Belakang) | back rack | Behind-counter storage, cashier-accessible. |
+| Pindahkan / Pindah | move | Stock transfer between locations. |
+| Opname / Stok opname | cycle count | Physical audit reconciling system vs reality. |
+| Selidiki | investigate | Opname row action → movement history side panel. |
+| Shrinkage | shrinkage | Negative variance from opname (theft / breakage / miscount). |
+| Bon / Piutang | tab / receivable | Customer credit; requires `creditAllowed`. |
+| Utang | payable | Money owed to suppliers from standard POs. |
+| Konsinyasi / Titipan | consignment | Vendor-supplied inventory; we owe per-unit on sale. |
+| PPN | VAT | Pajak Pertambahan Nilai, default 11% per UU HPP. |
+| Net-30 / Net-14 | net-30 / net-14 | Pay within N days of invoice. |
+| Kasir | cashier | POS terminal user; also `/pos` route title. |
+| Pelanggan walk-in | walk-in | Customer not in system. Cannot do piutang. |
+| Atur stok | adjust stock | Surgical manual change (write-off / found / sample). |
+| DP / Down payment | DP | Initial partial payment on a credit order. |
+| Kedaluwarsa | expired | Past expiry date. |
+| Penyesuaian | adjustment | Manual stock change (`adjust-in` / `adjust-out` movements). |
+| Penerimaan | receipt / receiving | Goods receipt at PO time OR customer payment receipt for piutang. |
+| Lokasi default penerimaan | default receipt location | Where new PO receipts land (typically Gudang). |
+| Catat pembayaran / penerimaan | record payment / receipt | Logging supplier payment (utang) / customer payment (piutang). |
+| Berjenjang | tiered | Pricing with quantity thresholds. |
+| Komposit | composite | Product built from components. |
+| Varian | variant | Sellable variation (color/size). |
+
+## Open questions
+
+Things to decide later. None block current development.
+
+1. **When to flip toggle defaults to `false`?** Both `locationsEnabled` and `auditTrailEnabled` default `true` today. Should flip before first real deploy so small stores see the simple flow.
+2. **Receipt printing approach.** Browser print to PDF? ESC/POS over WebUSB? Local print service? Each has tradeoffs for warmindo hardware reality (cheap thermal printers shared via USB).
+3. **Auth approach.** Email/password? PIN-per-employee (faster shift change)? Magic link? PIN seems right for the persona.
+4. **Multi-currency support — never?** Designed IDR-only; revisit only if expanding into tourist-area markets.
+5. **Where does Laporan land?** User pivoted away from reports toward utang/piutang. May stay deferred indefinitely.
+6. **Refund vs cancellation.** Currently only whole-order cancel restocks. Line-level partial refund deferred (proportional batch restock + payment record).
+7. **Composite product forecast.** Today uses `producibleStock` ÷ composite-velocity. Doesn't reflect "8 sold direct, 2 via combo" subtleties. Component-level forecast already counts both implicitly — confirm with real usage.
+8. **Image storage when backend lands.** Today: data-URLs embedded. Backend: object storage with URL. Migration path TBD.
+9. **Lead-time variability.** Currently `Supplier.leadTimeDays` is a single number. Per-product override (`Product.defaultSupplierLeadTimeDays`) more accurate but deferred.
+10. **Opname for composite products.** Today excluded (no batches). Real warmindo counts components implicitly. Admin can opname components individually for now.
+
+---
+
+*This Part II is a living document. Update when load-bearing decisions change, when toggles are added, when defaults flip, or when persona shifts. Keep it in sync with the technical sections above at major checkpoints.*

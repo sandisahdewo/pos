@@ -11,7 +11,8 @@
     X,
     Package,
     Boxes,
-    Image as ImageIcon
+    Image as ImageIcon,
+    ChevronRight
   } from 'lucide-svelte';
   import {
     Badge,
@@ -55,6 +56,7 @@
     type ProductKind,
     type ProductPackaging,
     type ProductStatus,
+    type ProductSupplier,
     type ProductVariant
   } from '$lib/stores/products.svelte';
   import { stockOf } from '$lib/stores/batches.svelte';
@@ -86,7 +88,7 @@
     status: ProductStatus;
     description: string;
     taxRateId: string;
-    defaultSupplierId: string;
+    suppliers: ProductSupplier[];
     imageUrl: string;
     units: ProductPackaging[];
     attributes: ProductAttribute[];
@@ -110,7 +112,7 @@
       status: product?.status ?? 'active',
       description: product?.description ?? '',
       taxRateId: product?.taxRateId ?? '',
-      defaultSupplierId: product?.defaultSupplierId ?? '',
+      suppliers: product?.suppliers?.map((s) => ({ ...s })) ?? [],
       imageUrl: product?.imageUrl ?? '',
       units:
         product?.units?.map((u) => ({
@@ -379,7 +381,7 @@
       status: form.status,
       description: form.description.trim(),
       taxRateId: form.taxRateId || undefined,
-      defaultSupplierId: form.defaultSupplierId || undefined,
+      suppliers: form.suppliers,
       imageUrl: form.imageUrl.trim(),
       kind: form.kind,
       units: form.kind === 'goods' ? form.units : [],
@@ -397,6 +399,92 @@
     { value: '', label: 'No default supplier' },
     ...suppliers.active().map((s) => ({ value: s.id, label: s.name }))
   ]);
+
+  // === Suppliers card helpers ===
+  function supplierOptionsFor(index: number): { value: string; label: string }[] {
+    const takenElsewhere = new Set(
+      form.suppliers
+        .map((s, i) => (i === index ? null : s.supplierId))
+        .filter((v): v is string => !!v)
+    );
+    return [
+      { value: '', label: 'Pilih pemasok…' },
+      ...suppliers
+        .active()
+        .filter((s) => !takenElsewhere.has(s.id))
+        .map((s) => ({
+          value: s.id,
+          label: s.leadTimeDays > 0 ? `${s.name} (lead ${s.leadTimeDays}h)` : s.name
+        }))
+    ];
+  }
+
+  // Per-row expand state. Indices match form.suppliers. New rows auto-expand;
+  // rows with a selected supplier collapse by default to a one-line summary.
+  let expandedSuppliers = $state<Set<number>>(new Set());
+
+  function isSupplierExpanded(i: number): boolean {
+    // Force-expand rows that don't have a supplier picked yet (admin needs to choose).
+    if (!form.suppliers[i]?.supplierId) return true;
+    return expandedSuppliers.has(i);
+  }
+
+  function toggleSupplierExpanded(i: number) {
+    const next = new Set(expandedSuppliers);
+    if (next.has(i)) next.delete(i);
+    else next.add(i);
+    expandedSuppliers = next;
+  }
+
+  function addSupplierRow() {
+    const isFirst = form.suppliers.length === 0;
+    form.suppliers = [
+      ...form.suppliers,
+      {
+        supplierId: '',
+        isPrimary: isFirst,
+        unitCost: form.cost ?? 0,
+        leadTimeDays: undefined,
+        supplierSku: '',
+        notes: ''
+      }
+    ];
+    // Auto-expand the newly added row so admin sees the form fields immediately.
+    expandedSuppliers = new Set([...expandedSuppliers, form.suppliers.length - 1]);
+  }
+
+  function removeSupplierRow(index: number) {
+    const wasPrimary = form.suppliers[index]?.isPrimary;
+    form.suppliers = form.suppliers.filter((_, i) => i !== index);
+    // Promote first row to primary if we removed the primary
+    if (wasPrimary && form.suppliers.length > 0) {
+      form.suppliers = form.suppliers.map((s, i) => ({ ...s, isPrimary: i === 0 }));
+    }
+    // Rebuild expanded set: drop the removed index, shift higher ones down by 1.
+    const next = new Set<number>();
+    for (const idx of expandedSuppliers) {
+      if (idx < index) next.add(idx);
+      else if (idx > index) next.add(idx - 1);
+    }
+    expandedSuppliers = next;
+  }
+
+  function setPrimarySupplier(index: number) {
+    form.suppliers = form.suppliers.map((s, i) => ({ ...s, isPrimary: i === index }));
+  }
+
+  function supplierLeadFallback(supplierId: string): number {
+    return suppliers.getById(supplierId)?.leadTimeDays ?? 0;
+  }
+
+  function effectiveLeadDays(ps: ProductSupplier): number {
+    if (typeof ps.leadTimeDays === 'number' && ps.leadTimeDays >= 0) return ps.leadTimeDays;
+    return supplierLeadFallback(ps.supplierId);
+  }
+
+  function supplierNameFor(supplierId: string): string {
+    return suppliers.getById(supplierId)?.name ?? 'Pemasok belum dipilih';
+  }
 
   function addComponent() {
     const candidates = products.items.filter(
@@ -1437,12 +1525,6 @@
           error={errors.categoryId}
         />
         <Select
-          label="Pemasok utama"
-          bind:value={form.defaultSupplierId}
-          options={supplierOptions}
-          hint="Digunakan untuk autofill pemasok saat membuat PO untuk produk ini."
-        />
-        <Select
           label="Tarif pajak"
           bind:value={form.taxRateId}
           options={taxRateSelectOptions}
@@ -1455,6 +1537,151 @@
           hint="Produk yang diarsipkan tidak ditampilkan di terminal Kasir."
         />
       </div>
+    </Card>
+
+    <Card
+      title="Pemasok"
+      description="Bisa lebih dari satu — klik baris untuk edit detail. Tandai satu sebagai utama (★)."
+    >
+      {#if form.suppliers.length === 0}
+        <div class="rounded-lg border border-dashed border-slate-300 bg-slate-50/40 px-3 py-5 text-center">
+          <p class="text-sm font-medium text-slate-600">Belum ada pemasok</p>
+          <p class="mt-1 text-xs text-slate-500">
+            Tambah agar fitur PO &amp; Prediksi Stok bisa autofill.
+          </p>
+          <Button size="sm" variant="outline" class="mt-3" onclick={addSupplierRow}>
+            <Plus class="h-3.5 w-3.5" />
+            Tambah pemasok
+          </Button>
+        </div>
+      {:else}
+        <div class="space-y-2">
+          {#each form.suppliers as ps, i (i)}
+            {@const expanded = isSupplierExpanded(i)}
+            {@const leadFallback = supplierLeadFallback(ps.supplierId)}
+            {@const effLead = effectiveLeadDays(ps)}
+            <div
+              class="rounded-lg border transition-colors
+                {ps.isPrimary
+                ? 'border-brand-300 bg-brand-50/30'
+                : 'border-slate-200 bg-white'}"
+            >
+              <!-- Header row — always visible -->
+              <div class="flex items-center gap-1 p-1.5">
+                <!-- Primary star toggle -->
+                <button
+                  type="button"
+                  class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full
+                    {ps.isPrimary
+                    ? 'text-amber-500'
+                    : 'text-slate-300 hover:text-amber-500'}
+                    disabled:cursor-not-allowed disabled:opacity-50"
+                  onclick={(e) => {
+                    e.stopPropagation();
+                    setPrimarySupplier(i);
+                  }}
+                  disabled={!ps.supplierId || ps.isPrimary}
+                  aria-label={ps.isPrimary ? 'Pemasok utama' : 'Jadikan utama'}
+                  title={ps.isPrimary ? 'Pemasok utama' : 'Jadikan utama'}
+                >
+                  <Star class="h-4 w-4" fill={ps.isPrimary ? 'currentColor' : 'none'} />
+                </button>
+
+                <!-- Toggle button (chevron + summary) -->
+                <button
+                  type="button"
+                  class="flex min-w-0 flex-1 items-center gap-1.5 rounded-md px-1.5 py-1 text-left hover:bg-slate-50"
+                  onclick={() => toggleSupplierExpanded(i)}
+                  aria-expanded={expanded}
+                >
+                  <ChevronRight
+                    class="h-3.5 w-3.5 shrink-0 text-slate-400 transition-transform {expanded
+                      ? 'rotate-90'
+                      : ''}"
+                  />
+                  <div class="min-w-0 flex-1">
+                    {#if ps.supplierId}
+                      <div class="truncate text-sm font-medium text-slate-900">
+                        {supplierNameFor(ps.supplierId)}
+                      </div>
+                      <div class="truncate text-[10px] text-slate-500">
+                        Rp {ps.unitCost.toLocaleString('id-ID')}
+                        {#if effLead > 0}
+                          · tunggu {effLead}h{#if ps.leadTimeDays === undefined && leadFallback > 0}
+                            <span class="text-slate-400"> (default)</span>
+                          {/if}
+                        {/if}
+                        {#if ps.supplierSku}
+                          · <code class="font-mono">{ps.supplierSku}</code>
+                        {/if}
+                      </div>
+                    {:else}
+                      <div class="text-sm font-medium text-slate-400 italic">
+                        Pilih pemasok…
+                      </div>
+                    {/if}
+                  </div>
+                </button>
+
+                <!-- Remove -->
+                <button
+                  type="button"
+                  class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-slate-400 hover:bg-rose-50 hover:text-rose-600"
+                  aria-label="Hapus pemasok"
+                  onclick={(e) => {
+                    e.stopPropagation();
+                    removeSupplierRow(i);
+                  }}
+                >
+                  <Trash2 class="h-3.5 w-3.5" />
+                </button>
+              </div>
+
+              <!-- Expanded form -->
+              {#if expanded}
+                <div class="space-y-2.5 border-t border-slate-100 bg-white/60 p-3">
+                  <Select
+                    label="Pemasok"
+                    bind:value={ps.supplierId}
+                    options={supplierOptionsFor(i)}
+                  />
+                  <MoneyInput
+                    label="Harga / unit dasar"
+                    bind:value={ps.unitCost}
+                  />
+                  <Input
+                    label="Waktu tunggu (hari)"
+                    type="number"
+                    min="0"
+                    value={ps.leadTimeDays ?? ''}
+                    oninput={(e) => {
+                      const v = (e.currentTarget as HTMLInputElement).value;
+                      ps.leadTimeDays = v === '' ? undefined : Number(v);
+                    }}
+                    placeholder={leadFallback ? `Default ${leadFallback}h` : ''}
+                    hint="Kosongkan untuk pakai default pemasok."
+                  />
+                  <Input
+                    label="SKU pemasok"
+                    placeholder="Kode katalog pemasok"
+                    bind:value={ps.supplierSku}
+                  />
+                  <Textarea
+                    label="Catatan"
+                    placeholder="Termin pembayaran, MOQ, dll."
+                    bind:value={ps.notes}
+                  />
+                </div>
+              {/if}
+            </div>
+          {/each}
+
+          <Button variant="outline" size="sm" onclick={addSupplierRow}>
+            <Plus class="h-3.5 w-3.5" />
+            Tambah pemasok lain
+          </Button>
+        </div>
+      {/if}
     </Card>
 
     {#if showPackagings || showVariants || form.prices.length > 1}

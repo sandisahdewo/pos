@@ -24,7 +24,10 @@
     Banknote,
     Warehouse,
     ClipboardCheck,
-    History
+    History,
+    HandCoins,
+    Wallet,
+    TrendingDown
   } from 'lucide-svelte';
 
   type NavItem = {
@@ -70,6 +73,13 @@
       ]
     },
     {
+      title: 'Keuangan',
+      items: [
+        { label: 'Utang Pembelian', href: '/utang', icon: Wallet },
+        { label: 'Piutang Pelanggan', href: '/piutang', icon: HandCoins }
+      ]
+    },
+    {
       title: 'Katalog',
       items: [
         { label: 'Inventaris', href: '/inventory', icon: Boxes },
@@ -83,6 +93,7 @@
       title: 'Wawasan',
       items: [
         { label: 'Laporan', href: '/reports', icon: BarChart3 },
+        { label: 'Prediksi Stok', href: '/forecast', icon: TrendingDown },
         ...(settings.value.inventory.auditTrailEnabled
           ? [{ label: 'Riwayat Stok', href: '/stock-movements', icon: History }]
           : [])

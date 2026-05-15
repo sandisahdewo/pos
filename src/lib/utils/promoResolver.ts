@@ -42,14 +42,17 @@ function categoryOf(productId: string): string | undefined {
 }
 
 function matchesScope(promo: Promotion, line: CartLineForPromo): boolean {
-  if (promo.productIds && promo.productIds.length > 0) {
-    if (!promo.productIds.includes(line.productId)) return false;
-  }
-  if (promo.categoryIds && promo.categoryIds.length > 0) {
+  const hasProductFilter = !!(promo.productIds && promo.productIds.length > 0);
+  const hasCategoryFilter = !!(promo.categoryIds && promo.categoryIds.length > 0);
+  // No filter set → applies to all products.
+  if (!hasProductFilter && !hasCategoryFilter) return true;
+  // OR semantic: line matches if it appears in productIds OR its category is in categoryIds.
+  if (hasProductFilter && promo.productIds!.includes(line.productId)) return true;
+  if (hasCategoryFilter) {
     const cat = categoryOf(line.productId);
-    if (!cat || !promo.categoryIds.includes(cat)) return false;
+    if (cat && promo.categoryIds!.includes(cat)) return true;
   }
-  return true;
+  return false;
 }
 
 // Returns the number of complete bundles this combo can claim against the
@@ -280,6 +283,155 @@ export function resolvePromos(ctx: ResolverContext): AppliedPromo[] {
   }
 
   return applied;
+}
+
+// Suggestion for a combo that's partially in the cart (at least one item
+// present) but missing others. Helps cashier upsell to complete the bundle.
+export type ComboSuggestion = {
+  promoId: string;
+  promoName: string;
+  promoDescription: string;
+  needed: Array<{
+    productId: string;
+    variantId?: string;
+    productName: string;
+    quantity: number;
+  }>;
+  potentialDiscount: number;
+};
+
+export function suggestCombos(
+  ctx: {
+    lines: CartLineForPromo[];
+    at: Date;
+    dismissedPromoIds?: string[];
+  },
+  unitPriceFor: (productId: string, variantId?: string) => number
+): ComboSuggestion[] {
+  const usable = promotions
+    .usableAt(ctx.at)
+    .filter((p) => !ctx.dismissedPromoIds?.includes(p.id))
+    .filter((p) => p.kind === 'combo');
+
+  // Total cart qty per (productId|variantId) key.
+  const inCart = new Map<string, number>();
+  for (const line of ctx.lines) {
+    const key = keyForLine(line);
+    inCart.set(key, (inCart.get(key) ?? 0) + line.baseQuantity);
+  }
+
+  const out: ComboSuggestion[] = [];
+  for (const combo of usable) {
+    if (!combo.comboItems || combo.comboItems.length === 0) continue;
+
+    // Must have at least ONE of the combo items in cart to suggest (avoids
+    // spamming every combo on an empty cart).
+    const hasAny = combo.comboItems.some((item) => {
+      const key = `${item.productId}|${item.variantId ?? ''}`;
+      return (inCart.get(key) ?? 0) > 0;
+    });
+    if (!hasAny) continue;
+
+    // Compute missing quantities for ONE bundle.
+    const needed: ComboSuggestion['needed'] = [];
+    let originalBundlePrice = 0;
+    for (const item of combo.comboItems) {
+      const key = `${item.productId}|${item.variantId ?? ''}`;
+      const have = inCart.get(key) ?? 0;
+      const missing = Math.max(0, item.quantity - have);
+      const unitPrice = unitPriceFor(item.productId, item.variantId);
+      originalBundlePrice += unitPrice * item.quantity;
+      if (missing > 0) {
+        const product = products.getById(item.productId);
+        let productName = product?.name ?? 'Produk';
+        if (item.variantId) {
+          const v = product?.variants.find((v) => v.id === item.variantId);
+          if (v) productName += ` ${v.name}`;
+        }
+        needed.push({
+          productId: item.productId,
+          variantId: item.variantId,
+          productName,
+          quantity: missing
+        });
+      }
+    }
+    // Skip when the combo is already fully claimable (it'll auto-apply).
+    if (needed.length === 0) continue;
+
+    const potentialDiscount = Math.max(0, originalBundlePrice - (combo.comboPrice ?? 0));
+    if (potentialDiscount <= 0) continue;
+
+    out.push({
+      promoId: combo.id,
+      promoName: combo.name,
+      promoDescription: combo.description,
+      needed,
+      potentialDiscount
+    });
+  }
+  return out;
+}
+
+// BOGO that's partially applicable on a line — qty isn't enough for a bundle
+// yet, but we can tell the cashier how many more to add for the next free.
+export type BogoSuggestion = {
+  promoId: string;
+  promoName: string;
+  promoDescription: string;
+  productId: string;
+  variantId?: string;
+  unitsNeeded: number;
+  freeUnits: number;
+  potentialDiscount: number;
+};
+
+export function suggestBogos(
+  ctx: {
+    lines: CartLineForPromo[];
+    at: Date;
+    dismissedPromoIds?: string[];
+  }
+): BogoSuggestion[] {
+  const usable = promotions
+    .usableAt(ctx.at)
+    .filter((p) => !ctx.dismissedPromoIds?.includes(p.id))
+    .filter((p) => p.kind === 'bogo');
+
+  const out: BogoSuggestion[] = [];
+  for (const promo of usable) {
+    const buy = promo.buyQuantity ?? 0;
+    const getQ = promo.getQuantity ?? 0;
+    const bundleSize = buy + getQ;
+    if (bundleSize <= 0) continue;
+
+    // Group cart qty by line — suggestion is per line so the UI can show inline.
+    for (const line of ctx.lines) {
+      if (promo.bogoProductId && line.productId !== promo.bogoProductId) continue;
+      if (!promo.bogoProductId) {
+        // No specific product: only suggest when in scope.
+        if (!matchesScope(promo, line)) continue;
+      }
+      const qty = line.baseQuantity;
+      // Skip when already at-or-beyond a bundle (resolver applied it). Suggest
+      // only the "missing N to next bundle" case.
+      const inCurrentBundle = qty % bundleSize;
+      if (qty > 0 && inCurrentBundle === 0) continue;
+      const unitsNeeded = bundleSize - inCurrentBundle;
+      const potentialDiscount = getQ * line.unitPrice;
+      out.push({
+        promoId: promo.id,
+        promoName: promo.name,
+        promoDescription: promo.description,
+        productId: line.productId,
+        variantId: line.variantId,
+        unitsNeeded,
+        freeUnits: getQ,
+        potentialDiscount
+      });
+    }
+  }
+  return out;
 }
 
 // Compute net-of-promo subtotal per line. Each line's share of order-level

@@ -518,16 +518,59 @@
 
       {#if form.kind === 'discount' || form.kind === 'bogo'}
         <Card>
-          <h2 class="mb-3 text-sm font-semibold tracking-wide text-slate-500 uppercase">
-            Lingkup
+          <h2 class="mb-2 text-sm font-semibold tracking-wide text-slate-500 uppercase">
+            Lingkup (opsional)
           </h2>
+
+          {@const totalScoped = form.productIds.length + form.categoryIds.length}
+          {#if totalScoped === 0}
+            <div class="mb-3 rounded-md border border-sky-100 bg-sky-50 px-3 py-2 text-xs text-sky-800">
+              <strong>Saat ini:</strong> berlaku untuk <strong>semua produk</strong>.
+              Pilih produk atau kategori di bawah untuk membatasi.
+            </div>
+          {:else}
+            <div class="mb-3 rounded-md border border-brand-100 bg-brand-50 px-3 py-2 text-xs text-brand-800">
+              <strong>Saat ini:</strong> berlaku untuk
+              {#if form.productIds.length > 0}
+                <strong>{form.productIds.length} produk</strong>
+              {/if}
+              {#if form.productIds.length > 0 && form.categoryIds.length > 0}
+                <span class="text-slate-500"> atau </span>
+              {/if}
+              {#if form.categoryIds.length > 0}
+                <strong>{form.categoryIds.length} kategori</strong>
+              {/if}.
+              {#if form.productIds.length > 0 && form.categoryIds.length > 0}
+                Produk yang masuk salah satu daftar akan terkena promo.
+              {/if}
+            </div>
+          {/if}
+
           <p class="mb-3 text-xs text-slate-500">
-            Kosongkan kedua daftar untuk berlaku untuk semua produk.
+            Bisa pilih satu saja, dua-duanya, atau biarkan kosong. Tidak wajib mengisi keduanya.
           </p>
 
-          <div class="grid gap-3 sm:grid-cols-2">
+          <div class="grid gap-3 sm:grid-cols-[1fr_auto_1fr]">
             <div>
-              <div class="mb-1.5 text-sm font-medium text-slate-700">Produk spesifik</div>
+              <div class="mb-1.5 flex items-center justify-between">
+                <div class="text-sm font-medium text-slate-700">
+                  Produk spesifik
+                  {#if form.productIds.length > 0}
+                    <span class="ml-1 rounded-full bg-brand-100 px-1.5 py-0.5 text-[10px] font-semibold text-brand-700">
+                      {form.productIds.length}
+                    </span>
+                  {/if}
+                </div>
+                {#if form.productIds.length > 0}
+                  <button
+                    type="button"
+                    class="text-[11px] text-slate-500 hover:text-slate-800"
+                    onclick={() => (form.productIds = [])}
+                  >
+                    Kosongkan
+                  </button>
+                {/if}
+              </div>
               <div class="max-h-44 overflow-y-auto rounded-md border border-slate-200">
                 {#each products.items.filter((p) => p.status === 'active') as p (p.id)}
                   <button
@@ -549,8 +592,30 @@
               </div>
             </div>
 
+            <div class="hidden self-center sm:flex sm:flex-col sm:items-center">
+              <span class="text-[11px] font-semibold tracking-wider text-slate-400 uppercase">atau</span>
+            </div>
+
             <div>
-              <div class="mb-1.5 text-sm font-medium text-slate-700">Kategori</div>
+              <div class="mb-1.5 flex items-center justify-between">
+                <div class="text-sm font-medium text-slate-700">
+                  Kategori
+                  {#if form.categoryIds.length > 0}
+                    <span class="ml-1 rounded-full bg-brand-100 px-1.5 py-0.5 text-[10px] font-semibold text-brand-700">
+                      {form.categoryIds.length}
+                    </span>
+                  {/if}
+                </div>
+                {#if form.categoryIds.length > 0}
+                  <button
+                    type="button"
+                    class="text-[11px] text-slate-500 hover:text-slate-800"
+                    onclick={() => (form.categoryIds = [])}
+                  >
+                    Kosongkan
+                  </button>
+                {/if}
+              </div>
               <div class="max-h-44 overflow-y-auto rounded-md border border-slate-200">
                 {#each categories.items as c (c.id)}
                   <button

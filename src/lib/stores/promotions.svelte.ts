@@ -125,6 +125,63 @@ export function isPromoUsable(p: Promotion, at: Date): boolean {
   return isWithinPromoWindow(p, at);
 }
 
+// Does this promo specifically target the given product? Returns false for
+// "applies to all products" promos and for order-level kinds (member-tier),
+// which the POS card UI surfaces only at checkout.
+export function promoTargetsProduct(
+  promo: Promotion,
+  productId: string,
+  productCategoryId: string | undefined
+): boolean {
+  switch (promo.kind) {
+    case 'combo':
+      return (promo.comboItems ?? []).some((c) => c.productId === productId);
+    case 'bogo': {
+      if (promo.bogoProductId) return promo.bogoProductId === productId;
+      // Fall through: bogo without bogoProductId only "targets" via scope.
+      return scopeIncludes(promo, productId, productCategoryId);
+    }
+    case 'discount':
+      return scopeIncludes(promo, productId, productCategoryId);
+    case 'member-tier':
+    default:
+      return false;
+  }
+}
+
+function scopeIncludes(
+  promo: Promotion,
+  productId: string,
+  productCategoryId: string | undefined
+): boolean {
+  const hasProd = !!(promo.productIds && promo.productIds.length > 0);
+  const hasCat = !!(promo.categoryIds && promo.categoryIds.length > 0);
+  if (!hasProd && !hasCat) return false;
+  if (hasProd && promo.productIds!.includes(productId)) return true;
+  if (hasCat && productCategoryId && promo.categoryIds!.includes(productCategoryId)) return true;
+  return false;
+}
+
+// Short label for a promo, suitable for a small card badge.
+export function shortPromoLabel(p: Promotion): string {
+  switch (p.kind) {
+    case 'discount':
+      if (p.discountUnit === 'percent') return `${p.discountValue ?? 0}%`;
+      if (p.discountUnit === 'fixed') {
+        const v = p.discountValue ?? 0;
+        if (v >= 1000) return `−${Math.round(v / 1000)}k`;
+        return `−${v}`;
+      }
+      return 'Promo';
+    case 'combo':
+      return 'Combo';
+    case 'bogo':
+      return `${p.buyQuantity ?? 1}+${p.getQuantity ?? 1}`;
+    case 'member-tier':
+      return `${p.memberPercentOff ?? 0}%`;
+  }
+}
+
 // Seed: a mix to demonstrate each kind.
 const seed: Promotion[] = [
   {
@@ -144,7 +201,7 @@ const seed: Promotion[] = [
   {
     id: 'prm_2',
     code: 'PRM-002',
-    name: 'Combo Mi Goreng + Es Teh',
+    name: 'Combo Latte + Cola',
     kind: 'combo',
     level: 'line',
     comboItems: [
@@ -154,7 +211,7 @@ const seed: Promotion[] = [
     comboPrice: 18000,
     status: 'active',
     usageCount: 0,
-    description: 'Paket hemat Mi Goreng + Es Teh hanya Rp 18.000.',
+    description: 'Paket hemat Latte + Cola hanya Rp 18.000 (dari Rp 41.000).',
     notes: ''
   },
   {

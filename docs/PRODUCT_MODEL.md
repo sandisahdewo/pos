@@ -1492,7 +1492,7 @@ distributePromosAcrossLines(lines, applied): Map<lineId, { lineDiscount, orderDi
 Algorithm:
 1. **Combos consume across lines.** For each combo promo, count how many bundles can be claimed against `remaining[productId|variantId]` map. Bundle size = sum(item.quantity). Consume from `remaining`, push `AppliedPromo` with `discount = bundles × (originalPrice − comboPrice)`.
 2. **BOGO per (product, variant)** on remaining quantity. `bundles = floor(remainingQty / (buyQuantity + getQuantity))`, `discount = bundles × getQuantity × unitPrice`.
-3. **Line-level discount (% / Rp)** — pick the single best (max discount) per line, filtered by scope (`productIds` / `categoryIds`). Discount applies to the remaining (post-combo/bogo) subtotal share.
+3. **Line-level discount (% / Rp)** — pick the single best (max discount) per line, filtered by scope. Scope match uses OR semantic: empty `productIds` and empty `categoryIds` → applies to all products; only `productIds` → only those; only `categoryIds` → all in those; both filled → line matches if it's in `productIds` OR its category is in `categoryIds` (union, not intersection). Discount applies to the remaining (post-combo/bogo) subtotal share.
 4. **Order-level promo** — among all `level === 'order'` candidates (incl. `member-tier` which requires `customer.pricelistId === memberPricelistId`), pick the one yielding max discount on `netSubtotal = subtotal − lineDiscountTotal`.
 
 `distributePromosAcrossLines` then maps total promo discount back to per-line: line-level apportioned by subtotal share across affected lines; order-level apportioned across ALL lines by post-line-discount net subtotal.

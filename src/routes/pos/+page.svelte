@@ -15,7 +15,8 @@
     Wallet,
     AlertCircle,
     BadgePercent,
-    RotateCcw
+    RotateCcw,
+    Sparkles
   } from 'lucide-svelte';
   import {
     Badge,
@@ -61,12 +62,22 @@
   import { locations } from '$lib/stores/locations.svelte';
   import { settings } from '$lib/stores/settings.svelte';
   import { cartSessions, type CartLine } from '$lib/stores/cartSessions.svelte';
-  import { promotions, type Promotion } from '$lib/stores/promotions.svelte';
+  import {
+    promotions,
+    isPromoUsable,
+    promoTargetsProduct,
+    shortPromoLabel,
+    type Promotion
+  } from '$lib/stores/promotions.svelte';
   import {
     resolvePromos,
     distributePromosAcrossLines,
+    suggestCombos,
+    suggestBogos,
     type CartLineForPromo,
-    type AppliedPromo
+    type AppliedPromo,
+    type ComboSuggestion,
+    type BogoSuggestion
   } from '$lib/utils/promoResolver';
   import { shifts, salesSummary } from '$lib/stores/shifts.svelte';
   import { employees } from '$lib/stores/employees.svelte';
@@ -279,9 +290,88 @@
     })
   );
 
+  // Active promos right now, used to badge product cards.
+  const activePromosNow = $derived(
+    promotions.items.filter((p) => isPromoUsable(p, new Date()))
+  );
+
+  function promosForProductCard(product: Product): Promotion[] {
+    return activePromosNow.filter((promo) =>
+      promoTargetsProduct(promo, product.id, product.categoryId)
+    );
+  }
+
+  // Lookup unit price for a (product, variant?). Uses a cart line's resolved
+  // price if present; otherwise computes from product + active pricelist.
+  function unitPriceFor(productId: string, variantId?: string): number {
+    const existing = session.lines.find(
+      (l) => l.productId === productId && l.variantId === variantId
+    );
+    if (existing) {
+      return resolveLine(existing).unitPrice;
+    }
+    const p = products.getById(productId);
+    if (!p) return 0;
+    const variant = variantId ? p.variants.find((v) => v.id === variantId) : undefined;
+    const entry = variant
+      ? effectiveEntry(variant.prices, activePricelistId, pricelists.defaultId())
+      : effectiveEntry(p.prices, activePricelistId, pricelists.defaultId());
+    if (!entry) return 0;
+    const cost = variant ? effectiveVariantCost(variant) : effectiveCost(p);
+    return computeSalePrice(cost, entry.pricing);
+  }
+
+  const comboSuggestions = $derived<ComboSuggestion[]>(
+    suggestCombos(
+      {
+        lines: linesForPromo,
+        at: new Date(),
+        dismissedPromoIds: session.dismissedPromoIds ?? []
+      },
+      unitPriceFor
+    )
+  );
+
+  const bogoSuggestions = $derived<BogoSuggestion[]>(
+    suggestBogos({
+      lines: linesForPromo,
+      at: new Date(),
+      dismissedPromoIds: session.dismissedPromoIds ?? []
+    })
+  );
+
+  function comboSuggestionsForLine(line: CartLine): ComboSuggestion[] {
+    return comboSuggestions.filter((sug) => {
+      const promo = promotions.getById(sug.promoId);
+      if (!promo?.comboItems) return false;
+      return promo.comboItems.some(
+        (item) =>
+          item.productId === line.productId &&
+          (item.variantId ?? '') === (line.variantId ?? '')
+      );
+    });
+  }
+
+  function bogoSuggestionsForLine(line: CartLine): BogoSuggestion[] {
+    return bogoSuggestions.filter(
+      (sug) =>
+        sug.productId === line.productId &&
+        (sug.variantId ?? '') === (line.variantId ?? '')
+    );
+  }
+
+  function appliedPromosForLine(line: CartLine): AppliedPromo[] {
+    // Use cart-line id (the same id passed to resolver via linesForPromo).
+    return appliedPromos.filter(
+      (p) => p.level === 'line' && p.affectedLineIds.includes(line.id)
+    );
+  }
+
+
   const promoDiscount = $derived(
     appliedPromos.reduce((s, p) => s + p.discountAmount, 0)
   );
+
 
   // Distribute discount across lines, then recompute per-line tax on the NET subtotal.
   const promoDistribution = $derived(
@@ -850,10 +940,32 @@
         {@const sale = baseEntry ? computeSalePrice(cost, baseEntry.pricing) : NaN}
         {@const disabled = stock <= 0 && !isComposite(p)}
         {@const baseCode = unitCodeFor(p.unitId)}
+        {@const cardPromos = promosForProductCard(p)}
         <div
-          class="group flex flex-col rounded-lg border border-slate-200 bg-white transition hover:border-brand-300 hover:shadow-soft
+          class="group relative flex flex-col rounded-lg border border-slate-200 bg-white transition hover:border-brand-300 hover:shadow-soft
             {disabled ? 'opacity-50' : ''}"
         >
+          {#if cardPromos.length > 0}
+            <div class="pointer-events-none absolute top-1.5 right-1.5 z-10 flex flex-wrap justify-end gap-1">
+              {#each cardPromos.slice(0, 2) as promo (promo.id)}
+                <span
+                  class="inline-flex items-center gap-0.5 rounded-md bg-rose-600 px-1.5 py-0.5 text-[10px] font-semibold text-white shadow-sm"
+                  title={`${promo.name}${promo.description ? ' — ' + promo.description : ''}`}
+                >
+                  <BadgePercent class="h-3 w-3" />
+                  {shortPromoLabel(promo)}
+                </span>
+              {/each}
+              {#if cardPromos.length > 2}
+                <span
+                  class="inline-flex items-center rounded-md bg-rose-600 px-1.5 py-0.5 text-[10px] font-semibold text-white shadow-sm"
+                  title={cardPromos.slice(2).map((p) => p.name).join(', ')}
+                >
+                  +{cardPromos.length - 2}
+                </span>
+              {/if}
+            </div>
+          {/if}
           <button
             type="button"
             class="flex flex-1 flex-col gap-1 p-2 text-left disabled:cursor-not-allowed"
@@ -1147,6 +1259,41 @@
                     {/if}
                   </div>
                 </div>
+
+                {#if appliedPromosForLine(line).length > 0 || comboSuggestionsForLine(line).length > 0 || bogoSuggestionsForLine(line).length > 0}
+                  <div class="mt-2 space-y-1">
+                    {#each appliedPromosForLine(line) as p (p.promoId)}
+                      <div class="flex items-center gap-1.5 rounded-md border border-emerald-100 bg-emerald-50/70 px-2 py-1">
+                        <BadgePercent class="h-3 w-3 shrink-0 text-emerald-600" />
+                        <span class="truncate text-[11px] font-medium text-emerald-800" title={p.description}>
+                          {p.promoName} aktif
+                        </span>
+                      </div>
+                    {/each}
+                    {#each comboSuggestionsForLine(line) as sug (sug.promoId)}
+                      <div class="flex items-start gap-1.5 rounded-md border border-amber-100 bg-amber-50/60 px-2 py-1 text-[11px]">
+                        <Sparkles class="mt-0.5 h-3 w-3 shrink-0 text-amber-600" />
+                        <div class="min-w-0 leading-tight">
+                          <span class="text-amber-800">Tambah </span>
+                          {#each sug.needed as need, i (need.productId + (need.variantId ?? ''))}
+                            <span class="font-semibold text-amber-900">{need.quantity} {need.productName}</span>{#if i < sug.needed.length - 1}<span class="text-amber-800"> dan </span>{/if}
+                          {/each}
+                          <span class="text-amber-800"> → {sug.promoName} (hemat {formatRupiah(sug.potentialDiscount)})</span>
+                        </div>
+                      </div>
+                    {/each}
+                    {#each bogoSuggestionsForLine(line) as sug (sug.promoId + (sug.variantId ?? ''))}
+                      <div class="flex items-start gap-1.5 rounded-md border border-amber-100 bg-amber-50/60 px-2 py-1 text-[11px]">
+                        <Sparkles class="mt-0.5 h-3 w-3 shrink-0 text-amber-600" />
+                        <div class="min-w-0 leading-tight">
+                          <span class="text-amber-800">Tambah </span>
+                          <span class="font-semibold text-amber-900">{sug.unitsNeeded} lagi</span>
+                          <span class="text-amber-800"> untuk dapat {sug.freeUnits} gratis ({sug.promoName})</span>
+                        </div>
+                      </div>
+                    {/each}
+                  </div>
+                {/if}
 
                 {#if showExtras}
                   <div class="mt-2 border-t border-slate-100 pt-2">

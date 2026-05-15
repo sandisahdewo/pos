@@ -1,5 +1,6 @@
 import { products, type CompositeComponent } from './products.svelte';
 import { batches, type BatchAllocation } from './batches.svelte';
+import { stockMovements, type StockMovementReference } from './stockMovements.svelte';
 
 export type OrderStatus = 'paid' | 'cancelled';
 export type PaymentMethod = 'cash' | 'card' | 'qris' | 'transfer';
@@ -85,6 +86,8 @@ class OrdersStore {
     const idx = this.items.findIndex((o) => o.id === id);
     if (idx === -1) return { ok: false, reason: 'Order not found.' };
 
+    const reference: StockMovementReference = { kind: 'order', id: order.id, code: order.code };
+
     // Restore each line's stamped batch allocations. Silently skip batches that
     // no longer exist (e.g. deleted manually) — qtyReceived stays as the historical
     // record on the batch; qtyRemaining can technically exceed it briefly which is fine.
@@ -92,7 +95,21 @@ class OrdersStore {
       for (const alloc of line.batchAllocations) {
         const batch = batches.getById(alloc.batchId);
         if (!batch) continue;
-        batches.update(batch.id, { qtyRemaining: batch.qtyRemaining + alloc.qtyTaken });
+        const updated = batches.update(batch.id, {
+          qtyRemaining: batch.qtyRemaining + alloc.qtyTaken
+        });
+        stockMovements.log({
+          kind: 'sale-cancel',
+          productId: line.productId,
+          variantId: line.variantId,
+          locationId: batch.locationId,
+          batchId: batch.id,
+          qtyDelta: alloc.qtyTaken,
+          qtyAfter: updated?.qtyRemaining ?? batch.qtyRemaining + alloc.qtyTaken,
+          unitCost: alloc.unitCost,
+          reference,
+          notes: `Pembatalan pesanan · ${order.code}`
+        });
       }
     }
 
@@ -110,14 +127,15 @@ export const orders = new OrdersStore();
 function deductBatchesFIFO(
   productId: string,
   variantId: string | undefined,
-  qty: number
+  qty: number,
+  context?: { reference?: StockMovementReference; notes?: string }
 ): BatchAllocation[] {
   const allocations: BatchAllocation[] = [];
   let remaining = qty;
   for (const batch of batches.forStock(productId, variantId)) {
     if (remaining <= 0) break;
     const take = Math.min(remaining, batch.qtyRemaining);
-    batches.update(batch.id, { qtyRemaining: batch.qtyRemaining - take });
+    const updated = batches.update(batch.id, { qtyRemaining: batch.qtyRemaining - take });
     allocations.push({
       batchId: batch.id,
       qtyTaken: take,
@@ -125,6 +143,20 @@ function deductBatchesFIFO(
       unitCost: batch.unitCost,
       supplierId: batch.supplierId
     });
+    if (context?.reference) {
+      stockMovements.log({
+        kind: 'sale',
+        productId,
+        variantId,
+        locationId: batch.locationId,
+        batchId: batch.id,
+        qtyDelta: -take,
+        qtyAfter: updated?.qtyRemaining ?? batch.qtyRemaining - take,
+        unitCost: batch.unitCost,
+        reference: context.reference,
+        notes: context.notes ?? 'Penjualan'
+      });
+    }
     remaining -= take;
   }
   return allocations;
@@ -132,11 +164,14 @@ function deductBatchesFIFO(
 
 function deductComponents(
   comps: CompositeComponent[],
-  multiplier: number
+  multiplier: number,
+  context?: { reference?: StockMovementReference; notes?: string }
 ): BatchAllocation[] {
   const allocations: BatchAllocation[] = [];
   for (const c of comps) {
-    allocations.push(...deductBatchesFIFO(c.productId, c.variantId, c.quantity * multiplier));
+    allocations.push(
+      ...deductBatchesFIFO(c.productId, c.variantId, c.quantity * multiplier, context)
+    );
   }
   return allocations;
 }
@@ -148,6 +183,10 @@ function deductComponents(
  * Every batch touched is stamped onto the line's batchAllocations for downstream reports.
  */
 export function applyOrderToStock(order: Order): void {
+  const context = {
+    reference: { kind: 'order' as const, id: order.id, code: order.code },
+    notes: `Penjualan · ${order.code}`
+  };
   for (const line of order.lines) {
     const product = products.getById(line.productId);
     if (!product) continue;
@@ -161,15 +200,15 @@ export function applyOrderToStock(order: Order): void {
       const recipe = variant && variant.components.length > 0
         ? variant.components
         : product.components;
-      allocations.push(...deductComponents(recipe, baseQty));
+      allocations.push(...deductComponents(recipe, baseQty, context));
     } else {
-      allocations.push(...deductBatchesFIFO(product.id, line.variantId, baseQty));
+      allocations.push(...deductBatchesFIFO(product.id, line.variantId, baseQty, context));
     }
 
     for (const ex of line.extras) {
       const extraDef = product.extras.find((e) => e.id === ex.extraId);
       if (extraDef && extraDef.components.length > 0) {
-        allocations.push(...deductComponents(extraDef.components, line.quantity));
+        allocations.push(...deductComponents(extraDef.components, line.quantity, context));
       }
     }
 

@@ -18,6 +18,7 @@
     Collapsible,
     ConfirmDialog,
     Input,
+    MoneyInput,
     PageHeader,
     Select
   } from '$lib/components/ui';
@@ -28,6 +29,7 @@
     effectiveVariantCost,
     isComposite,
     priceForQty,
+    producibleVariantStock,
     products,
     taxRateFor,
     totalStock,
@@ -46,7 +48,9 @@
     type OrderLine,
     type OrderLineExtra
   } from '$lib/stores/orders.svelte';
-  import { batches } from '$lib/stores/batches.svelte';
+  import { batches, stockByLocation } from '$lib/stores/batches.svelte';
+  import { locations } from '$lib/stores/locations.svelte';
+  import { settings } from '$lib/stores/settings.svelte';
   import { cartSessions, type CartLine } from '$lib/stores/cartSessions.svelte';
   import { toast } from '$lib/stores/toast.svelte';
   import { formatRupiah } from '$lib/utils/currency';
@@ -104,6 +108,33 @@
 
   function productStock(p: Product): number {
     return totalStock(p);
+  }
+
+  const locationsOn = $derived(settings.value.inventory.locationsEnabled);
+  const sortedLocations = $derived(locations.sortedActive());
+
+  // Compact list of (location, qty) for a product, summed across variants. Used
+  // by the POS card to tell the cashier where to fetch the product from.
+  function productLocationChips(
+    p: Product
+  ): { name: string; qty: number; customerVisible: boolean }[] {
+    const totals = new Map<string, number>();
+    if (p.variants.length === 0) {
+      for (const [locId, qty] of stockByLocation(p.id)) totals.set(locId, qty);
+    } else {
+      for (const v of p.variants) {
+        for (const [locId, qty] of stockByLocation(p.id, v.id)) {
+          totals.set(locId, (totals.get(locId) ?? 0) + qty);
+        }
+      }
+    }
+    const out: { name: string; qty: number; customerVisible: boolean }[] = [];
+    for (const loc of sortedLocations) {
+      const qty = totals.get(loc.id) ?? 0;
+      if (qty <= 0) continue;
+      out.push({ name: loc.name, qty, customerVisible: loc.customerVisible });
+    }
+    return out;
   }
 
   function unitCodeFor(unitId: string): string {
@@ -180,19 +211,55 @@
   const cartTax = $derived(session.lines.reduce((s, l) => s + lineTaxFor(l), 0));
   const cartTotal = $derived(cartSubtotal + cartTax);
 
-  function addToCart(p: Product, variantId?: string) {
+  const cashShortcuts = [100_000, 50_000, 20_000, 10_000];
+  const paymentChange = $derived(session.paymentAmount - cartTotal);
+  const isCash = $derived(session.paymentMethod === 'cash');
+
+  function addPaymentAmount(amount: number) {
+    session.paymentAmount = (session.paymentAmount || 0) + amount;
+    cartSessions.touch();
+  }
+
+  function resetPaymentAmount() {
+    session.paymentAmount = 0;
+    cartSessions.touch();
+  }
+
+  const chargeConfirmMessage = $derived.by(() => {
+    const head = `${session.lines.length} item · ${formatRupiah(cartTotal)} via ${session.paymentMethod.toUpperCase()}`;
+    if (isCash && session.paymentAmount > 0) {
+      const diff = session.paymentAmount - cartTotal;
+      const tail =
+        diff >= 0
+          ? `Kembalian ${formatRupiah(diff)}`
+          : `Kurang ${formatRupiah(Math.abs(diff))}`;
+      return `${head} · Diterima ${formatRupiah(session.paymentAmount)} · ${tail}. Stok akan dikurangi.`;
+    }
+    return `${head}. Stok akan dikurangi.`;
+  });
+
+  function addToCart(
+    p: Product,
+    variantId?: string,
+    unitId?: string,
+    unitFactor: number = 1
+  ) {
     const useVariantId = variantId ?? p.variants[0]?.id;
     session.lines.push({
       id: crypto.randomUUID(),
       productId: p.id,
       variantId: useVariantId,
-      unitId: p.unitId,
-      unitFactor: 1,
+      unitId: unitId ?? p.unitId,
+      unitFactor,
       quantity: 1,
       extras: [],
       notes: ''
     });
     cartSessions.touch();
+  }
+
+  function unitNameFor(unitId: string): string {
+    return units.getById(unitId)?.name ?? units.getById(unitId)?.code ?? '';
   }
 
   // Resolve a scanned/typed token to a product + (optional) variant.
@@ -295,6 +362,7 @@
     session.lines = [];
     session.customerId = '';
     session.paymentMethod = 'cash';
+    session.paymentAmount = 0;
     cartSessions.touch();
   }
 
@@ -440,43 +508,115 @@
         {@const baseEntry = effectiveEntry(p.prices, activePricelistId, pricelists.defaultId())}
         {@const cost = effectiveCost(p)}
         {@const sale = baseEntry ? computeSalePrice(cost, baseEntry.pricing) : NaN}
-        <button
-          type="button"
-          class="group flex flex-col gap-1 rounded-lg border border-slate-200 bg-white p-2 text-left transition hover:border-brand-300 hover:shadow-soft disabled:cursor-not-allowed disabled:opacity-50"
-          disabled={stock <= 0 && !isComposite(p)}
-          onclick={() => addToCart(p)}
+        {@const disabled = stock <= 0 && !isComposite(p)}
+        {@const baseCode = unitCodeFor(p.unitId)}
+        <div
+          class="group flex flex-col rounded-lg border border-slate-200 bg-white transition hover:border-brand-300 hover:shadow-soft
+            {disabled ? 'opacity-50' : ''}"
         >
-          {#if p.imageUrl}
-            <img
-              src={p.imageUrl}
-              alt={p.name}
-              class="h-24 w-full rounded-md object-cover"
-              loading="lazy"
-            />
-          {:else}
-            <div
-              class="flex h-24 w-full items-center justify-center rounded-md bg-slate-50 text-slate-300"
-            >
-              <Package class="h-8 w-8" />
-            </div>
-          {/if}
-          <div class="mt-1 flex-1">
-            <div class="line-clamp-2 text-sm font-medium text-slate-900">{p.name}</div>
-            {#if p.variants.length > 0}
-              <div class="text-[10px] text-slate-500">
-                {p.variants.length} varian
+          <button
+            type="button"
+            class="flex flex-1 flex-col gap-1 p-2 text-left disabled:cursor-not-allowed"
+            {disabled}
+            onclick={() => addToCart(p)}
+            title="Tambah 1 {baseCode || 'unit'}"
+          >
+            {#if p.imageUrl}
+              <img
+                src={p.imageUrl}
+                alt={p.name}
+                class="h-24 w-full rounded-md object-cover"
+                loading="lazy"
+              />
+            {:else}
+              <div
+                class="flex h-24 w-full items-center justify-center rounded-md bg-slate-50 text-slate-300"
+              >
+                <Package class="h-8 w-8" />
               </div>
             {/if}
-          </div>
-          <div class="flex items-center justify-between gap-1">
-            <span class="text-sm font-semibold text-slate-900">
-              {Number.isFinite(sale) ? formatRupiah(sale) : '—'}
-            </span>
-            <span class="text-[10px] text-slate-500">
-              {stock} {unitCodeFor(p.unitId)}
-            </span>
-          </div>
-        </button>
+            <div class="mt-1 flex-1">
+              <div class="line-clamp-2 text-sm font-medium text-slate-900">{p.name}</div>
+            </div>
+            {#if locationsOn}
+              {@const chips = productLocationChips(p)}
+              {#if chips.length > 0}
+                {@const visibleQty = chips
+                  .filter((c) => c.customerVisible)
+                  .reduce((s, c) => s + c.qty, 0)}
+                {#if visibleQty === 0}
+                  <div class="mt-0.5 inline-flex items-center self-start rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-800">
+                    Ambil dari: {chips.map((c) => `${c.name} · ${c.qty}`).join(' / ')}
+                  </div>
+                {:else}
+                  <div class="mt-0.5 flex flex-wrap gap-x-1.5 text-[10px] leading-tight text-slate-500">
+                    {#each chips as c (c.name)}
+                      <span class={c.customerVisible ? 'text-emerald-700' : ''}>
+                        {c.name} · <span class="font-medium">{c.qty}</span>
+                      </span>
+                    {/each}
+                  </div>
+                {/if}
+              {/if}
+            {/if}
+            <div class="flex items-center justify-between gap-1">
+              <span class="text-sm font-semibold text-slate-900">
+                {Number.isFinite(sale) ? formatRupiah(sale) : '—'}
+              </span>
+              <span class="text-[10px] text-slate-500">
+                {stock} {baseCode}
+              </span>
+            </div>
+          </button>
+
+          {#if p.variants.length > 0}
+            <div class="flex flex-wrap gap-1 border-t border-slate-100 p-1.5">
+              {#each p.variants as v (v.id)}
+                {@const vStock = producibleVariantStock(p.id, v)}
+                {@const vDisabled = vStock <= 0 && !isComposite(p)}
+                <button
+                  type="button"
+                  class="inline-flex items-center gap-0.5 rounded-md border border-slate-200 bg-white px-1.5 py-1 text-[10px] font-medium text-slate-600 hover:border-brand-300 hover:bg-brand-50 hover:text-brand-700 disabled:cursor-not-allowed disabled:opacity-40"
+                  disabled={vDisabled}
+                  onclick={() => addToCart(p, v.id)}
+                  title="Tambah {v.name}{baseCode ? ` · ${vStock} ${baseCode}` : ''}"
+                >
+                  <Plus class="h-2.5 w-2.5" />
+                  {v.name}
+                  {#if vStock > 0}
+                    <span class="text-slate-400">·{vStock}</span>
+                  {/if}
+                </button>
+              {/each}
+            </div>
+          {:else if p.units.length > 0}
+            <div class="flex flex-wrap gap-1 border-t border-slate-100 p-1.5">
+              <button
+                type="button"
+                class="inline-flex items-center gap-0.5 rounded-md border border-slate-200 bg-white px-1.5 py-1 text-[10px] font-medium text-slate-600 hover:border-brand-300 hover:bg-brand-50 hover:text-brand-700 disabled:cursor-not-allowed disabled:opacity-40"
+                {disabled}
+                onclick={() => addToCart(p)}
+                title="Tambah 1 {baseCode}"
+              >
+                <Plus class="h-2.5 w-2.5" />
+                {baseCode || unitNameFor(p.unitId)}
+              </button>
+              {#each p.units as pkg (`${pkg.unitId}|${pkg.factor}`)}
+                <button
+                  type="button"
+                  class="inline-flex items-center gap-0.5 rounded-md border border-slate-200 bg-white px-1.5 py-1 text-[10px] font-medium text-slate-600 hover:border-brand-300 hover:bg-brand-50 hover:text-brand-700 disabled:cursor-not-allowed disabled:opacity-40"
+                  {disabled}
+                  onclick={() => addToCart(p, undefined, pkg.unitId, pkg.factor)}
+                  title="Tambah 1 {unitNameFor(pkg.unitId)} = {pkg.factor} {baseCode}"
+                >
+                  <Plus class="h-2.5 w-2.5" />
+                  {unitNameFor(pkg.unitId)}
+                  <span class="text-slate-400">·{pkg.factor}</span>
+                </button>
+              {/each}
+            </div>
+          {/if}
+        </div>
       {/each}
 
       {#if filteredProducts.length === 0}
@@ -730,6 +870,52 @@
           </div>
         </div>
 
+        {#if isCash}
+          <div class="mt-3">
+            <div class="mb-1 flex items-center justify-between">
+              <span class="text-xs font-medium text-slate-500">Uang diterima</span>
+              {#if session.paymentAmount > 0}
+                <button
+                  type="button"
+                  class="inline-flex items-center gap-1 text-[11px] font-medium text-slate-400 hover:text-rose-600"
+                  onclick={resetPaymentAmount}
+                >
+                  <X class="h-3 w-3" />
+                  Reset
+                </button>
+              {/if}
+            </div>
+            <MoneyInput bind:value={session.paymentAmount} />
+            <div class="mt-2 grid grid-cols-4 gap-1">
+              {#each cashShortcuts as amount (amount)}
+                <button
+                  type="button"
+                  class="rounded-md border border-slate-200 px-2 py-1.5 text-xs font-medium text-slate-700 transition-colors hover:border-brand-300 hover:bg-brand-50 active:bg-brand-100"
+                  onclick={() => addPaymentAmount(amount)}
+                >
+                  +{formatRupiah(amount)}
+                </button>
+              {/each}
+            </div>
+            {#if session.paymentAmount > 0}
+              <div
+                class="mt-2 flex items-baseline justify-between border-t border-slate-200 pt-2"
+              >
+                <dt class="text-sm font-medium text-slate-600">
+                  {paymentChange >= 0 ? 'Kembalian' : 'Kurang'}
+                </dt>
+                <dd
+                  class="text-base font-semibold {paymentChange >= 0
+                    ? 'text-emerald-600'
+                    : 'text-rose-600'}"
+                >
+                  {formatRupiah(Math.abs(paymentChange))}
+                </dd>
+              </div>
+            {/if}
+          </div>
+        {/if}
+
         <div class="mt-3 grid grid-cols-[auto_1fr] gap-2">
           <Button
             variant="outline"
@@ -755,9 +941,7 @@
 <ConfirmDialog
   bind:open={confirmChargeOpen}
   title="Selesaikan transaksi?"
-  message={`${session.lines.length} item · ${formatRupiah(
-    cartTotal
-  )} via ${session.paymentMethod.toUpperCase()}. Stok akan dikurangi.`}
+  message={chargeConfirmMessage}
   confirmLabel="Bayar"
   variant="primary"
   onConfirm={charge}

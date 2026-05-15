@@ -10,7 +10,14 @@
     Plus,
     Minus,
     Printer,
-    AlertTriangle
+    AlertTriangle,
+    ArrowLeftRight,
+    Warehouse as WarehouseIcon,
+    ScanLine,
+    Layers,
+    Camera,
+    X as XIcon,
+    Activity
   } from 'lucide-svelte';
   import { goto } from '$app/navigation';
   import {
@@ -37,18 +44,98 @@
     batches,
     currentCost,
     stockBreakdown,
+    stockByLocation,
     stockOf
   } from '$lib/stores/batches.svelte';
+  import {
+    adjustmentReasonLabels,
+    adjustmentReasonsForIn,
+    adjustmentReasonsForOut,
+    type StockAdjustmentReason
+  } from '$lib/stores/stockMovements.svelte';
   import { categories } from '$lib/stores/categories.svelte';
   import { units } from '$lib/stores/units.svelte';
   import { suppliers } from '$lib/stores/suppliers.svelte';
   import { purchaseOrders } from '$lib/stores/purchaseOrders.svelte';
+  import { locations, type Location } from '$lib/stores/locations.svelte';
+  import { settings } from '$lib/stores/settings.svelte';
   import { toast } from '$lib/stores/toast.svelte';
   import { formatRupiah } from '$lib/utils/currency';
 
   let search = $state('');
   let categoryFilter = $state('');
+  let locationFilter = $state('');
   let lowStockOnly = $state(false);
+
+  const locationsOn = $derived(settings.value.inventory.locationsEnabled);
+  const auditOn = $derived(settings.value.inventory.auditTrailEnabled);
+  const sortedLocations = $derived(locations.sortedActive());
+
+  const locationFilterOptions = $derived([
+    { value: '', label: 'Semua lokasi' },
+    ...sortedLocations.map((l) => ({ value: l.id, label: l.name }))
+  ]);
+
+  function kindBadgeVariant(k: Location['kind']): 'success' | 'warning' | 'neutral' {
+    if (k === 'shelf') return 'success';
+    if (k === 'rack') return 'warning';
+    return 'neutral';
+  }
+
+  type LocationStock = {
+    id: string;
+    name: string;
+    qty: number;
+    customerVisible: boolean;
+    kind: Location['kind'];
+  };
+
+  function locationBreakdown(productId: string, variantId?: string): LocationStock[] {
+    const map = stockByLocation(productId, variantId);
+    const out: LocationStock[] = [];
+    for (const loc of sortedLocations) {
+      const qty = map.get(loc.id) ?? 0;
+      if (qty <= 0) continue;
+      out.push({
+        id: loc.id,
+        name: loc.name,
+        qty,
+        customerVisible: loc.customerVisible,
+        kind: loc.kind
+      });
+    }
+    return out;
+  }
+
+  function totalStockAtLocation(p: Product, locationId: string): number {
+    if (p.variants.length === 0) {
+      return stockByLocation(p.id).get(locationId) ?? 0;
+    }
+    let total = 0;
+    for (const v of p.variants) {
+      total += stockByLocation(p.id, v.id).get(locationId) ?? 0;
+    }
+    return total;
+  }
+
+  // Aggregates location breakdown across variants for a product. Non-variant
+  // products just delegate to locationBreakdown.
+  function productLocationBreakdown(p: Product): LocationStock[] {
+    if (p.variants.length === 0) return locationBreakdown(p.id);
+    const agg = new Map<string, LocationStock>();
+    for (const v of p.variants) {
+      for (const e of locationBreakdown(p.id, v.id)) {
+        const prev = agg.get(e.id);
+        if (prev) prev.qty += e.qty;
+        else agg.set(e.id, { ...e });
+      }
+    }
+    return [...agg.values()].sort((a, b) => {
+      const ai = sortedLocations.findIndex((l) => l.id === a.id);
+      const bi = sortedLocations.findIndex((l) => l.id === b.id);
+      return ai - bi;
+    });
+  }
 
   const categoryOptions = $derived([
     { value: '', label: 'Semua kategori' },
@@ -62,6 +149,7 @@
       if (categoryFilter && p.categoryId !== categoryFilter) return false;
       const total = totalStock(p);
       if (lowStockOnly && total >= 10) return false;
+      if (locationsOn && locationFilter && totalStockAtLocation(p, locationFilter) <= 0) return false;
       if (!q) return true;
       const hay = [
         p.name,
@@ -146,13 +234,18 @@
     return out;
   }
 
-  const columns = [
+  const columns = $derived([
     { key: 'name' as const, label: 'Produk' },
     { key: 'categoryId' as const, label: 'Kategori', width: '140px' },
     { key: 'stock' as const, label: 'Stok', align: 'right' as const, width: '280px' },
     { key: 'status' as const, label: 'Status', width: '100px' },
-    { key: 'id' as const, label: '', align: 'right' as const, width: '200px' }
-  ];
+    {
+      key: 'id' as const,
+      label: '',
+      align: 'right' as const,
+      width: locationsOn ? (auditOn ? '300px' : '260px') : auditOn ? '240px' : '200px'
+    }
+  ]);
 
   // ───── Batches inspection modal ─────
   let batchesOpen = $state(false);
@@ -185,9 +278,12 @@
     return { owned, consignment, total: owned + consignment, active, depleted };
   });
 
-  const batchColumns = [
+  const batchColumns = $derived([
     { key: 'code', label: 'Kode', width: '130px' },
     { key: 'variant', label: 'Varian' },
+    ...(locationsOn
+      ? [{ key: 'locationId', label: 'Lokasi', width: '140px' }]
+      : []),
     { key: 'ownership', label: 'Kepemilikan' },
     { key: 'qtyReceived', label: 'Diterima', align: 'right' as const, width: '90px' },
     { key: 'qtyRemaining', label: 'Sisa', align: 'right' as const, width: '90px' },
@@ -197,7 +293,7 @@
     { key: 'expiresAt', label: 'Kedaluwarsa' },
     { key: 'sourcePurchaseOrderId', label: 'PO Asal' },
     { key: 'actions', label: '', align: 'right' as const, width: '60px' }
-  ];
+  ]);
 
   function variantNameFor(productId: string, variantId?: string): string {
     if (!variantId) return '—';
@@ -222,8 +318,23 @@
   let adjustUnitCost = $state<number>(0);     // per the chosen unit (not per base unit)
   let adjustOverridePrice = $state(false);    // true once the user reveals the price field
   let adjustExpiresAt = $state<string>('');   // ISO date, only when product.requiresExpiration
+  let adjustLocationId = $state<string>('');  // empty = default location
+  let adjustReason = $state<StockAdjustmentReason | ''>('');
+  let adjustImageUrl = $state<string>('');    // data URL via FileReader; empty = no image
   let adjustNotes = $state<string>('');
   let adjustError = $state<string>('');
+
+  const adjustReasonOptions = $derived.by(() => {
+    const list = adjustMode === 'add' ? adjustmentReasonsForIn : adjustmentReasonsForOut;
+    return [
+      { value: '', label: 'Pilih alasan…' },
+      ...list.map((r) => ({ value: r, label: adjustmentReasonLabels[r] }))
+    ];
+  });
+
+  const adjustLocationOptions = $derived(
+    sortedLocations.map((l) => ({ value: l.id, label: l.name }))
+  );
 
   const adjustVariantOptions = $derived(
     adjustProduct?.variants.map((v) => ({ value: v.id, label: v.name })) ?? []
@@ -280,9 +391,36 @@
     adjustUnitCost = currentCost(p.id, p.variants.length > 0 ? p.variants[0].id : undefined);
     adjustOverridePrice = false;
     adjustExpiresAt = '';
+    adjustLocationId = locations.defaultId();
+    adjustReason = '';
+    adjustImageUrl = '';
     adjustNotes = '';
     adjustError = '';
     adjustOpen = true;
+  }
+
+  function onAdjustModeChange(next: AdjustMode) {
+    adjustMode = next;
+    // Reset reason since the option lists differ per mode.
+    adjustReason = '';
+  }
+
+  function onAdjustImageChange(e: Event) {
+    const input = e.currentTarget as HTMLInputElement;
+    const file = input.files?.[0];
+    if (!file) {
+      adjustImageUrl = '';
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      adjustImageUrl = typeof reader.result === 'string' ? reader.result : '';
+    };
+    reader.readAsDataURL(file);
+  }
+
+  function clearAdjustImage() {
+    adjustImageUrl = '';
   }
 
   function onAdjustVariantChange() {
@@ -309,6 +447,10 @@
       adjustError = 'Jumlah harus lebih besar dari 0.';
       return;
     }
+    if (!adjustReason) {
+      adjustError = 'Pilih alasan penyesuaian.';
+      return;
+    }
     if (adjustMode === 'add' && (!Number.isFinite(adjustUnitCost) || adjustUnitCost < 0)) {
       adjustError = 'Harga satuan harus 0 atau lebih.';
       return;
@@ -330,7 +472,10 @@
       delta: baseDelta,
       unitCost: baseUnitCost,
       expiresAt: adjustMode === 'add' ? adjustExpiresAt || undefined : undefined,
-      notes: adjustNotes.trim() || 'Penyesuaian stok manual.'
+      locationId: locationsOn ? adjustLocationId || undefined : undefined,
+      reason: adjustReason,
+      imageUrl: adjustImageUrl || undefined,
+      notes: adjustNotes.trim() || `Penyesuaian stok: ${adjustmentReasonLabels[adjustReason]}`
     });
     const label = adjustVariantId
       ? `${adjustProduct.name} — ${variantNameFor(adjustProduct.id, adjustVariantId)}`
@@ -347,6 +492,152 @@
       goto(`/inventory/batches/${newBatch.id}/label`);
     }
   }
+
+  // ───── Move stock between locations ─────
+  let moveOpen = $state(false);
+  let moveProduct = $state<Product | null>(null);
+  let moveVariantId = $state<string>('');
+  let moveFromLocId = $state<string>('');
+  let moveToLocId = $state<string>('');
+  let moveQty = $state<number>(0);
+  let moveNotes = $state<string>('');
+  let moveError = $state<string>('');
+
+  const moveVariantOptions = $derived(
+    moveProduct?.variants.map((v) => ({ value: v.id, label: v.name })) ?? []
+  );
+
+  // Source location options: only locations that currently have stock for the (product, variant).
+  const moveFromOptions = $derived.by(() => {
+    if (!moveProduct) return [] as { value: string; label: string }[];
+    const map = stockByLocation(moveProduct.id, moveVariantId || undefined);
+    return sortedLocations
+      .filter((l) => (map.get(l.id) ?? 0) > 0)
+      .map((l) => ({ value: l.id, label: `${l.name} (${map.get(l.id) ?? 0})` }));
+  });
+
+  const moveToOptions = $derived.by(() => {
+    return sortedLocations
+      .filter((l) => l.id !== moveFromLocId)
+      .map((l) => ({ value: l.id, label: l.name }));
+  });
+
+  const moveSourceMax = $derived.by(() => {
+    if (!moveProduct || !moveFromLocId) return 0;
+    return stockByLocation(moveProduct.id, moveVariantId || undefined).get(moveFromLocId) ?? 0;
+  });
+
+  // Source batches at the from-location, sorted by expiresAt asc so the admin sees
+  // expiring batches first when deciding what to move (the expiry-awareness nudge).
+  const moveSourceBatches = $derived.by(() => {
+    if (!moveProduct || !moveFromLocId) return [];
+    return batches.forStock(moveProduct.id, moveVariantId || undefined, {
+      locationIds: [moveFromLocId]
+    });
+  });
+
+  function expiryHintFor(expiresAt?: string): { label: string; variant: 'danger' | 'warning' | 'neutral' } | null {
+    if (!expiresAt) return null;
+    const d = daysUntilExpiry(expiresAt);
+    if (d === null) return null;
+    if (d < 0) return { label: `sudah kedaluwarsa ${-d} hari lalu`, variant: 'danger' };
+    if (d === 0) return { label: 'kedaluwarsa hari ini', variant: 'danger' };
+    if (d <= 3) return { label: `kedaluwarsa ${d} hari lagi`, variant: 'warning' };
+    if (d <= 7) return { label: `kedaluwarsa ${d} hari lagi`, variant: 'warning' };
+    return null;
+  }
+
+  function openMove(p: Product) {
+    moveProduct = p;
+    moveVariantId = p.variants.length > 0 ? p.variants[0].id : '';
+    moveFromLocId = '';
+    moveToLocId = '';
+    moveQty = 0;
+    moveNotes = '';
+    moveError = '';
+    // Auto-pick first source location with stock for convenience.
+    const firstFrom = stockByLocation(p.id, moveVariantId || undefined);
+    for (const loc of sortedLocations) {
+      if ((firstFrom.get(loc.id) ?? 0) > 0) {
+        moveFromLocId = loc.id;
+        break;
+      }
+    }
+    // Auto-pick first different location as destination.
+    const firstTo = sortedLocations.find((l) => l.id !== moveFromLocId);
+    if (firstTo) moveToLocId = firstTo.id;
+    moveOpen = true;
+  }
+
+  function onMoveVariantChange() {
+    // Re-resolve source/dest selections when variant changes.
+    if (!moveProduct) return;
+    const firstFrom = stockByLocation(moveProduct.id, moveVariantId || undefined);
+    moveFromLocId = '';
+    for (const loc of sortedLocations) {
+      if ((firstFrom.get(loc.id) ?? 0) > 0) {
+        moveFromLocId = loc.id;
+        break;
+      }
+    }
+    if (moveToLocId === moveFromLocId) {
+      moveToLocId = sortedLocations.find((l) => l.id !== moveFromLocId)?.id ?? '';
+    }
+    moveQty = 0;
+  }
+
+  function onMoveFromChange() {
+    if (moveToLocId === moveFromLocId) {
+      moveToLocId = sortedLocations.find((l) => l.id !== moveFromLocId)?.id ?? '';
+    }
+    moveQty = 0;
+  }
+
+  function saveMove() {
+    moveError = '';
+    if (!moveProduct) {
+      moveError = 'Produk tidak valid.';
+      return;
+    }
+    if (!moveFromLocId || !moveToLocId) {
+      moveError = 'Pilih lokasi sumber dan tujuan.';
+      return;
+    }
+    if (moveFromLocId === moveToLocId) {
+      moveError = 'Lokasi sumber dan tujuan harus berbeda.';
+      return;
+    }
+    if (!Number.isFinite(moveQty) || moveQty <= 0) {
+      moveError = 'Jumlah harus lebih dari 0.';
+      return;
+    }
+    if (moveQty > moveSourceMax) {
+      moveError = `Stok di lokasi sumber hanya ${moveSourceMax}.`;
+      return;
+    }
+    const result = batches.moveProductStock({
+      productId: moveProduct.id,
+      variantId: moveVariantId || undefined,
+      fromLocationId: moveFromLocId,
+      toLocationId: moveToLocId,
+      qty: moveQty,
+      notes: moveNotes.trim() || undefined
+    });
+    if (!result.ok) {
+      moveError = result.reason ?? 'Gagal memindahkan stok.';
+      return;
+    }
+    const fromName = locations.getById(moveFromLocId)?.name ?? '';
+    const toName = locations.getById(moveToLocId)?.name ?? '';
+    const variantSuffix = moveVariantId
+      ? ` — ${variantNameFor(moveProduct.id, moveVariantId)}`
+      : '';
+    toast.success(
+      'Stok dipindahkan',
+      `${result.moved} unit ${moveProduct.name}${variantSuffix} · ${fromName} → ${toName}`
+    );
+    moveOpen = false;
+  }
 </script>
 
 <svelte:head>
@@ -357,7 +648,20 @@
   title="Inventaris"
   description="Stok per produk, rincian batch, dan penyesuaian manual."
   breadcrumb={[{ label: 'Katalog' }, { label: 'Inventaris' }]}
-/>
+>
+  {#snippet actions()}
+    {#if locationsOn}
+      <Button variant="outline" href="/inventory/move/scan">
+        <ScanLine class="h-4 w-4" />
+        Scan & Pindah
+      </Button>
+      <Button variant="outline" href="/inventory/move/bulk">
+        <Layers class="h-4 w-4" />
+        Pindah Massal
+      </Button>
+    {/if}
+  {/snippet}
+</PageHeader>
 
 <Card padded={false}>
   <div class="flex flex-wrap items-center gap-2 border-b border-slate-100 px-4 py-3">
@@ -367,6 +671,9 @@
       </Input>
     </div>
     <Select bind:value={categoryFilter} options={categoryOptions} class="w-44" />
+    {#if locationsOn}
+      <Select bind:value={locationFilter} options={locationFilterOptions} class="w-44" />
+    {/if}
     <div class="ml-1 flex items-center gap-2 text-sm text-slate-600">
       <Toggle bind:checked={lowStockOnly} />
       <span>Hanya stok menipis</span>
@@ -464,6 +771,25 @@
               {expirySoonLabel(expSoon)}
             </div>
           {/if}
+
+          {#if locationsOn}
+            {@const lb = productLocationBreakdown(row)}
+            {#if lb.length > 0}
+              <div class="mt-1.5">
+                <div class="text-[10px] font-semibold tracking-wider text-slate-400 uppercase">
+                  Lokasi
+                </div>
+                <ul class="mt-0.5 flex flex-wrap justify-end gap-x-2 gap-y-0.5 text-xs">
+                  {#each lb as e (e.id)}
+                    <li class={e.customerVisible ? 'text-emerald-700' : 'text-slate-600'}>
+                      {e.name}:
+                      <span class="font-medium">{e.qty}</span>
+                    </li>
+                  {/each}
+                </ul>
+              </div>
+            {/if}
+          {/if}
         </div>
       {:else if column.key === 'status'}
         {@const total = totalStock(row)}
@@ -474,8 +800,19 @@
           {#if !isComposite(row)}
             <Button size="sm" variant="outline" onclick={() => openAdjust(row)}>
               <SlidersHorizontal class="h-3.5 w-3.5" />
-              Atur stok
+              Atur
             </Button>
+            {#if locationsOn}
+              <Button
+                size="sm"
+                variant="outline"
+                onclick={() => openMove(row)}
+                disabled={totalStock(row) === 0}
+              >
+                <ArrowLeftRight class="h-3.5 w-3.5" />
+                Pindah
+              </Button>
+            {/if}
           {/if}
           <button
             type="button"
@@ -486,6 +823,16 @@
           >
             <PackageSearch class="h-4 w-4" />
           </button>
+          {#if auditOn}
+            <a
+              href="/inventory/{row.id}/history"
+              class="rounded-md p-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-700"
+              aria-label="Lihat riwayat"
+              title="Lihat riwayat"
+            >
+              <Activity class="h-4 w-4" />
+            </a>
+          {/if}
         </div>
       {/if}
     {/snippet}
@@ -534,6 +881,13 @@
         {:else if column.key === 'variant'}
           {#if row.variantId}
             <span class="text-slate-700">{variantNameFor(row.productId, row.variantId)}</span>
+          {:else}
+            <span class="text-xs text-slate-400">—</span>
+          {/if}
+        {:else if column.key === 'locationId'}
+          {@const loc = locations.getById(row.locationId)}
+          {#if loc}
+            <Badge variant={kindBadgeVariant(loc.kind)} size="sm">{loc.name}</Badge>
           {:else}
             <span class="text-xs text-slate-400">—</span>
           {/if}
@@ -610,6 +964,12 @@
   {/if}
 
   {#snippet footer()}
+    {#if auditOn && inspectProduct}
+      <Button variant="outline" href="/inventory/{inspectProduct.id}/history">
+        <Activity class="h-4 w-4" />
+        Lihat riwayat lengkap
+      </Button>
+    {/if}
     <Button variant="outline" onclick={() => (batchesOpen = false)}>Tutup</Button>
   {/snippet}
 </Modal>
@@ -647,6 +1007,17 @@
         {/if}
       </div>
 
+      {#if locationsOn && sortedLocations.length > 1}
+        <Select
+          label="Lokasi"
+          bind:value={adjustLocationId}
+          options={adjustLocationOptions}
+          hint={adjustMode === 'add'
+            ? 'Stok baru akan dicatat di lokasi ini.'
+            : 'Pengurangan akan mengambil dari lokasi ini dulu; jika kurang, baru dari lokasi lain.'}
+        />
+      {/if}
+
       {#if adjustUnitOpts.length > 1}
         <Select
           label="Satuan untuk penyesuaian"
@@ -665,7 +1036,7 @@
               {adjustMode === 'add'
               ? 'border-emerald-300 bg-emerald-50 text-emerald-700'
               : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'}"
-            onclick={() => (adjustMode = 'add')}
+            onclick={() => onAdjustModeChange('add')}
           >
             <Plus class="h-4 w-4" />
             Tambah stok
@@ -676,7 +1047,7 @@
               {adjustMode === 'subtract'
               ? 'border-rose-300 bg-rose-50 text-rose-700'
               : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'}"
-            onclick={() => (adjustMode = 'subtract')}
+            onclick={() => onAdjustModeChange('subtract')}
           >
             <Minus class="h-4 w-4" />
             Kurangi stok
@@ -739,11 +1110,62 @@
         {/if}
       {/if}
 
-      <Textarea
+      <Select
         label="Alasan"
-        placeholder="mis. stok opname, barang rusak, found stock, dll."
+        bind:value={adjustReason}
+        options={adjustReasonOptions}
+        hint={adjustMode === 'add'
+          ? 'Wajib diisi: jenis penambahan stok yang dilakukan.'
+          : 'Wajib diisi: jenis pengurangan stok yang dilakukan.'}
+      />
+
+      <Textarea
+        label="Catatan (opsional)"
+        placeholder="Detail tambahan: kronologi, nomor referensi, nama pelaporan, dll."
         bind:value={adjustNotes}
       />
+
+      <div>
+        <span class="mb-1.5 block text-sm font-medium text-slate-700">
+          Foto bukti <span class="font-normal text-slate-400">(opsional)</span>
+        </span>
+        {#if adjustImageUrl}
+          <div class="flex items-start gap-3 rounded-lg border border-slate-200 bg-slate-50 p-2">
+            <img
+              src={adjustImageUrl}
+              alt="Foto bukti penyesuaian"
+              class="h-24 w-24 rounded-md border border-slate-200 object-cover"
+            />
+            <div class="flex-1">
+              <p class="text-xs text-slate-600">Foto berhasil dilampirkan.</p>
+              <button
+                type="button"
+                class="mt-1 inline-flex items-center gap-1 text-xs font-medium text-rose-600 hover:text-rose-700"
+                onclick={clearAdjustImage}
+              >
+                <XIcon class="h-3 w-3" />
+                Hapus foto
+              </button>
+            </div>
+          </div>
+        {:else}
+          <label
+            class="flex cursor-pointer flex-col items-center gap-1.5 rounded-lg border border-dashed border-slate-300 bg-slate-50/50 px-3 py-4 text-center hover:border-brand-400 hover:bg-brand-50/30"
+          >
+            <Camera class="h-5 w-5 text-slate-400" />
+            <span class="text-xs font-medium text-slate-600">Pilih foto</span>
+            <span class="text-[10px] text-slate-400">
+              Untuk bukti stok rusak, hilang, atau temuan
+            </span>
+            <input
+              type="file"
+              accept="image/*"
+              class="hidden"
+              onchange={onAdjustImageChange}
+            />
+          </label>
+        {/if}
+      </div>
 
       {#if adjustError}
         <p class="text-sm text-rose-600">{adjustError}</p>
@@ -754,5 +1176,97 @@
   {#snippet footer()}
     <Button variant="outline" onclick={() => (adjustOpen = false)}>Batal</Button>
     <Button onclick={saveAdjust}>Simpan penyesuaian</Button>
+  {/snippet}
+</Modal>
+
+<Modal
+  bind:open={moveOpen}
+  size="lg"
+  title="Pindahkan stok{moveProduct ? ` · ${moveProduct.name}` : ''}"
+  description="Pindahkan unit antar lokasi (mis. dari Gudang ke Etalase). Sistem menampilkan batch sumber diurutkan dari yang paling dekat kedaluwarsa — pindahkan yang paling cepat habis dulu agar tidak terbuang."
+>
+  {#if moveProduct}
+    <div class="grid gap-4">
+      {#if moveVariantOptions.length > 0}
+        <Select
+          label="Varian"
+          bind:value={moveVariantId}
+          options={moveVariantOptions}
+          onchange={onMoveVariantChange}
+        />
+      {/if}
+
+      <div class="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_auto_1fr] sm:items-end">
+        <Select
+          label="Dari"
+          bind:value={moveFromLocId}
+          options={moveFromOptions}
+          onchange={onMoveFromChange}
+          hint={moveFromOptions.length === 0 ? 'Tidak ada lokasi dengan stok untuk produk ini.' : undefined}
+        />
+        <div class="hidden pb-2 text-slate-400 sm:block">
+          <ArrowLeftRight class="h-5 w-5" />
+        </div>
+        <Select label="Ke" bind:value={moveToLocId} options={moveToOptions} />
+      </div>
+
+      <Input
+        label="Jumlah"
+        type="number"
+        step="1"
+        min="0"
+        bind:value={moveQty}
+        hint={moveSourceMax > 0
+          ? `Maksimal ${moveSourceMax} di lokasi sumber.`
+          : 'Pilih lokasi sumber dengan stok terlebih dulu.'}
+      />
+
+      {#if moveSourceBatches.length > 0}
+        <div class="rounded-lg border border-slate-200 bg-slate-50/60 p-3">
+          <div class="mb-1.5 flex items-center gap-1.5 text-xs font-semibold tracking-wider text-slate-500 uppercase">
+            <AlertTriangle class="h-3.5 w-3.5" />
+            Urutan batch yang akan dipindahkan
+          </div>
+          <p class="mb-2 text-xs text-slate-500">
+            Sistem akan mengambil dari batch paling atas dulu. Pastikan batch yang mendekati kedaluwarsa dipindahkan ke Etalase agar terjual lebih dulu.
+          </p>
+          <ul class="space-y-1.5">
+            {#each moveSourceBatches as b (b.id)}
+              {@const hint = expiryHintFor(b.expiresAt)}
+              <li class="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md border border-slate-100 bg-white px-2.5 py-1.5 text-xs">
+                <code class="font-mono font-medium text-slate-800">{b.code}</code>
+                <span class="text-slate-600">Sisa: <span class="font-medium text-slate-900">{b.qtyRemaining}</span></span>
+                {#if b.expiresAt}
+                  <span class="text-slate-500">Kedaluwarsa: {b.expiresAt}</span>
+                {/if}
+                {#if hint}
+                  <Badge variant={hint.variant} size="sm">{hint.label}</Badge>
+                {/if}
+                {#if !b.expiresAt}
+                  <span class="text-slate-400">tanpa kedaluwarsa</span>
+                {/if}
+              </li>
+            {/each}
+          </ul>
+        </div>
+      {/if}
+
+      <Textarea
+        label="Catatan (opsional)"
+        placeholder="mis. Refill etalase pagi, batch hampir kedaluwarsa, dll."
+        bind:value={moveNotes}
+      />
+
+      {#if moveError}
+        <p class="text-sm text-rose-600">{moveError}</p>
+      {/if}
+    </div>
+  {/if}
+
+  {#snippet footer()}
+    <Button variant="outline" onclick={() => (moveOpen = false)}>Batal</Button>
+    <Button onclick={saveMove} disabled={!moveFromLocId || !moveToLocId || moveQty <= 0}>
+      Pindahkan
+    </Button>
   {/snippet}
 </Modal>

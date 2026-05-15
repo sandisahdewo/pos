@@ -18,6 +18,7 @@ export type CartSession = {
   customerId: string;
   lines: CartLine[];
   paymentMethod: PaymentMethod;
+  paymentAmount: number;
   createdAt: string;
   updatedAt: string;
 };
@@ -33,6 +34,7 @@ function blank(label: string): CartSession {
     customerId: '',
     lines: [],
     paymentMethod: 'cash',
+    paymentAmount: 0,
     createdAt: nowIso(),
     updatedAt: nowIso()
   };

@@ -3,7 +3,7 @@
 This document captures the design decisions, data model, and conventions for the **product master** in this POS scaffold. The goal is to give a future maintainer — human or AI agent — enough context to extend the system without re-deriving the rationale.
 
 > **Status:** scaffold, frontend-only. No backend yet; all data is in-memory `$state` and resets on reload.
-> **Last updated:** 2026-05-13 (Tax rates, Suppliers, Product images, Purchase Orders, Composite products, ProductKind discriminator, per-variant recipes, Extras, Customers, POS terminal + Orders added; consignment refactored to be PO-driven; scalar `Product.stock` / `ProductVariant.stock` removed and replaced by `Batch` rows with FIFO depletion; `Payout` entity + `/payouts` route ship the Consignor Payout report and return-to-consignor flow — see [`CONSIGNMENT.md`](./CONSIGNMENT.md) for the full design).
+> **Last updated:** 2026-05-15 (Tax rates, Suppliers, Product images, Purchase Orders, Composite products, ProductKind discriminator, per-variant recipes, Extras, Customers, POS terminal + Orders added; consignment refactored to be PO-driven; scalar `Product.stock` / `ProductVariant.stock` removed and replaced by `Batch` rows with FIFO depletion; `Payout` entity + `/payouts` route ship the Consignor Payout report and return-to-consignor flow — see [`CONSIGNMENT.md`](./CONSIGNMENT.md) for the full design; `Location` resource and `Batch.locationId` added as an opt-in feature behind `settings.inventory.locationsEnabled`; `StockMovement` ledger + `StockOpname` cycle-count workflow added as an opt-in feature behind `settings.inventory.auditTrailEnabled` — every batch mutation logs a row, the count screen has an inline "Selidiki" panel for theft investigation).
 
 ## Table of contents
 
@@ -224,6 +224,109 @@ type Supplier = {
 ```
 
 Suppliers power Purchase Orders (see below). `Product.defaultSupplierId` is a soft reference to a primary supplier — used to autofill the supplier when creating a new PO for that product. If the supplier is deleted, the reference dangles harmlessly and `defaultSupplier(p)` returns undefined.
+
+### `Location`
+
+Lives in `src/lib/stores/locations.svelte.ts`. Master-data resource at `/locations`. **Opt-in via `settings.inventory.locationsEnabled` (default off)** — small stores keeping everything in one place don't see the UI at all. The data model is always-on (every batch carries a `locationId`), so toggling later is zero-migration.
+
+```ts
+type LocationKind = 'shelf' | 'rack' | 'warehouse';
+
+type Location = {
+  id: string;
+  name: string;              // "Etalase", "Rak Belakang", "Gudang"
+  slug: string;
+  kind: LocationKind;        // shelf → customer-visible by default
+  customerVisible: boolean;  // overridable per zone
+  isDefaultReceipt: boolean; // exactly one; PO receipts land here
+  displayOrder: number;
+  description: string;
+  status: 'active' | 'archived';
+};
+```
+
+Three locations are seeded: `Etalase` (shelf, customer-visible), `Rak Belakang` (rack, hidden), and `Gudang` (warehouse, hidden, **default receipt**). `locations.default()` returns the default-receipt entry; `locations.customerVisibleIds()` returns the set used by display chips. The store enforces "exactly one `isDefaultReceipt`" the same way `pricelists` enforces `isDefault`. `locations.remove(id)` returns `{ ok, reason? }` and blocks deleting the default location or any location still holding batches with `qtyRemaining > 0`.
+
+**Storage model.** `Batch.locationId` is the only stock-location axis — a product with 5 on the shelf and 20 in gudang is two batches with the same `(productId, variantId)` and different `locationId`. The total `stockOf(...)` aggregates across all locations (single source of truth); `stockByLocation(...)` returns the per-location breakdown. **Sales walk `batches.forStock(...)` in unchanged FIFO order** (expiry asc, then receivedAt asc) — no shelf-first preference, so perishables stay protected regardless of where they sit.
+
+**Stock movement.** `batches.moveStock({ batchId, toLocationId, qty, notes?, transferGroupId? })` splits the source batch into a sibling at the destination (preserving `unitCost`, `expiresAt`, `receivedAt`, `ownership`, `supplierId`, `sourcePurchaseOrderId/LineId`) so history stays intact. When `qty === src.qtyRemaining`, it mutates `locationId` in place to avoid zero-history zombies. `batches.moveProductStock({ productId, variantId?, fromLocationId, toLocationId, qty, notes? })` is the convenience wrapper that walks source batches sorted by **expiry asc** (the admin-awareness nudge — move expiring stock to Etalase first) and calls `moveStock` until satisfied. Callers can pass a shared `transferGroupId` so multiple `moveStock` calls land as one logical transfer in the movement log.
+
+**Three move flows** sharing the same underlying `moveStock` call — pick whichever matches your physical context:
+
+| Flow | Route | When to use |
+|---|---|---|
+| **Row modal** (per-product) | `/inventory` → "Pindah" button on a row | Desktop review-and-decide. Surfaces the batch-expiry preview panel inline before submit. |
+| **Scan & Pindah** (basket) | `/inventory/move/scan` | Phone/handheld in the warehouse. Scan batch codes / SKUs (USB scanner emits as keyboard events with Enter; manual typing also works), accumulate in a basket, submit all to one destination with a shared `transferGroupId`. |
+| **Pindah Massal** (from-location) | `/inventory/move/bulk` | Weekly refill / large reorganization. Pick source location once, check many batches (sorted by expiry asc with red/yellow hint badges), one destination, one submit. "Pilih yang mendekati kedaluwarsa" quick-action handles the "rotate perishables to the shelf" pattern. |
+
+**Display visibility.** "Is this product on display for customers" is emergent from where its batches sit, not a product-level flag. A product is "warehouse-only" iff `stockByLocation(...)` has no entry at any `customerVisible` location. The POS surfaces this with a yellow "Ambil dari: Gudang · 80" chip; otherwise it shows per-location quantities (`Etalase · 5 / Gudang · 20`).
+
+### `StockMovement` and `StockOpname` (audit trail + cycle count)
+
+Lives in `src/lib/stores/stockMovements.svelte.ts` and `src/lib/stores/stockOpnames.svelte.ts`. **Opt-in via `settings.inventory.auditTrailEnabled` (default off)** — when off, the `stockMovements.log()` calls embedded at every batch mutation site are no-ops, so there's zero overhead.
+
+```ts
+type StockMovementKind =
+  | 'receive' | 'sale' | 'sale-cancel'
+  | 'adjust-in' | 'adjust-out'
+  | 'move-out' | 'move-in' | 'move-relocate'
+  | 'return-consignor';
+
+type StockMovement = {
+  id: string;
+  code: string;          // MOV-YYYY-NNN
+  at: string;            // ISO datetime
+  kind: StockMovementKind;
+  productId: string;
+  variantId?: string;
+  locationId: string;
+  batchId: string;       // every movement attaches to a specific batch
+  qtyDelta: number;      // signed base units (positive=+, negative=−, 0 for move-relocate)
+  qtyAfter: number;      // batch's qtyRemaining post-mutation snapshot
+  unitCost: number;      // snapshot for cost-impact reporting
+  reference?: { kind: 'po' | 'order' | 'opname' | 'manual' | 'transfer' | 'return'; id: string; code?: string };
+  performedBy: string;   // user.current.name snapshot
+  notes: string;
+};
+```
+
+**Hook sites (exhaustive):**
+- `purchaseOrders.receive()` → `receive` (one per line).
+- `applyOrderToStock` (via `deductBatchesFIFO`) → `sale` (one per `BatchAllocation` — a 5-line order across 10 batches = up to 50 rows).
+- `orders.cancel()` → `sale-cancel` (one per allocation).
+- `batches.adjustStock` → `adjust-in` (positive delta) or `adjust-out` (per batch in the LIFO walk).
+- `batches.moveStock` → `move-out` + `move-in` for partial splits (sharing a `transferGroupId`), or `move-relocate` for full-remainder moves (qtyDelta=0).
+- `batches.returnToConsignor` → `return-consignor`.
+
+**`StockOpname` and the count workflow:**
+
+```ts
+type OpnameLine = {
+  id: string;
+  productId: string;
+  variantId?: string;
+  expectedQty: number;       // snapshot from stockByLocation at draft time
+  countedQty: number | null; // admin enters during count; null = skip
+  unitCost: number;          // snapshot for shrinkage value
+  notes: string;
+};
+
+type StockOpname = {
+  id: string;
+  code: string;              // OPN-YYYY-NNN
+  locationId?: string;       // omitted when locations feature is off
+  startedAt: string;
+  completedAt?: string;
+  status: 'draft' | 'completed' | 'cancelled';
+  lines: OpnameLine[];
+  performedBy: string;
+  notes: string;
+};
+```
+
+`stockOpnames.buildDraft({ locationId?, categoryIds?, productIds?, notes? })` snapshots `expectedQty` and `unitCost` per (product, variant?) and returns a draft. `stockOpnames.complete(id, { skipUncounted })` walks lines with non-zero variance and calls `batches.adjustStock` with `reference: { kind: 'opname', id, code }` — so the resulting `adjust-in` / `adjust-out` movement rows are stamped to the opname for forward and reverse traceability.
+
+**Investigation (theft detection):** the count screen at `/stock-opname/[id]` has a per-row "Selidiki" button that opens a side panel showing `stockMovements.forProduct(productId, variantId, { locationId, since: startedAt - 30d })` as a chronological timeline. When the admin sees a -1 variance, the panel reveals the trail: e.g. `+30 move-in (transfer) → -3 sale (ORD-2026-042) → -1 adjust-out (OPN-2026-001 shrinkage)` so they can spot any unaccounted gap.
 
 ### `PurchaseOrder`
 
@@ -652,9 +755,21 @@ All in `src/lib/stores/products.svelte.ts` unless noted.
 | `batches.forSupplier(supplierId, ownership?)` | `Batch[]` | Supplier-scoped batch list. Powers the consignor payout / return flows. |
 | `batches.forSourcePO(poId)` | `Batch[]` | All batches created from a given PO, sorted by `receivedAt` ASC. Drives `/inventory/po/[poId]/labels`. |
 | `batches.getByCode(code)` | `Batch \| undefined` | Look up by human-readable `BATCH-YYYY-NNN`. Used by the POS scan flow. |
-| `batches.adjustStock({ productId, variantId?, delta, unitCost, notes? })` | `void` | Manual stock adjustment. Positive delta → new owned batch. Negative → LIFO decrement across owned batches (preserves FIFO order for future sales). Used by the product form save. |
+| `batches.adjustStock({ productId, variantId?, delta, unitCost, locationId?, notes? })` | `void` | Manual stock adjustment. Positive delta → new owned batch at `locationId` (defaults to `locations.default().id`). Negative → LIFO decrement starting at `locationId`, falling through to other locations if shortfall remains. Used by the product form save. |
 | `batches.forProduct(productId)` | `Batch[]` | All batches for a product (across variants, including depleted), sorted by `receivedAt` ASC. Drives the per-product Batches modal on the products list. |
 | `batches.returnToConsignor(batchId, qty)` | `{ ok, reason? }` | Decrements a consignment batch's `qtyRemaining`. No payable, no revenue. Used by the Return-stock modal on `/payouts`. |
+| `stockByLocation(productId, variantId?)` | `Map<locationId, qty>` | Per-location remaining stock for a (product, variant?). Drives the breakdown chips on `/inventory`, `/products`, and `/pos`. |
+| `batches.moveStock({ batchId, toLocationId, qty, notes? })` | `{ ok, reason?, newBatch? }` | Splits the source batch into a sibling at the destination preserving all snapshotted fields. Full-remainder moves mutate `locationId` in place. |
+| `batches.moveProductStock({ productId, variantId?, fromLocationId, toLocationId, qty, notes? })` | `{ ok, reason?, moved }` | Convenience wrapper. Walks source batches sorted by `expiresAt` ASC and chains `moveStock` calls until satisfied. Used by the Pindahkan modal on `/inventory`. |
+| `locations.default()` / `locations.defaultId()` | `Location` / `string` | The single `isDefaultReceipt: true` location. PO receipts and unspecified positive adjustments land here. |
+| `locations.customerVisibleIds()` | `Set<string>` | IDs of locations flagged customer-visible. Used to detect "warehouse-only" products and tint breakdown chips. |
+| `locations.sortedActive()` | `Location[]` | Active locations sorted by `displayOrder` asc — used for consistent ordering across all surfaces. |
+| `stockMovements.log({ kind, productId, batchId, locationId, qtyDelta, qtyAfter, unitCost, reference?, notes })` | `StockMovement \| undefined` | Append a ledger row; no-op when `settings.inventory.auditTrailEnabled` is off. Captures `performedBy` from `user.current.name` and `at` from `new Date().toISOString()` unless overridden. |
+| `stockMovements.forProduct(productId, variantId?, { locationId?, since?, until?, limit? })` | `StockMovement[]` | Filtered chronological history (desc). Powers the Selidiki investigation panel. |
+| `stockMovements.forReference(kind, id)` | `StockMovement[]` | All rows referencing a given source doc (PO, Order, Opname, transfer group, return). Asc by `at`. |
+| `stockOpnames.buildDraft({ locationId?, categoryIds?, productIds?, notes? })` | `StockOpname` | Snapshots expected qty + unit cost per line. Composite products excluded. |
+| `stockOpnames.complete(id, { skipUncounted? })` | `{ ok, reason?, adjusted, skipped }` | Reconciles non-zero variances via `batches.adjustStock` with an opname reference, sets status `completed`. |
+| `opnameTotals(opname)` | `{ totalExpected, totalCounted, totalVariance, totalShrinkageValue, totalSurplusValue, countedLines, uncountedLines }` | Aggregates across lines; powers the StatCard strip on the count screen. |
 | `consignmentOwedBySupplier({ start?, end? })` | `Map<supplierId, { units, amount }>` | Aggregates per-supplier consignment payable from paid orders' `batchAllocations` in a date range. Drives the Outstanding card on `/payouts`. |
 | `payouts.add(input)` | `Payout` | Records a settlement to a supplier; auto-generates `PAYOUT-YYYY-NNN` code. |
 | `payouts.paidToSupplier(supplierId, asOf?)` | `number` | Sum of recorded payouts to a supplier, optionally up to a cutoff date. The Outstanding column subtracts this from the owed amount. |
@@ -710,7 +825,10 @@ These exist in the mental model but aren't built:
 | Orphaned `PricelistEntry` cleanup | Not done | When a Pricelist is deleted, dangling entries on products are harmless (fallback to default) but a sweep helper would tidy things |
 | Backwards-compatible accordion on cards | Considered | If the form ever feels too long for products with both packagings and variants, make the card headers collapsible (accordion) rather than introduce tabs |
 | Inventory movement log | Not built | Adjustments and sales create batches / decrement `qtyRemaining`, but there's no audit log surface. Could derive from batch creation timestamps + order batchAllocations for a future Movement view. |
-| Multi-warehouse / location | Not built | Would need a `Location` resource and stock split across locations |
+| Multi-branch / multi-store | Not built | Single-store only. The current `Location` model covers multi-zone within one store (Etalase / Rak / Gudang); branching to multiple physical stores would need a `Store` axis above `Location`. |
+| Per-location reorder points | Not built | A "low at Etalase, plenty at Gudang" alert that auto-suggests a transfer would close the loop on the manual move flow. |
+| Movement log persistence / pruning | Not built | In-memory; resets on reload. Real audit needs a server-side append-only store with retention policy and tamper-evidence (hash chain). |
+| Auth-bound performer tracking | Not built | `StockMovement.performedBy` snapshots `user.current.name` (hardcoded). When real session auth lands, switch to `employeeId`. |
 
 ---
 
@@ -739,7 +857,13 @@ These exist in the mental model but aren't built:
 | **Goods receipt** | The act of marking a PO as received. Creates one `Batch` row per line; no scalar stock or cost mutation. |
 | **Batch** | One received quantity of a (product, variant?) with its own `unitCost`, `qtyRemaining`, `ownership` (`owned` \| `consignment`), source PO, and `receivedAt` date. The single source of truth for stock. See [`CONSIGNMENT.md`](./CONSIGNMENT.md). |
 | **Batch ownership** | `owned` (the retailer paid for it via a standard PO or initial seeding) or `consignment` (the consignor still owns it; we owe per-unit only on sale). `currentCost` only averages owned batches. |
-| **FIFO depletion** | Sale deducts from batches ordered by `receivedAt` ASC. `applyOrderToStock` walks `batches.forStock(...)` and decrements `qtyRemaining` oldest-first. |
+| **FIFO depletion** | Sale deducts from batches ordered by `expiresAt` ASC, then `receivedAt` ASC. `applyOrderToStock` walks `batches.forStock(...)` and decrements `qtyRemaining` soonest-expiring first, then oldest-first. **No location preference** — perishables are protected regardless of where they sit. Location-aware filtering is available via `forStock(productId, variantId?, { locationIds })` but the sales path doesn't use it. |
+| **Location** | A physical storage zone in the store (Etalase, Rak Belakang, Gudang). Lives on every `Batch` via `locationId`. Customer-visible flag controls whether stock there counts toward "displayed to pelanggan." Opt-in via `settings.inventory.locationsEnabled` — when off, the UI surface hides everywhere but the data model still records `locationId: 'loc_gudang'` by default. |
+| **Move stock / pindahkan** | Splitting a batch's remaining quantity by location. Source batch decrements; a sibling is created at the destination preserving every other field. The Pindahkan modal on `/inventory` walks source batches by expiry asc so the admin moves expiring stock to Etalase first. |
+| **Stock movement / pergerakan stok** | An entry in the audit ledger (`StockMovement`). Written by every batch mutation site when `auditTrailEnabled` is on. Carries kind, qty delta, qty-after, unit cost, reference doc, performer, timestamp. The single source of truth for "what happened to this product." |
+| **Opname / stok opname** | Cycle count / physical audit. Admin picks a location + product scope, snapshots expected qty, enters counted qty, and the system records the difference as shrinkage (variance < 0) or surplus (variance > 0) via batch adjustments referenced back to the opname. Routes at `/stock-opname`. |
+| **Shrinkage** | Negative variance discovered during opname — stock that exists in the system but not on the shelf. Most common cause: theft, breakage, miscounting. Reported as `|negativeVariance| × unitCost` aggregated per opname. |
+| **Selidiki (investigate)** | Per-row action on the opname count screen that opens a side panel timeline of recent `StockMovement` rows for that (product, variant?, location). Used to trace where a missing unit went. |
 | **Stock adjustment** | Manual change to on-hand quantity that doesn't come from a PO or sale (write-off, found stock, count correction, initial seed via the product form). Positive deltas create a new owned batch; negative deltas LIFO-decrement owned batches. |
 | **Composite product** | A product built from other products (bundles, recipes, manufactured goods). `kind === 'composite'`; `cost` and `stock` are derived from components. |
 | **Bundle** | A composite product whose components are typically sold individually too (e.g., "Coffee + Croissant Combo"). |

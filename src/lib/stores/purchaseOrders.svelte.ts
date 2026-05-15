@@ -1,5 +1,7 @@
 import { products, type Product, type ProductVariant } from './products.svelte';
 import { batches } from './batches.svelte';
+import { locations } from './locations.svelte';
+import { stockMovements } from './stockMovements.svelte';
 
 export type PurchaseOrderType = 'standard' | 'consignment';
 export type PurchaseOrderStatus = 'draft' | 'sent' | 'partial' | 'received' | 'cancelled';
@@ -314,7 +316,7 @@ class PurchaseOrdersStore {
       const baseQty = qtyToReceive * factor;
       const perBaseUnitCost = line.unitPrice / factor;
 
-      batches.add({
+      const newBatch = batches.add({
         productId: line.productId,
         variantId: line.variantId,
         ownership: po.type === 'consignment' ? 'consignment' : 'owned',
@@ -326,7 +328,21 @@ class PurchaseOrdersStore {
         qtyRemaining: baseQty,
         receivedAt: effectiveReceivedDate,
         expiresAt: opts?.expiresAt?.[line.id] || undefined,
+        locationId: locations.defaultId(),
         notes: ''
+      });
+
+      stockMovements.log({
+        kind: 'receive',
+        productId: line.productId,
+        variantId: line.variantId,
+        locationId: newBatch.locationId,
+        batchId: newBatch.id,
+        qtyDelta: baseQty,
+        qtyAfter: newBatch.qtyRemaining,
+        unitCost: perBaseUnitCost,
+        reference: { kind: 'po', id: po.id, code: po.code },
+        notes: po.type === 'consignment' ? 'Penerimaan konsinyasi' : 'Penerimaan PO'
       });
 
       touched++;

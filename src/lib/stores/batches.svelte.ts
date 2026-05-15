@@ -1,4 +1,10 @@
 import { products } from './products.svelte';
+import { locations } from './locations.svelte';
+import {
+  stockMovements,
+  type StockMovementReference,
+  type StockAdjustmentReason
+} from './stockMovements.svelte';
 
 export type BatchOwnership = 'owned' | 'consignment';
 
@@ -16,6 +22,7 @@ export type Batch = {
   qtyRemaining: number;         // base units; decreases on sale / return / write-off
   receivedAt: string;           // ISO date — fallback FIFO sort key
   expiresAt?: string;           // ISO date when known; FIFO walks this first
+  locationId: string;           // physical storage location id; defaults to locations.default()
   notes: string;
 };
 
@@ -47,6 +54,7 @@ const seed: Batch[] = [
     qtyReceived: 120,
     qtyRemaining: 120,
     receivedAt: '2026-04-22',
+    locationId: 'loc_gudang',
     notes: 'Initial seed (received via PO-2026-001).'
   },
   {
@@ -59,6 +67,7 @@ const seed: Batch[] = [
     qtyReceived: 80,
     qtyRemaining: 80,
     receivedAt: '2026-04-22',
+    locationId: 'loc_gudang',
     notes: 'Initial seed (received via PO-2026-001).'
   },
   {
@@ -71,6 +80,7 @@ const seed: Batch[] = [
     qtyRemaining: 24,
     receivedAt: '2026-05-12',
     expiresAt: '2026-05-15',
+    locationId: 'loc_gudang',
     notes: 'Initial seed — baked fresh, sells out fast.'
   },
   {
@@ -84,6 +94,7 @@ const seed: Batch[] = [
     qtyReceived: 18,
     qtyRemaining: 18,
     receivedAt: '2026-03-01',
+    locationId: 'loc_gudang',
     notes: 'Initial seed (prior consignment receipt — White colorway).'
   },
   {
@@ -97,6 +108,7 @@ const seed: Batch[] = [
     qtyReceived: 12,
     qtyRemaining: 12,
     receivedAt: '2026-03-01',
+    locationId: 'loc_gudang',
     notes: 'Initial seed (prior consignment receipt — Black colorway).'
   },
   {
@@ -108,9 +120,10 @@ const seed: Batch[] = [
     supplierId: 'sup_3',
     unitCost: 60000,
     qtyReceived: 6,
-    qtyRemaining: 6,
+    qtyRemaining: 4,
     receivedAt: '2026-03-01',
-    notes: 'Initial seed (prior consignment receipt — Brand Blue colorway).'
+    locationId: 'loc_gudang',
+    notes: 'Initial seed (prior consignment receipt — Brand Blue colorway). 2 unit dikembalikan ke konsinyor.'
   },
   {
     id: 'batch_7',
@@ -121,6 +134,7 @@ const seed: Batch[] = [
     qtyReceived: 360,
     qtyRemaining: 360,
     receivedAt: '2026-05-01',
+    locationId: 'loc_gudang',
     notes: 'Initial seed.'
   },
   // Telur Ayam (prd_8) — three batches spanning the expiry spectrum so the
@@ -136,6 +150,7 @@ const seed: Batch[] = [
     qtyRemaining: 12,
     receivedAt: '2026-05-08',
     expiresAt: '2026-05-10',
+    locationId: 'loc_gudang',
     notes: 'Initial seed — overdue, contoh batch yang sudah kedaluwarsa.'
   },
   {
@@ -149,6 +164,7 @@ const seed: Batch[] = [
     qtyRemaining: 20,
     receivedAt: '2026-05-12',
     expiresAt: '2026-05-14',
+    locationId: 'loc_gudang',
     notes: 'Initial seed — kedaluwarsa besok.'
   },
   {
@@ -162,6 +178,7 @@ const seed: Batch[] = [
     qtyRemaining: 30,
     receivedAt: '2026-05-13',
     expiresAt: '2026-05-20',
+    locationId: 'loc_gudang',
     notes: 'Initial seed — masih segar, batch baru.'
   },
   // Daging Sapi Cincang (prd_9) — base unit is gram; this batch is 2 kg = 2000g
@@ -176,6 +193,7 @@ const seed: Batch[] = [
     qtyRemaining: 1450,
     receivedAt: '2026-05-12',
     expiresAt: '2026-05-15',
+    locationId: 'loc_gudang',
     notes: 'Initial seed — 2 kg.'
   }
 ];
@@ -222,13 +240,19 @@ class BatchesStore {
   //   1. Soonest expiresAt first (perishables sell before they spoil)
   //   2. Batches without expiresAt come after any with one
   //   3. Within the same bucket, oldest receivedAt first
-  forStock(productId: string, variantId?: string): Batch[] {
+  forStock(
+    productId: string,
+    variantId?: string,
+    opts?: { locationIds?: string[] }
+  ): Batch[] {
+    const locFilter = opts?.locationIds ? new Set(opts.locationIds) : null;
     return this.items
       .filter(
         (b) =>
           b.productId === productId &&
           b.variantId === variantId &&
-          b.qtyRemaining > 0
+          b.qtyRemaining > 0 &&
+          (!locFilter || locFilter.has(b.locationId))
       )
       .sort((a, b) => {
         const aExp = a.expiresAt ?? '9999-12-31';
@@ -278,25 +302,47 @@ class BatchesStore {
     if (qty <= 0) return { ok: false, reason: 'Return quantity must be positive.' };
     if (qty > batch.qtyRemaining)
       return { ok: false, reason: `Only ${batch.qtyRemaining} units remain in this batch.` };
-    this.update(batchId, { qtyRemaining: batch.qtyRemaining - qty });
+    const updated = this.update(batchId, { qtyRemaining: batch.qtyRemaining - qty });
+    stockMovements.log({
+      kind: 'return-consignor',
+      productId: batch.productId,
+      variantId: batch.variantId,
+      locationId: batch.locationId,
+      batchId: batch.id,
+      qtyDelta: -qty,
+      qtyAfter: updated?.qtyRemaining ?? batch.qtyRemaining - qty,
+      unitCost: batch.unitCost,
+      reference: { kind: 'return', id: batch.id, code: batch.code },
+      notes: `Retur konsinyasi · ${batch.code}`
+    });
     return { ok: true };
   }
 
   // Manual stock adjustment (write-offs, found stock, initial seed, form edits).
   // Positive delta → new owned batch (returned). Negative delta → LIFO decrement
   // across owned batches (newest first; preserves FIFO order for future sales) — returns undefined.
+  //
+  // `locationId` controls where positive deltas land and which location is depleted
+  // first for negative deltas. When omitted, falls back to the default-receipt location.
   adjustStock(args: {
     productId: string;
     variantId?: string;
     delta: number;
     unitCost: number;
     expiresAt?: string;
+    locationId?: string;
+    reference?: StockMovementReference;
+    reason?: StockAdjustmentReason;
+    imageUrl?: string;
     notes?: string;
   }): Batch | undefined {
     if (args.delta === 0) return undefined;
     const todayISO = new Date().toISOString().slice(0, 10);
+    const locId = args.locationId || locations.defaultId();
+    const reference: StockMovementReference =
+      args.reference ?? { kind: 'manual', id: 'inventory' };
     if (args.delta > 0) {
-      return this.add({
+      const newBatch = this.add({
         productId: args.productId,
         variantId: args.variantId,
         ownership: 'owned',
@@ -305,26 +351,186 @@ class BatchesStore {
         qtyRemaining: args.delta,
         receivedAt: todayISO,
         expiresAt: args.expiresAt || undefined,
+        locationId: locId,
         notes: args.notes ?? 'Manual stock adjustment.'
       });
+      stockMovements.log({
+        kind: 'adjust-in',
+        productId: args.productId,
+        variantId: args.variantId,
+        locationId: locId,
+        batchId: newBatch.id,
+        qtyDelta: args.delta,
+        qtyAfter: newBatch.qtyRemaining,
+        unitCost: args.unitCost,
+        reference,
+        reason: args.reason,
+        imageUrl: args.imageUrl,
+        notes: args.notes ?? 'Penyesuaian stok manual.'
+      });
+      return newBatch;
     }
     let remaining = -args.delta;
-    const ownedNewestFirst = this.items
-      .filter(
-        (b) =>
-          b.productId === args.productId &&
-          b.variantId === args.variantId &&
-          b.ownership === 'owned' &&
-          b.qtyRemaining > 0
-      )
+    const matching = this.items.filter(
+      (b) =>
+        b.productId === args.productId &&
+        b.variantId === args.variantId &&
+        b.ownership === 'owned' &&
+        b.qtyRemaining > 0
+    );
+    // Decrement target-location batches first (LIFO), then fall through to other
+    // locations if there's still shortfall.
+    const atTarget = matching
+      .filter((b) => b.locationId === locId)
       .sort((a, b) => b.receivedAt.localeCompare(a.receivedAt));
-    for (const batch of ownedNewestFirst) {
+    const elsewhere = matching
+      .filter((b) => b.locationId !== locId)
+      .sort((a, b) => b.receivedAt.localeCompare(a.receivedAt));
+    for (const batch of [...atTarget, ...elsewhere]) {
       if (remaining <= 0) break;
       const take = Math.min(remaining, batch.qtyRemaining);
-      this.update(batch.id, { qtyRemaining: batch.qtyRemaining - take });
+      const updated = this.update(batch.id, { qtyRemaining: batch.qtyRemaining - take });
+      stockMovements.log({
+        kind: 'adjust-out',
+        productId: args.productId,
+        variantId: args.variantId,
+        locationId: batch.locationId,
+        batchId: batch.id,
+        qtyDelta: -take,
+        qtyAfter: updated?.qtyRemaining ?? batch.qtyRemaining - take,
+        unitCost: batch.unitCost,
+        reference,
+        reason: args.reason,
+        imageUrl: args.imageUrl,
+        notes: args.notes ?? 'Penyesuaian stok manual.'
+      });
       remaining -= take;
     }
     return undefined;
+  }
+
+  // Move qty units of a specific batch to another location. Splits the source by
+  // creating a sibling batch at the destination preserving cost, expiry,
+  // ownership, supplier, and source PO references. When qty == the full
+  // remainder, mutates locationId in place (no zombie batches).
+  moveStock(args: {
+    batchId: string;
+    toLocationId: string;
+    qty: number;
+    notes?: string;
+    transferGroupId?: string;
+  }): { ok: boolean; reason?: string; newBatch?: Batch } {
+    const src = this.getById(args.batchId);
+    if (!src) return { ok: false, reason: 'Batch tidak ditemukan.' };
+    if (args.qty <= 0) return { ok: false, reason: 'Jumlah harus lebih dari 0.' };
+    if (args.qty > src.qtyRemaining)
+      return { ok: false, reason: `Sisa di batch hanya ${src.qtyRemaining}.` };
+    if (src.locationId === args.toLocationId)
+      return { ok: false, reason: 'Lokasi sumber dan tujuan sama.' };
+    const transferId = args.transferGroupId ?? crypto.randomUUID();
+    const fromLoc = locations.getById(src.locationId)?.name ?? src.locationId;
+    const toLoc = locations.getById(args.toLocationId)?.name ?? args.toLocationId;
+    const reference = { kind: 'transfer' as const, id: transferId };
+    if (args.qty === src.qtyRemaining) {
+      const updated = this.update(src.id, { locationId: args.toLocationId });
+      stockMovements.log({
+        kind: 'move-relocate',
+        productId: src.productId,
+        variantId: src.variantId,
+        locationId: args.toLocationId,
+        batchId: src.id,
+        qtyDelta: 0,
+        qtyAfter: updated?.qtyRemaining ?? src.qtyRemaining,
+        unitCost: src.unitCost,
+        reference,
+        notes: args.notes ?? `Relokasi penuh · ${fromLoc} → ${toLoc} · ${src.code}`
+      });
+      return { ok: true, newBatch: updated };
+    }
+    const updatedSrc = this.update(src.id, { qtyRemaining: src.qtyRemaining - args.qty });
+    stockMovements.log({
+      kind: 'move-out',
+      productId: src.productId,
+      variantId: src.variantId,
+      locationId: src.locationId,
+      batchId: src.id,
+      qtyDelta: -args.qty,
+      qtyAfter: updatedSrc?.qtyRemaining ?? src.qtyRemaining - args.qty,
+      unitCost: src.unitCost,
+      reference,
+      notes: args.notes ?? `Pindah ke ${toLoc} · ${src.code}`
+    });
+    const sibling = this.add({
+      productId: src.productId,
+      variantId: src.variantId,
+      ownership: src.ownership,
+      supplierId: src.supplierId,
+      sourcePurchaseOrderId: src.sourcePurchaseOrderId,
+      sourcePurchaseOrderLineId: src.sourcePurchaseOrderLineId,
+      unitCost: src.unitCost,
+      qtyReceived: args.qty,
+      qtyRemaining: args.qty,
+      receivedAt: src.receivedAt,
+      expiresAt: src.expiresAt,
+      locationId: args.toLocationId,
+      notes: args.notes ?? `Dipindahkan dari ${src.code}.`
+    });
+    stockMovements.log({
+      kind: 'move-in',
+      productId: src.productId,
+      variantId: src.variantId,
+      locationId: args.toLocationId,
+      batchId: sibling.id,
+      qtyDelta: args.qty,
+      qtyAfter: sibling.qtyRemaining,
+      unitCost: src.unitCost,
+      reference,
+      notes: args.notes ?? `Pindah dari ${fromLoc} · sibling ${sibling.code}`
+    });
+    return { ok: true, newBatch: sibling };
+  }
+
+  // Move qty units of a product/variant from one location to another, walking
+  // batches at the source sorted by expiry asc (so expiring stock moves to the
+  // shelf first). Calls moveStock per batch until qty is satisfied.
+  moveProductStock(args: {
+    productId: string;
+    variantId?: string;
+    fromLocationId: string;
+    toLocationId: string;
+    qty: number;
+    notes?: string;
+  }): { ok: boolean; reason?: string; moved: number } {
+    if (args.fromLocationId === args.toLocationId)
+      return { ok: false, reason: 'Lokasi sumber dan tujuan sama.', moved: 0 };
+    if (args.qty <= 0)
+      return { ok: false, reason: 'Jumlah harus lebih dari 0.', moved: 0 };
+    const sourceBatches = this.forStock(args.productId, args.variantId, {
+      locationIds: [args.fromLocationId]
+    });
+    const available = sourceBatches.reduce((s, b) => s + b.qtyRemaining, 0);
+    if (args.qty > available)
+      return {
+        ok: false,
+        reason: `Stok di lokasi sumber hanya ${available}.`,
+        moved: 0
+      };
+    const transferGroupId = crypto.randomUUID();
+    let remaining = args.qty;
+    for (const b of sourceBatches) {
+      if (remaining <= 0) break;
+      const take = Math.min(remaining, b.qtyRemaining);
+      const result = this.moveStock({
+        batchId: b.id,
+        toLocationId: args.toLocationId,
+        qty: take,
+        notes: args.notes,
+        transferGroupId
+      });
+      if (!result.ok) return { ok: false, reason: result.reason, moved: args.qty - remaining };
+      remaining -= take;
+    }
+    return { ok: true, moved: args.qty };
   }
 }
 
@@ -345,6 +551,22 @@ export function stockBreakdown(
     else consignment += b.qtyRemaining;
   }
   return { owned, consignment };
+}
+
+// Per-location remaining stock for a (product, variant?). Locations with zero
+// stock are omitted. Used by the inventory / products / POS breakdown chips.
+export function stockByLocation(
+  productId: string,
+  variantId?: string
+): Map<string, number> {
+  const m = new Map<string, number>();
+  for (const b of batches.items) {
+    if (b.productId !== productId) continue;
+    if (b.variantId !== variantId) continue;
+    if (b.qtyRemaining <= 0) continue;
+    m.set(b.locationId, (m.get(b.locationId) ?? 0) + b.qtyRemaining);
+  }
+  return m;
 }
 
 // Weighted average of OWNED batches' unitCost across qtyRemaining. Consignment

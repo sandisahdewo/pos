@@ -28,7 +28,6 @@
     pricelistEntries,
     priceRange,
     products,
-    totalStock,
     type Product,
     type ProductStatus
   } from '$lib/stores/products.svelte';
@@ -93,7 +92,6 @@
     { key: 'categoryId' as const, label: 'Kategori' },
     { key: 'unitId' as const, label: 'Satuan' },
     { key: 'prices' as const, label: 'Harga', align: 'right' as const },
-    { key: 'stock' as const, label: 'Stok', align: 'right' as const },
     { key: 'status' as const, label: 'Status' },
     { key: 'id' as const, label: '', align: 'right' as const, width: '120px' }
   ];
@@ -130,11 +128,6 @@
     toast.success('Produk dihapus', name);
   }
 
-  function stockBadge(stock: number) {
-    if (stock === 0) return { variant: 'danger' as const, label: 'Habis' };
-    if (stock < 10) return { variant: 'warning' as const, label: 'Menipis' };
-    return { variant: 'success' as const, label: 'Aman' };
-  }
 </script>
 
 <svelte:head>
@@ -264,17 +257,6 @@
               +{extras}
             </span>
           {/if}
-        </div>
-      {:else if column.key === 'stock'}
-        {@const total = totalStock(row)}
-        {@const u = unitFor(row.unitId)}
-        {@const sb = stockBadge(total)}
-        <div class="inline-flex items-center gap-2">
-          <span class="font-medium text-slate-900">{total}</span>
-          {#if u}
-            <span class="text-xs text-slate-400">{u.code}</span>
-          {/if}
-          <Badge variant={sb.variant} size="sm">{sb.label}</Badge>
         </div>
       {:else if column.key === 'status'}
         <Badge variant={row.status === 'active' ? 'success' : 'neutral'} dot>

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { page } from '$app/state';
   import { sidebar } from '$lib/stores/sidebar.svelte';
+  import { settings } from '$lib/stores/settings.svelte';
   import {
     Home,
     ScanLine,
@@ -20,7 +21,10 @@
     Percent,
     Truck,
     ClipboardList,
-    Banknote
+    Banknote,
+    Warehouse,
+    ClipboardCheck,
+    History
   } from 'lucide-svelte';
 
   type NavItem = {
@@ -35,7 +39,7 @@
     items: NavItem[];
   };
 
-  const groups: NavGroup[] = [
+  const groups = $derived<NavGroup[]>([
     {
       items: [
         { label: 'Beranda', href: '/', icon: Home },
@@ -52,6 +56,9 @@
         { label: 'Satuan', href: '/units', icon: Ruler },
         { label: 'Daftar Harga', href: '/pricelists', icon: BadgePercent },
         { label: 'Tarif Pajak', href: '/taxes', icon: Percent },
+        ...(settings.value.inventory.locationsEnabled
+          ? [{ label: 'Lokasi', href: '/locations', icon: Warehouse }]
+          : []),
         { label: 'Produk', href: '/products', icon: Package }
       ]
     },
@@ -66,12 +73,20 @@
       title: 'Katalog',
       items: [
         { label: 'Inventaris', href: '/inventory', icon: Boxes },
+        ...(settings.value.inventory.auditTrailEnabled
+          ? [{ label: 'Opname Stok', href: '/stock-opname', icon: ClipboardCheck }]
+          : []),
         { label: 'Pelanggan', href: '/customers', icon: Users }
       ]
     },
     {
       title: 'Wawasan',
-      items: [{ label: 'Laporan', href: '/reports', icon: BarChart3 }]
+      items: [
+        { label: 'Laporan', href: '/reports', icon: BarChart3 },
+        ...(settings.value.inventory.auditTrailEnabled
+          ? [{ label: 'Riwayat Stok', href: '/stock-movements', icon: History }]
+          : [])
+      ]
     },
     {
       title: 'Sistem',
@@ -80,7 +95,7 @@
         { label: 'Pengaturan', href: '/settings', icon: Settings }
       ]
     }
-  ];
+  ]);
 
   function isActive(href: string) {
     if (href === '/') return page.url.pathname === '/';

@@ -27,19 +27,41 @@
   );
   const baseUnit = $derived(product ? units.getById(product.unitId) : undefined);
 
+  // Non-batch-labeled products get a product-identification label whose QR
+  // encodes the variant/product SKU — POS scan resolves it the same way (see
+  // resolveScanToken in src/routes/pos/+page.svelte).
+  const productLabel = $derived(!!product && product.requiresBatchLabel !== true);
+  const scanCode = $derived.by(() => {
+    if (!batch || !product) return batch?.code ?? '';
+    if (product.requiresBatchLabel) return batch.code;
+    return variant?.sku || product.sku;
+  });
+
   let qrDataUrl = $state('');
   let copies = $state(1);
+  let lastScanCode = $state('');
 
   $effect(() => {
-    if (batch) {
-      QRCode.toDataURL(batch.code, {
-        width: 140,
-        margin: 0,
-        errorCorrectionLevel: 'M'
-      }).then((url) => {
-        qrDataUrl = url;
-      });
-    }
+    if (!batch) return;
+    if (scanCode === lastScanCode && qrDataUrl) return;
+    QRCode.toDataURL(scanCode, {
+      width: 140,
+      margin: 0,
+      errorCorrectionLevel: 'M'
+    }).then((url) => {
+      qrDataUrl = url;
+      lastScanCode = scanCode;
+    });
+  });
+
+  // Default to 1 label per received unit for product labels (cashier sticks one
+  // on each item). Batch-labeled products default to 1 — the batch label is for
+  // the carton/lot, not per-unit. Only set the seeded value once per page load.
+  let copiesInitialised = $state(false);
+  $effect(() => {
+    if (copiesInitialised || !batch || !product) return;
+    copies = productLabel ? Math.max(1, batch.qtyReceived) : 1;
+    copiesInitialised = true;
   });
 
   const safeCopies = $derived(Math.max(1, Math.min(999, Math.floor(copies || 1))));
@@ -103,55 +125,71 @@
         style="min-height: 40mm;"
       >
         <div class="flex min-w-0 flex-1 flex-col">
-          <div class="font-mono text-[10pt] font-bold tracking-tight text-slate-900">
-            {batch.code}
-          </div>
-          <div class="mt-0.5 line-clamp-2 text-[9pt] font-semibold text-slate-900">
-            {product.name}{variant ? ` — ${variant.name}` : ''}
-          </div>
-
-          <dl class="mt-1.5 space-y-0.5 text-[7pt] text-slate-700">
-            {#if supplier}
-              <div class="flex gap-1">
-                <dt class="text-slate-500">Pemasok:</dt>
-                <dd class="font-medium">{supplier.name}</dd>
+          {#if productLabel}
+            <div class="flex flex-1 flex-col items-center justify-center text-center">
+              <div class="line-clamp-2 text-[11pt] leading-tight font-bold text-slate-900">
+                {product.name}
               </div>
-            {/if}
-            {#if po}
-              <div class="flex gap-1">
-                <dt class="text-slate-500">PO:</dt>
-                <dd class="font-mono font-medium">{po.code}</dd>
+              {#if variant}
+                <div class="mt-0.5 line-clamp-1 text-[9pt] font-semibold text-slate-700">
+                  {variant.name}
+                </div>
+              {/if}
+              <div class="mt-1.5 font-mono text-[8pt] tracking-tight text-slate-500">
+                {scanCode}
               </div>
-            {/if}
-            <div class="flex gap-1">
-              <dt class="text-slate-500">Diterima:</dt>
-              <dd class="font-medium">{fmtDate(batch.receivedAt)}</dd>
             </div>
-            {#if batch.expiresAt}
-              <div class="flex gap-1">
-                <dt class="text-slate-500">Kedaluwarsa:</dt>
-                <dd class="font-semibold text-rose-700">{fmtDate(batch.expiresAt)}</dd>
-              </div>
-            {/if}
-          </dl>
+          {:else}
+            <div class="font-mono text-[10pt] font-bold tracking-tight text-slate-900">
+              {batch.code}
+            </div>
+            <div class="mt-0.5 line-clamp-2 text-[9pt] font-semibold text-slate-900">
+              {product.name}{variant ? ` — ${variant.name}` : ''}
+            </div>
 
-          <div class="mt-auto flex items-center gap-1 pt-1 text-[7pt]">
-            <span class="text-slate-500">Qty:</span>
-            <span class="font-semibold text-slate-900">{batch.qtyReceived}</span>
-            <span class="text-slate-500">{baseUnit?.code ?? ''}</span>
-            {#if batch.ownership === 'consignment'}
-              <span class="ml-auto rounded bg-sky-100 px-1 text-[6pt] font-semibold text-sky-700">
-                KONSINYASI
-              </span>
-            {/if}
-          </div>
+            <dl class="mt-1.5 space-y-0.5 text-[7pt] text-slate-700">
+              {#if supplier}
+                <div class="flex gap-1">
+                  <dt class="text-slate-500">Pemasok:</dt>
+                  <dd class="font-medium">{supplier.name}</dd>
+                </div>
+              {/if}
+              {#if po}
+                <div class="flex gap-1">
+                  <dt class="text-slate-500">PO:</dt>
+                  <dd class="font-mono font-medium">{po.code}</dd>
+                </div>
+              {/if}
+              <div class="flex gap-1">
+                <dt class="text-slate-500">Diterima:</dt>
+                <dd class="font-medium">{fmtDate(batch.receivedAt)}</dd>
+              </div>
+              {#if batch.expiresAt}
+                <div class="flex gap-1">
+                  <dt class="text-slate-500">Kedaluwarsa:</dt>
+                  <dd class="font-semibold text-rose-700">{fmtDate(batch.expiresAt)}</dd>
+                </div>
+              {/if}
+            </dl>
+
+            <div class="mt-auto flex items-center gap-1 pt-1 text-[7pt]">
+              <span class="text-slate-500">Qty:</span>
+              <span class="font-semibold text-slate-900">{batch.qtyReceived}</span>
+              <span class="text-slate-500">{baseUnit?.code ?? ''}</span>
+              {#if batch.ownership === 'consignment'}
+                <span class="ml-auto rounded bg-sky-100 px-1 text-[6pt] font-semibold text-sky-700">
+                  KONSINYASI
+                </span>
+              {/if}
+            </div>
+          {/if}
         </div>
 
         <div class="flex shrink-0 flex-col items-center justify-center">
           {#if qrDataUrl}
             <img
               src={qrDataUrl}
-              alt="QR {batch.code}"
+              alt="QR {scanCode}"
               class="h-[26mm] w-[26mm]"
               style="image-rendering: pixelated;"
             />

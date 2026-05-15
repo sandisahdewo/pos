@@ -1213,6 +1213,144 @@ src/routes/
 
 ---
 
+## Shift & Kas (built 2026-05-15)
+
+Cashier shift tracking with PIN authentication, planned shift templates, and per-shift cash reconciliation (drawer in/out + variance against cash sales). Opt-in via `settings.operations.shiftsEnabled` (default on); when off, POS works as before and no shift attribution happens.
+
+### `Employee.pin`
+
+```ts
+// src/lib/stores/employees.svelte.ts
+type Employee = {
+  ...existing fields...
+  pin: string;  // 4-digit numeric, plaintext for the scaffold
+};
+employees.verifyPin(employeeId, pin): boolean;
+```
+
+PIN is enforced unique across employees at the form-validation layer in `/employees`. Re-seeded with Indonesian warmindo-context names (Sari Wahyuni admin, Joko Susilo manajer, Rina Marlina kasir, Andi Pratama kasir, Dimas Saputra staf).
+
+### `ShiftTemplate`
+
+```ts
+// src/lib/stores/shiftTemplates.svelte.ts
+type ShiftTemplate = {
+  id: string;
+  name: string;          // "Pagi", "Sore", "Malam"
+  startTime: string;     // "HH:MM"
+  endTime: string;       // "HH:MM" — wraps past midnight (22:00 → 06:00 OK)
+  notes: string;
+  status: 'active' | 'archived';
+};
+plannedDurationHours(t): number;   // handles overnight wrap
+formatShiftRange(t): string;       // "06:00–14:00"
+```
+
+Templates are **labels + planned hours**, not hard gates. Actual start/end is logged from real time at open/close. CRUD inlined into `/settings` page (no separate route).
+
+### `ShiftSession`
+
+```ts
+// src/lib/stores/shifts.svelte.ts
+type CashDenomination = { unit: number; count: number };
+type CashCount = {
+  total: number;
+  denominations?: CashDenomination[];  // optional — collapsed by default
+};
+type CashEntry = {
+  id: string;
+  at: string;
+  kind: 'in' | 'out';
+  category: CashEntryCategory;  // modal-tambahan | beli-bahan | operasional | ...
+  amount: number;
+  notes: string;
+  performedBy: string;
+};
+type ShiftSession = {
+  id: string;
+  code: string;          // SHF-YYYY-NNN
+  employeeId: string;
+  templateId?: string;
+  openedAt: string;
+  closedAt?: string;
+  status: 'open' | 'closed' | 'cancelled';
+  openingCash: CashCount;
+  closingCash?: CashCount;
+  expectedClosingCash?: number;  // computed at close
+  variance?: number;             // closingCash.total - expectedClosingCash
+  entries: CashEntry[];
+  notes: string;
+};
+```
+
+Store API: `shifts.open()`, `shifts.addEntry()`, `shifts.removeEntry()`, `shifts.close()`, `shifts.cancel()`, `shifts.active()`. Only ONE shift can be open at a time (`open()` rejects when one is already active).
+
+Helpers:
+- `expectedClosingCash(shift)` — openingCash + cash sales in window + cash entries (in) - cash entries (out)
+- `salesSummary(shift)` — `{ orderCount, grossTotal, byMethod, outstandingCredit }`, scoped to orders where `shiftId === shift.id` AND created within the open/close window
+- `cashSalesIn(shift)` — sum of `OrderPayment` where method='cash' and time within the shift window
+- `denominationTotal(denoms[])` — `sum(unit × count)`
+- `shiftDurationHours(s)` / `formatDuration(hours)`
+
+`IDR_DENOMINATIONS` constant (`[100000, 50000, ..., 100]`) drives the optional per-pecahan input rows. The `CashCountInput` component (in `src/lib/components/shifts/`) wraps a `MoneyInput` for the total with a collapsible "Hitung per pecahan" section that, when expanded, syncs total to `sum(unit × count)` live.
+
+### `Order.shiftId` attribution
+
+```ts
+type Order = {
+  ...existing fields...
+  shiftId?: string;     // populated by POS only when shifts feature is on AND an active shift exists
+};
+```
+
+Soft attribution — POS never blocks sales for absent shift. When shifts off, `shiftId` stays undefined and `salesSummary` falls back to time-window matching only.
+
+### Routes
+
+| Route | What it does |
+|---|---|
+| `/shifts` | List of all shifts. Stat cards (active count, closed today, today's cash sales, today's variance). Filter by employee/status/date. Active shift banner pinned to top. |
+| `/shifts/[id]` | Detail page. Header card (employee + template + duration + notes). Catatan kas card (opening cash, sales-tunai, each cash entry, expected total). Rekap penjualan card (count, gross, per-method breakdown, piutang baru). Pesanan list at the bottom. Actions: Tambah kas / Tutup shift / Batalkan (when open). |
+| `/settings` | Hosts the shifts toggle + shift template editor (add/edit/archive/delete templates inline). |
+
+### Components (`src/lib/components/shifts/`)
+
+| File | Purpose |
+|---|---|
+| `CashCountInput.svelte` | Bindable `CashCount` field. Total via `MoneyInput`, optional collapsible denomination breakdown that syncs total. |
+| `OpenShiftModal.svelte` | Pick employee → PIN entry (4-digit, show/hide toggle) → pick template (or "Bebas") → opening cash → optional notes. Verifies PIN via `employees.verifyPin`, opens via `shifts.open`. |
+| `CloseShiftModal.svelte` | Shows live ringkasan (kas awal + tunai + entries → seharusnya), enters closing cash (with optional denom breakdown), live variance preview color-coded (emerald/sky/rose). Calls `shifts.close`. |
+| `CashEntryModal.svelte` | In/out toggle (color-coded buttons), category Select (different lists for in vs out), MoneyInput, notes Textarea. Calls `shifts.addEntry`. |
+
+### POS terminal integration (`/pos`)
+
+When `shiftsEnabled` is on:
+- **Active shift banner** (emerald): cashier name, code, template label, open time, live order count + cash total, "Tambah kas" / "Detail" / "Tutup shift" buttons.
+- **No active shift banner** (amber): "Belum ada shift terbuka" + "Buka shift" button. Sales still allowed (soft gate).
+- New orders auto-stamp `shiftId` and `employeeId` from `shifts.active()`.
+
+### Sidebar
+
+When `shiftsEnabled` is on, a new "Operasional" group appears with "Shift Kasir" → `/shifts` (icon: `CalendarClock`). When off, the group is hidden.
+
+### Decision: PIN, not session login
+
+The user wants PIN-based clock-in rather than username/password login or just a dropdown pick. PIN strikes the right balance for warmindo: fast (4 digits), prevents misattribution if a kasir accidentally picks the wrong name, and doesn't require an auth stack the rest of the app doesn't have. PIN is stored plaintext at the scaffold level — when persistence + real auth land, hash it.
+
+### Decision: Soft attribution (no shift required to sell)
+
+Other POS systems hard-gate sales behind an open shift. Warmindo are flexible — owner sometimes operates without formal shifts during quiet hours, and forcing a shift open would create friction. POS allows sales either way; the amber "no shift" banner is advisory. When backed by real auth + multiple registers, this can grow into per-register required shifts; for now soft attribution is the right default.
+
+### Decision: Per-shift cash drawer, not per-register
+
+A single open shift at a time, drawer is whichever cashier is logged in. Multi-cashier parallel shifts (e.g., front register + delivery register) is plausible but deferred. The store's `active()` returns the single open session; `open()` rejects if one is already open.
+
+### Decision: Cash entries inline, not separate ledger
+
+Cash in/out lives **inside** the shift session as `entries[]`, not as a global cash ledger. Reason: every cash entry happens within a shift context (someone authorized it on their watch), and a global "kas keluar" history can be derived later by flattening `shifts[].entries[]`. Keeps the data model tight; no orphan rows.
+
+---
+
 That's the master product. If you're picking this up cold, read this doc, then open `src/lib/stores/products.svelte.ts` and `src/lib/components/products/ProductForm.svelte` — those two files plus this doc are 90% of the surface area.
 
 ---
@@ -1449,10 +1587,15 @@ Grouped by domain. Each lists its surfaces and key behaviors.
 - **On:** "Opname Stok" + "Riwayat Stok" sidebar; every batch mutation logs `StockMovement`; Atur stok requires reason; opname workflow available; investigation panels and per-product history populated.
 - **Off:** No log writes. Pages accessible direct via URL but show "Aktifkan di Pengaturan" empty state.
 
+### `operations.shiftsEnabled`
+- **On:** "Operasional → Shift Kasir" sidebar entry; `/pos` shows shift banner (active or "Buka shift" CTA); new orders auto-stamp `shiftId` + `employeeId`; shift templates editor visible in `/settings`.
+- **Off:** No shift UI in POS; sidebar group hidden. Existing shift data preserved.
+
 **Future toggles to add:**
 - `inventory.compositeEnabled` — hide BOM / recipe products for stores that only resell.
 - `sales.piutangEnabled` — hide customer credit flow for cash-only stores.
 - `sales.taxEnabled` — for non-PKP stores that don't charge PPN.
+- `operations.multiCashier` — allow parallel open shifts on different registers (future).
 
 ## Data model decisions (for backend planning)
 

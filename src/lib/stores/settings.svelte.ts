@@ -3,6 +3,9 @@ export type Settings = {
     locationsEnabled: boolean;
     auditTrailEnabled: boolean;
   };
+  operations: {
+    shiftsEnabled: boolean;
+  };
 };
 
 class SettingsStore {
@@ -10,6 +13,9 @@ class SettingsStore {
     inventory: {
       locationsEnabled: true,
       auditTrailEnabled: true
+    },
+    operations: {
+      shiftsEnabled: true
     }
   });
 
@@ -19,6 +25,10 @@ class SettingsStore {
 
   setAuditTrailEnabled(on: boolean): void {
     this.value.inventory.auditTrailEnabled = on;
+  }
+
+  setShiftsEnabled(on: boolean): void {
+    this.value.operations.shiftsEnabled = on;
   }
 }
 
@@ -30,4 +40,8 @@ export function locationsEnabled(): boolean {
 
 export function auditTrailEnabled(): boolean {
   return settings.value.inventory.auditTrailEnabled;
+}
+
+export function shiftsEnabled(): boolean {
+  return settings.value.operations.shiftsEnabled;
 }

@@ -44,6 +44,7 @@ export type Order = {
   pricelistId: string;
   customerId?: string;
   employeeId?: string;
+  shiftId?: string;             // attribution when shifts feature is on
   paymentMethod: PaymentMethod; // method used at charge time (first payment)
   lines: OrderLine[];
   subtotal: number;             // sum of line subtotals (pre-tax)

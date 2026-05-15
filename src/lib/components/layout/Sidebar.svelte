@@ -27,7 +27,8 @@
     History,
     HandCoins,
     Wallet,
-    TrendingDown
+    TrendingDown,
+    CalendarClock
   } from 'lucide-svelte';
 
   type NavItem = {
@@ -79,6 +80,14 @@
         { label: 'Piutang Pelanggan', href: '/piutang', icon: HandCoins }
       ]
     },
+    ...(settings.value.operations.shiftsEnabled
+      ? [
+          {
+            title: 'Operasional',
+            items: [{ label: 'Shift Kasir', href: '/shifts', icon: CalendarClock }]
+          }
+        ]
+      : []),
     {
       title: 'Katalog',
       items: [

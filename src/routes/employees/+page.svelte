@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Plus, Search, Pencil, Trash2, Mail, Phone, UserCog } from 'lucide-svelte';
+  import { Plus, Search, Pencil, Trash2, Mail, Phone, UserCog, Eye, EyeOff, KeyRound } from 'lucide-svelte';
   import {
     Badge,
     Button,
@@ -36,6 +36,7 @@
     role: EmployeeRole;
     status: EmployeeStatus;
     joinedAt: string;
+    pin: string;
   };
 
   const blankForm: FormState = {
@@ -44,11 +45,13 @@
     phone: '',
     role: 'cashier',
     status: 'active',
-    joinedAt: new Date().toISOString().slice(0, 10)
+    joinedAt: new Date().toISOString().slice(0, 10),
+    pin: ''
   };
 
   let form = $state<FormState>({ ...blankForm });
   let errors = $state<Partial<Record<keyof FormState, string>>>({});
+  let showPin = $state(false);
 
   const filtered = $derived.by(() => {
     const q = search.trim().toLowerCase();
@@ -92,6 +95,7 @@
     editingId = null;
     form = { ...blankForm };
     errors = {};
+    showPin = false;
     formOpen = true;
   }
 
@@ -103,9 +107,11 @@
       phone: emp.phone,
       role: emp.role,
       status: emp.status,
-      joinedAt: emp.joinedAt
+      joinedAt: emp.joinedAt,
+      pin: emp.pin
     };
     errors = {};
+    showPin = false;
     formOpen = true;
   }
 
@@ -117,6 +123,11 @@
       next.email = 'Masukkan email yang valid.';
     if (!form.phone.trim()) next.phone = 'Telepon wajib diisi.';
     if (!form.joinedAt) next.joinedAt = 'Tanggal bergabung wajib diisi.';
+    if (!/^\d{4}$/.test(form.pin)) next.pin = 'PIN harus 4 digit angka.';
+    else {
+      const dup = employees.items.find((e) => e.pin === form.pin && e.id !== editingId);
+      if (dup) next.pin = `PIN sudah dipakai oleh ${dup.name}.`;
+    }
     errors = next;
     return Object.keys(next).length === 0;
   }
@@ -279,12 +290,37 @@
     <Select label="Peran" bind:value={form.role} options={roleOptions} />
     <Select label="Status" bind:value={form.status} options={statusOptions} />
     <Input
-      class="sm:col-span-2"
       label="Tanggal bergabung"
       type="date"
       bind:value={form.joinedAt}
       error={errors.joinedAt}
     />
+    <Input
+      label="PIN 4 digit"
+      type={showPin ? 'text' : 'password'}
+      inputmode="numeric"
+      maxlength={4}
+      placeholder="••••"
+      bind:value={form.pin}
+      error={errors.pin}
+      hint="Dipakai untuk masuk shift di kasir."
+    >
+      {#snippet leading()}<KeyRound class="h-4 w-4" />{/snippet}
+      {#snippet trailing()}
+        <button
+          type="button"
+          class="p-1 text-slate-400 hover:text-slate-600"
+          onclick={() => (showPin = !showPin)}
+          aria-label={showPin ? 'Sembunyikan PIN' : 'Tampilkan PIN'}
+        >
+          {#if showPin}
+            <EyeOff class="h-4 w-4" />
+          {:else}
+            <Eye class="h-4 w-4" />
+          {/if}
+        </button>
+      {/snippet}
+    </Input>
   </div>
 
   {#snippet footer()}

@@ -9,7 +9,11 @@
     User as UserIcon,
     Receipt,
     History,
-    X
+    X,
+    Clock,
+    LogOut,
+    Wallet,
+    AlertCircle
   } from 'lucide-svelte';
   import {
     Badge,
@@ -55,6 +59,12 @@
   import { locations } from '$lib/stores/locations.svelte';
   import { settings } from '$lib/stores/settings.svelte';
   import { cartSessions, type CartLine } from '$lib/stores/cartSessions.svelte';
+  import { shifts, salesSummary } from '$lib/stores/shifts.svelte';
+  import { employees } from '$lib/stores/employees.svelte';
+  import { shiftTemplates } from '$lib/stores/shiftTemplates.svelte';
+  import OpenShiftModal from '$lib/components/shifts/OpenShiftModal.svelte';
+  import CloseShiftModal from '$lib/components/shifts/CloseShiftModal.svelte';
+  import CashEntryModal from '$lib/components/shifts/CashEntryModal.svelte';
   import { toast } from '$lib/stores/toast.svelte';
   import { formatRupiah } from '$lib/utils/currency';
 
@@ -64,6 +74,25 @@
   let confirmClearOpen = $state(false);
   let confirmCloseTabOpen = $state(false);
   let pendingCloseTabId = $state<string | null>(null);
+
+  let openShiftModalOpen = $state(false);
+  let closeShiftModalOpen = $state(false);
+  let cashEntryModalOpen = $state(false);
+
+  const shiftsOn = $derived(settings.value.operations.shiftsEnabled);
+  const activeShift = $derived(shifts.active());
+  const activeShiftEmployee = $derived(
+    activeShift ? employees.getById(activeShift.employeeId) : undefined
+  );
+  const activeShiftTemplate = $derived(
+    activeShift?.templateId ? shiftTemplates.getById(activeShift.templateId) : undefined
+  );
+
+  function fmtShiftStart(iso: string): string {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return iso;
+    return d.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
+  }
 
   const session = $derived(cartSessions.active);
 
@@ -491,6 +520,8 @@
     const created = orders.add({
       pricelistId: activePricelistId,
       customerId: session.customerId || undefined,
+      employeeId: shiftsOn && activeShift ? activeShift.employeeId : undefined,
+      shiftId: shiftsOn && activeShift ? activeShift.id : undefined,
       lines,
       paymentMethod: session.paymentMethod,
       subtotal: cartSubtotal,
@@ -614,6 +645,67 @@
     </Button>
   {/snippet}
 </PageHeader>
+
+{#if shiftsOn}
+  {#if activeShift}
+    {@const summary = salesSummary(activeShift)}
+    <div class="mb-4 rounded-card border-2 border-emerald-200 bg-emerald-50 px-4 py-3">
+      <div class="flex flex-wrap items-center gap-3">
+        <div
+          class="flex h-10 w-10 items-center justify-center rounded-full bg-emerald-100 text-emerald-700"
+        >
+          <Clock class="h-5 w-5" />
+        </div>
+        <div class="flex-1 min-w-0">
+          <div class="flex items-center gap-2">
+            <span class="font-semibold text-slate-900">
+              {activeShiftEmployee?.name ?? 'Kasir'}
+            </span>
+            <Badge variant="success" size="sm" dot>Shift terbuka</Badge>
+          </div>
+          <div class="mt-0.5 truncate text-xs text-slate-600">
+            {activeShift.code} ·
+            {activeShiftTemplate?.name ?? 'Bebas'} ·
+            mulai {fmtShiftStart(activeShift.openedAt)} ·
+            {summary.orderCount} pesanan · tunai {formatRupiah(summary.byMethod.cash)}
+          </div>
+        </div>
+        <div class="flex flex-wrap gap-2">
+          <Button size="sm" variant="outline" onclick={() => (cashEntryModalOpen = true)}>
+            <Wallet class="h-4 w-4" />
+            Tambah kas
+          </Button>
+          <Button size="sm" variant="outline" href="/shifts/{activeShift.id}">Detail</Button>
+          <Button size="sm" onclick={() => (closeShiftModalOpen = true)}>
+            <LogOut class="h-4 w-4" />
+            Tutup shift
+          </Button>
+        </div>
+      </div>
+    </div>
+  {:else}
+    <div class="mb-4 rounded-card border-2 border-amber-200 bg-amber-50 px-4 py-3">
+      <div class="flex flex-wrap items-center gap-3">
+        <div
+          class="flex h-10 w-10 items-center justify-center rounded-full bg-amber-100 text-amber-700"
+        >
+          <AlertCircle class="h-5 w-5" />
+        </div>
+        <div class="flex-1 min-w-0">
+          <div class="font-semibold text-slate-900">Belum ada shift terbuka</div>
+          <p class="mt-0.5 text-xs text-slate-600">
+            Penjualan tetap bisa dicatat, tapi tidak akan terhubung ke shift tertentu.
+            Buka shift untuk rekap kas & pegawai yang lebih akurat.
+          </p>
+        </div>
+        <Button size="sm" onclick={() => (openShiftModalOpen = true)}>
+          <Clock class="h-4 w-4" />
+          Buka shift
+        </Button>
+      </div>
+    </div>
+  {/if}
+{/if}
 
 <div class="grid grid-cols-1 gap-4 lg:grid-cols-[1fr_420px]">
   <!-- PRODUCT BROWSER -->
@@ -1175,3 +1267,7 @@
     <Button onclick={saveNewCustomer}>Tambah & pilih</Button>
   {/snippet}
 </Modal>
+
+<OpenShiftModal bind:open={openShiftModalOpen} />
+<CloseShiftModal bind:open={closeShiftModalOpen} shift={activeShift} />
+<CashEntryModal bind:open={cashEntryModalOpen} shift={activeShift} />

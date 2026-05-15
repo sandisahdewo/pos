@@ -9,6 +9,7 @@ export type Employee = {
   role: EmployeeRole;
   status: EmployeeStatus;
   joinedAt: string;
+  pin: string;
 };
 
 export type EmployeeInput = Omit<Employee, 'id'>;
@@ -16,39 +17,53 @@ export type EmployeeInput = Omit<Employee, 'id'>;
 const seed: Employee[] = [
   {
     id: 'emp_1',
-    name: 'Maria Lopez',
-    email: 'maria.lopez@store.test',
-    phone: '+1 (415) 555-0142',
-    role: 'manager',
+    name: 'Sari Wahyuni',
+    email: 'sari@warmindo.test',
+    phone: '+62 812-3456-7890',
+    role: 'admin',
     status: 'active',
-    joinedAt: '2024-03-12'
+    joinedAt: '2023-01-10',
+    pin: '1234'
   },
   {
     id: 'emp_2',
-    name: 'James Chen',
-    email: 'james.chen@store.test',
-    phone: '+1 (415) 555-0177',
-    role: 'cashier',
+    name: 'Joko Susilo',
+    email: 'joko@warmindo.test',
+    phone: '+62 813-9876-5432',
+    role: 'manager',
     status: 'active',
-    joinedAt: '2024-08-04'
+    joinedAt: '2023-06-20',
+    pin: '2580'
   },
   {
     id: 'emp_3',
-    name: 'Aisha Patel',
-    email: 'aisha.patel@store.test',
-    phone: '+1 (415) 555-0193',
-    role: 'admin',
+    name: 'Rina Marlina',
+    email: 'rina@warmindo.test',
+    phone: '+62 821-1122-3344',
+    role: 'cashier',
     status: 'active',
-    joinedAt: '2023-11-20'
+    joinedAt: '2024-02-15',
+    pin: '4321'
   },
   {
     id: 'emp_4',
-    name: 'Diego Ortiz',
-    email: 'diego.ortiz@store.test',
-    phone: '+1 (415) 555-0108',
+    name: 'Andi Pratama',
+    email: 'andi@warmindo.test',
+    phone: '+62 822-5566-7788',
+    role: 'cashier',
+    status: 'active',
+    joinedAt: '2024-09-01',
+    pin: '1357'
+  },
+  {
+    id: 'emp_5',
+    name: 'Dimas Saputra',
+    email: 'dimas@warmindo.test',
+    phone: '+62 823-4455-6677',
     role: 'staff',
     status: 'inactive',
-    joinedAt: '2025-01-30'
+    joinedAt: '2025-03-05',
+    pin: '8642'
   }
 ];
 
@@ -75,6 +90,16 @@ class EmployeesStore {
 
   getById(id: string): Employee | undefined {
     return this.items.find((e) => e.id === id);
+  }
+
+  verifyPin(employeeId: string, pin: string): boolean {
+    const emp = this.getById(employeeId);
+    if (!emp) return false;
+    return emp.pin === pin;
+  }
+
+  active(): Employee[] {
+    return this.items.filter((e) => e.status === 'active');
   }
 }
 

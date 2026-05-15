@@ -270,6 +270,7 @@
         id: line.id,
         productId: line.productId,
         variantId: line.variantId,
+        unitId: line.unitId,
         unitFactor: line.unitFactor,
         quantity: line.quantity,
         baseQuantity: line.quantity * line.unitFactor,
@@ -301,11 +302,21 @@
     );
   }
 
-  // Lookup unit price for a (product, variant?). Uses a cart line's resolved
-  // price if present; otherwise computes from product + active pricelist.
-  function unitPriceFor(productId: string, variantId?: string): number {
+  // Lookup unit price for (product, variant?, unitId?, unitFactor?). Uses a
+  // cart line's resolved price if present and matching unit; otherwise computes
+  // from product + active pricelist (including packaging entries).
+  function unitPriceFor(
+    productId: string,
+    variantId?: string,
+    unitId?: string,
+    unitFactor?: number
+  ): number {
     const existing = session.lines.find(
-      (l) => l.productId === productId && l.variantId === variantId
+      (l) =>
+        l.productId === productId &&
+        (l.variantId ?? '') === (variantId ?? '') &&
+        (unitId === undefined || l.unitId === unitId) &&
+        (unitFactor === undefined || l.unitFactor === unitFactor)
     );
     if (existing) {
       return resolveLine(existing).unitPrice;
@@ -313,6 +324,16 @@
     const p = products.getById(productId);
     if (!p) return 0;
     const variant = variantId ? p.variants.find((v) => v.id === variantId) : undefined;
+    // If a non-base packaging is requested, resolve from product.units[]
+    if (unitId && unitFactor && (unitId !== p.unitId || unitFactor !== 1)) {
+      const pkg = p.units.find((u) => u.unitId === unitId && u.factor === unitFactor);
+      if (pkg) {
+        const entry = effectiveEntry(pkg.prices, activePricelistId, pricelists.defaultId());
+        if (entry) {
+          return computeSalePrice(unitFactor * effectiveCost(p), entry.pricing);
+        }
+      }
+    }
     const entry = variant
       ? effectiveEntry(variant.prices, activePricelistId, pricelists.defaultId())
       : effectiveEntry(p.prices, activePricelistId, pricelists.defaultId());
@@ -1276,7 +1297,7 @@
                         <div class="min-w-0 leading-tight">
                           <span class="text-amber-800">Tambah </span>
                           {#each sug.needed as need, i (need.productId + (need.variantId ?? ''))}
-                            <span class="font-semibold text-amber-900">{need.quantity} {need.productName}</span>{#if i < sug.needed.length - 1}<span class="text-amber-800"> dan </span>{/if}
+                            <span class="font-semibold text-amber-900">{need.quantity} {need.unitLabel ? need.unitLabel + ' ' : ''}{need.productName}</span>{#if i < sug.needed.length - 1}<span class="text-amber-800"> dan </span>{/if}
                           {/each}
                           <span class="text-amber-800"> → {sug.promoName} (hemat {formatRupiah(sug.potentialDiscount)})</span>
                         </div>
@@ -1287,8 +1308,8 @@
                         <Sparkles class="mt-0.5 h-3 w-3 shrink-0 text-amber-600" />
                         <div class="min-w-0 leading-tight">
                           <span class="text-amber-800">Tambah </span>
-                          <span class="font-semibold text-amber-900">{sug.unitsNeeded} lagi</span>
-                          <span class="text-amber-800"> untuk dapat {sug.freeUnits} gratis ({sug.promoName})</span>
+                          <span class="font-semibold text-amber-900">{sug.unitsNeeded} {sug.unitLabel ?? ''} lagi</span>
+                          <span class="text-amber-800"> untuk dapat {sug.freeUnits} {sug.freeUnitLabel ?? ''} gratis ({sug.promoName})</span>
                         </div>
                       </div>
                     {/each}

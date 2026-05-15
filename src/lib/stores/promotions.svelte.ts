@@ -6,7 +6,9 @@ export type DiscountUnit = 'percent' | 'fixed';
 export type ComboItem = {
   productId: string;
   variantId?: string;
-  quantity: number;
+  unitId?: string;       // when set: strict unit match; when unset: any unit, qty in base
+  unitFactor?: number;   // base units per unitId (default 1)
+  quantity: number;      // in unitId (or base if unitId unset)
 };
 
 export type Promotion = {
@@ -24,10 +26,16 @@ export type Promotion = {
   comboItems?: ComboItem[];
   comboPrice?: number;
 
-  // 'bogo' fields — beli buyQuantity dapat getQuantity gratis
+  // 'bogo' fields — beli buyQuantity dapat getQuantity gratis. Buy-side and
+  // get-side can be in different units (e.g., buy 1 box, get 1 pcs).
   buyQuantity?: number;
   getQuantity?: number;
   bogoProductId?: string;
+  bogoVariantId?: string;
+  buyUnitId?: string;       // when set: buy line must be in this unit
+  buyUnitFactor?: number;   // base units per buyUnit (default 1)
+  getUnitId?: string;       // when set: free units measured in this unit
+  getUnitFactor?: number;   // base units per getUnit (default 1)
 
   // 'member-tier' fields
   memberPricelistId?: string;
@@ -254,6 +262,24 @@ const seed: Promotion[] = [
     status: 'active',
     usageCount: 0,
     description: 'Setiap hari Senin, diskon Rp 5.000 untuk minimum belanja Rp 30.000.',
+    notes: ''
+  },
+  {
+    id: 'prm_6',
+    code: 'PRM-006',
+    name: 'Beli 1 Box Cola Gratis 1 Pcs',
+    kind: 'bogo',
+    level: 'line',
+    bogoProductId: 'prd_5',
+    buyQuantity: 1,
+    buyUnitId: 'unit_2',
+    buyUnitFactor: 6,
+    getQuantity: 1,
+    getUnitId: 'unit_1',
+    getUnitFactor: 1,
+    status: 'active',
+    usageCount: 0,
+    description: 'Beli 1 box (isi 6) Cola, dapat tambahan 1 pcs Cola gratis.',
     notes: ''
   }
 ];

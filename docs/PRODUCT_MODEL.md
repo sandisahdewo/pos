@@ -1424,7 +1424,13 @@ type PromoKind = 'discount' | 'combo' | 'bogo' | 'member-tier';
 type PromoLevel = 'line' | 'order';
 type DiscountUnit = 'percent' | 'fixed';
 
-type ComboItem = { productId: string; variantId?: string; quantity: number };
+type ComboItem = {
+  productId: string;
+  variantId?: string;
+  unitId?: string;       // when set: strict unit match (e.g. only when bought in box)
+  unitFactor?: number;   // base units per unitId (default 1)
+  quantity: number;      // in unitId, or base if unset
+};
 
 type Promotion = {
   id: string;
@@ -1441,10 +1447,15 @@ type Promotion = {
   comboItems?: ComboItem[];
   comboPrice?: number;
 
-  // bogo fields
+  // bogo fields (buy and get sides can be in different units)
   buyQuantity?: number;
   getQuantity?: number;
   bogoProductId?: string;       // optional limit to a single product
+  bogoVariantId?: string;       // optional variant filter
+  buyUnitId?: string;           // when set: buy line must be in this unit
+  buyUnitFactor?: number;       // base units per buy unit (default 1)
+  getUnitId?: string;           // when set: free units measured in this unit
+  getUnitFactor?: number;       // base units per get unit (default 1)
 
   // member-tier fields
   memberPricelistId?: string;   // customer must be on this pricelist
@@ -1552,6 +1563,28 @@ All new fields are optional so seed data remains valid. POS `charge()`:
 **Per-line tax handled via redistribution.** Order-level discount distributes proportionally across all lines by their post-line-discount net subtotal, then each line's tax recomputes. This is more complex than a flat `taxTotal -= discount × rate` but matches how Indonesian receipts must show line-level tax.
 
 **Optional fields on Order/OrderLine.** New promo fields are all optional so existing seed data (17 orders) and existing helpers (`/utang`, `/piutang`, `/orders`) work without modification. `order.total` is already post-promo, so credit math and aging continue to be correct.
+
+### Unit & variant matching (added 2026-05-15)
+
+Promos can target specific packaging units and specific variants:
+
+- **ComboItem** can specify `unitId + unitFactor` (strict unit match: a 6-pack box only satisfies the requirement when the customer bought it in the box unit). Without unit: any unit accepted, qty counted in base units.
+- **BOGO** can specify `buyUnitId + buyUnitFactor` on the buy side and `getUnitId + getUnitFactor` on the get side. When they differ, the resolver counts each side's eligible cart-line quantity separately and claims `min(buyBundles, getBundles)`. When they match, single-pool bundle math (current behavior) applies.
+- **BOGO** also gains `bogoVariantId` to restrict to a single variant (e.g., "Beli 2 Mug Black gratis 1 Mug Black").
+
+Resolver helpers:
+- `lineMatches(line, productId, variantId?, unitId?, unitFactor?)` — line-by-line filter
+- `availableFor(...)` — total remaining base units across matching lines
+- `consume(...)` — FIFO deduction from matching lines, returns affected line ids
+- `unitPriceForMatch(...)` — picks unit price from first matching line (used to price the "free" side of a cross-unit BOGO)
+
+Suggestion helpers (`suggestCombos`, `suggestBogos`) include `unitLabel` per `needed` row, so the cart can render "Tambah 1 box × 6 Cola untuk dapat Combo X" instead of bare "Tambah 1 Cola".
+
+Seed example (PRM-006): "Beli 1 Box Cola Gratis 1 Pcs" with `bogoProductId='prd_5'`, `buyUnitId='unit_2', buyUnitFactor=6, buyQuantity=1`, `getUnitId='unit_1', getUnitFactor=1, getQuantity=1`. Customer adds 1 box + 1 pcs of Cola → BOGO claims 1 bundle, discounts 1 × Cola pcs price (Rp 8.000).
+
+**Decision — strict unit match, not flexible.** When a promo says "1 box", the customer must actually buy a 1-box line; 6 individual pcs don't count. This matches retail intent (bulk-buy gets the gift) and is more predictable than fuzzy base-unit aggregation across packaging.
+
+**Decision — separate buy/get pools for cross-unit BOGO.** "Beli 1 box gratis 1 pcs" requires BOTH the box and the pcs to be in cart (cashier adds the free pcs line). Discount applies to the pcs line. Without the pcs in cart, the suggestion strip prompts "Tambah 1 pcs untuk gratis 1 pcs".
 
 ---
 

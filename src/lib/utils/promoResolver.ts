@@ -1,7 +1,6 @@
 import { products } from '$lib/stores/products.svelte';
 import {
   promotions,
-  isPromoUsable,
   type PromoKind,
   type PromoLevel,
   type Promotion
@@ -12,10 +11,11 @@ export type CartLineForPromo = {
   id: string;
   productId: string;
   variantId?: string;
+  unitId: string;
   unitFactor: number;
   quantity: number;
   baseQuantity: number;
-  unitPrice: number;
+  unitPrice: number;     // price per chosen-unit (e.g. per box if line is in box)
   subtotal: number;
 };
 
@@ -44,9 +44,7 @@ function categoryOf(productId: string): string | undefined {
 function matchesScope(promo: Promotion, line: CartLineForPromo): boolean {
   const hasProductFilter = !!(promo.productIds && promo.productIds.length > 0);
   const hasCategoryFilter = !!(promo.categoryIds && promo.categoryIds.length > 0);
-  // No filter set → applies to all products.
   if (!hasProductFilter && !hasCategoryFilter) return true;
-  // OR semantic: line matches if it appears in productIds OR its category is in categoryIds.
   if (hasProductFilter && promo.productIds!.includes(line.productId)) return true;
   if (hasCategoryFilter) {
     const cat = categoryOf(line.productId);
@@ -55,48 +53,99 @@ function matchesScope(promo: Promotion, line: CartLineForPromo): boolean {
   return false;
 }
 
-// Returns the number of complete bundles this combo can claim against the
-// remaining base quantities in `remaining`. Mutates `consumed` to reflect
-// what would be taken if applied.
-function comboBundleCount(
-  promo: Promotion,
-  remaining: Map<string, number>
-): number {
-  if (!promo.comboItems || promo.comboItems.length === 0) return 0;
-  let min = Infinity;
-  for (const item of promo.comboItems) {
-    const key = `${item.productId}|${item.variantId ?? ''}`;
-    const avail = remaining.get(key) ?? 0;
-    const bundles = Math.floor(avail / item.quantity);
-    if (bundles < min) min = bundles;
-    if (min === 0) return 0;
-  }
-  return Number.isFinite(min) ? min : 0;
+// Match a cart line against optional (variant + unit) filters. unitFactor is
+// the source of truth for packaging match — two packagings sharing a unitId
+// (different factors) are distinct.
+function lineMatches(
+  line: CartLineForPromo,
+  productId: string,
+  variantId: string | undefined,
+  unitId: string | undefined,
+  unitFactor: number | undefined
+): boolean {
+  if (line.productId !== productId) return false;
+  if ((variantId ?? '') !== '' && (line.variantId ?? '') !== variantId) return false;
+  if (unitId && line.unitId !== unitId) return false;
+  if (unitFactor !== undefined && line.unitFactor !== unitFactor) return false;
+  return true;
 }
 
-// Walks `lines` and decrements `remaining` based on the per-product key.
-function keyForLine(line: CartLineForPromo): string {
-  return `${line.productId}|${line.variantId ?? ''}`;
-}
-
-function originalPriceForComboItems(
-  promo: Promotion,
-  lines: CartLineForPromo[]
+// Sum remaining base units across cart lines matching the filter.
+function availableFor(
+  lines: CartLineForPromo[],
+  remaining: Map<string, number>,
+  productId: string,
+  variantId: string | undefined,
+  unitId: string | undefined,
+  unitFactor: number | undefined
 ): number {
-  if (!promo.comboItems) return 0;
   let total = 0;
-  for (const item of promo.comboItems) {
-    // Find a representative line for this (product, variant?) to derive unit price.
-    const line = lines.find(
-      (l) => l.productId === item.productId && (item.variantId ? l.variantId === item.variantId : true)
-    );
-    if (!line) continue;
-    total += line.unitPrice * item.quantity;
+  for (const line of lines) {
+    if (!lineMatches(line, productId, variantId, unitId, unitFactor)) continue;
+    total += remaining.get(line.id) ?? 0;
   }
   return total;
 }
 
-// Given (already-resolved usable promos), return the applied list.
+// Consume `baseUnits` from matching lines (FIFO over cart order). Mutates
+// `remaining`. Returns the list of affected line ids.
+function consume(
+  lines: CartLineForPromo[],
+  remaining: Map<string, number>,
+  productId: string,
+  variantId: string | undefined,
+  unitId: string | undefined,
+  unitFactor: number | undefined,
+  baseUnits: number
+): string[] {
+  const affected: string[] = [];
+  let need = baseUnits;
+  for (const line of lines) {
+    if (need <= 0) break;
+    if (!lineMatches(line, productId, variantId, unitId, unitFactor)) continue;
+    const rem = remaining.get(line.id) ?? 0;
+    if (rem <= 0) continue;
+    const take = Math.min(rem, need);
+    remaining.set(line.id, rem - take);
+    need -= take;
+    affected.push(line.id);
+  }
+  return affected;
+}
+
+// Pick a representative unit price from cart lines matching the filter.
+// Falls back to 0 if no matching line is present.
+function unitPriceForMatch(
+  lines: CartLineForPromo[],
+  productId: string,
+  variantId: string | undefined,
+  unitId: string | undefined,
+  unitFactor: number | undefined
+): number {
+  for (const line of lines) {
+    if (lineMatches(line, productId, variantId, unitId, unitFactor)) return line.unitPrice;
+  }
+  return 0;
+}
+
+// Sum the original price of one combo bundle. Per item: quantity × unitPrice
+// of the (matching unit) cart line; falls back to 0 when no matching line.
+function originalBundlePrice(promo: Promotion, lines: CartLineForPromo[]): number {
+  if (!promo.comboItems) return 0;
+  let total = 0;
+  for (const item of promo.comboItems) {
+    const unitPrice = unitPriceForMatch(
+      lines,
+      item.productId,
+      item.variantId,
+      item.unitId,
+      item.unitFactor
+    );
+    total += unitPrice * item.quantity;
+  }
+  return total;
+}
+
 export function resolvePromos(ctx: ResolverContext): AppliedPromo[] {
   const usable = promotions
     .usableAt(ctx.at)
@@ -104,86 +153,171 @@ export function resolvePromos(ctx: ResolverContext): AppliedPromo[] {
 
   const applied: AppliedPromo[] = [];
 
-  // remaining base quantity per (productId|variantId?) — used so each base unit
-  // gets at most one line-level promo applied to it.
+  // remaining base units per cart line — each base unit can be claimed by at
+  // most ONE line-level promo (predictable, no double-discounting).
   const remaining = new Map<string, number>();
-  for (const line of ctx.lines) {
-    const key = keyForLine(line);
-    remaining.set(key, (remaining.get(key) ?? 0) + line.baseQuantity);
-  }
+  for (const line of ctx.lines) remaining.set(line.id, line.baseQuantity);
 
-  // 1. Combos consume across lines (best-first by discount magnitude).
-  const combos = usable
-    .filter((p) => p.kind === 'combo' && p.level === 'line')
-    .slice();
-  let comboProgress = true;
-  while (comboProgress) {
-    comboProgress = false;
-    for (const combo of combos) {
-      const bundles = comboBundleCount(combo, remaining);
-      if (bundles <= 0) continue;
-      const originalPrice = originalPriceForComboItems(combo, ctx.lines);
-      const comboPrice = combo.comboPrice ?? 0;
-      const perBundleDiscount = Math.max(0, originalPrice - comboPrice);
-      if (perBundleDiscount <= 0) continue;
+  // 1. Combos consume across lines, possibly with strict unit matching.
+  const combos = usable.filter((p) => p.kind === 'combo' && p.level === 'line');
+  for (const combo of combos) {
+    if (!combo.comboItems || combo.comboItems.length === 0) continue;
 
-      const affected = new Set<string>();
-      for (const item of combo.comboItems ?? []) {
-        const k = `${item.productId}|${item.variantId ?? ''}`;
-        remaining.set(k, Math.max(0, (remaining.get(k) ?? 0) - item.quantity * bundles));
-        for (const line of ctx.lines) {
-          if (keyForLine(line) === k) affected.add(line.id);
-        }
-      }
-
-      applied.push({
-        promoId: combo.id,
-        promoCode: combo.code,
-        promoName: combo.name,
-        kind: 'combo',
-        level: 'line',
-        affectedLineIds: Array.from(affected),
-        discountAmount: perBundleDiscount * bundles,
-        description: `${bundles}× ${combo.name}`
-      });
-      // Only one application per combo per resolve (already maxed bundles).
+    // Bundle count = min across items of floor(avail / baseUnitsPerBundle).
+    let bundles = Infinity;
+    for (const item of combo.comboItems) {
+      const baseUnitsPerBundle = item.quantity * (item.unitFactor ?? 1);
+      const avail = availableFor(
+        ctx.lines,
+        remaining,
+        item.productId,
+        item.variantId,
+        item.unitId,
+        item.unitFactor
+      );
+      const itemBundles = Math.floor(avail / baseUnitsPerBundle);
+      if (itemBundles < bundles) bundles = itemBundles;
+      if (bundles === 0) break;
     }
+    if (!Number.isFinite(bundles) || bundles <= 0) continue;
+
+    const original = originalBundlePrice(combo, ctx.lines);
+    const comboPrice = combo.comboPrice ?? 0;
+    const perBundleDiscount = Math.max(0, original - comboPrice);
+    if (perBundleDiscount <= 0) continue;
+
+    const affected = new Set<string>();
+    for (const item of combo.comboItems) {
+      const baseUnits = item.quantity * (item.unitFactor ?? 1) * bundles;
+      const ids = consume(
+        ctx.lines,
+        remaining,
+        item.productId,
+        item.variantId,
+        item.unitId,
+        item.unitFactor,
+        baseUnits
+      );
+      ids.forEach((id) => affected.add(id));
+    }
+
+    applied.push({
+      promoId: combo.id,
+      promoCode: combo.code,
+      promoName: combo.name,
+      kind: 'combo',
+      level: 'line',
+      affectedLineIds: Array.from(affected),
+      discountAmount: perBundleDiscount * bundles,
+      description: `${bundles}× ${combo.name}`
+    });
   }
 
-  // 2. BOGO per (product, variant) — operates on remaining quantity.
+  // 2. BOGO per (product, variant, buy-unit) — buy and get sides can have
+  //    different units (e.g. buy 1 box → get 1 pcs).
   const bogos = usable.filter((p) => p.kind === 'bogo' && p.level === 'line');
   for (const promo of bogos) {
-    const buy = promo.buyQuantity ?? 0;
-    const getQ = promo.getQuantity ?? 0;
-    const bundleSize = buy + getQ;
-    if (bundleSize <= 0) continue;
+    const buyQty = promo.buyQuantity ?? 0;
+    const getQty = promo.getQuantity ?? 0;
+    if (buyQty <= 0 || getQty <= 0) continue;
 
-    // Group remaining qty by relevant product key.
-    // If bogoProductId is set, only that product qualifies.
-    const candidates: Array<{ line: CartLineForPromo; remaining: number }> = [];
-    for (const line of ctx.lines) {
-      if (promo.bogoProductId && line.productId !== promo.bogoProductId) continue;
-      if (!matchesScope(promo, line)) continue;
-      const rem = remaining.get(keyForLine(line)) ?? 0;
-      if (rem > 0) candidates.push({ line, remaining: rem });
-    }
-    if (candidates.length === 0) continue;
+    const buyUnitFactor = promo.buyUnitFactor ?? 1;
+    const getUnitFactor = promo.getUnitFactor ?? 1;
+    const buyBaseUnitsPerBundle = buyQty * buyUnitFactor;
+    const getBaseUnitsPerBundle = getQty * getUnitFactor;
 
+    const productId = promo.bogoProductId;
+    const variantId = promo.bogoVariantId;
+
+    let affectedLines: string[] = [];
     let totalDiscount = 0;
-    const affected: string[] = [];
-    for (const c of candidates) {
-      const bundles = Math.floor(c.remaining / bundleSize);
-      if (bundles <= 0) continue;
-      const freeQty = bundles * getQ;
-      const lineDiscount = freeQty * c.line.unitPrice;
-      if (lineDiscount <= 0) continue;
-      totalDiscount += lineDiscount;
-      affected.push(c.line.id);
-      remaining.set(
-        keyForLine(c.line),
-        Math.max(0, c.remaining - bundles * bundleSize)
+
+    if (productId) {
+      const availBuy = availableFor(
+        ctx.lines,
+        remaining,
+        productId,
+        variantId,
+        promo.buyUnitId,
+        promo.buyUnitFactor
       );
+      // Cross-unit BOGO needs separate "get" pool. When buy and get units differ,
+      // bundle count is the min over (buy availability, get availability).
+      const sameUnit =
+        (promo.buyUnitId ?? '') === (promo.getUnitId ?? '') &&
+        (promo.buyUnitFactor ?? 1) === (promo.getUnitFactor ?? 1);
+
+      let bundles: number;
+      if (sameUnit) {
+        // Same unit on both sides: total claim from one pool, bundle = buy+get.
+        const bundleBase = buyBaseUnitsPerBundle + getBaseUnitsPerBundle;
+        bundles = Math.floor(availBuy / bundleBase);
+      } else {
+        const availGet = availableFor(
+          ctx.lines,
+          remaining,
+          productId,
+          variantId,
+          promo.getUnitId,
+          promo.getUnitFactor
+        );
+        bundles = Math.min(
+          Math.floor(availBuy / buyBaseUnitsPerBundle),
+          Math.floor(availGet / getBaseUnitsPerBundle)
+        );
+      }
+
+      if (bundles > 0) {
+        // Consume buy side first.
+        const buyAffected = consume(
+          ctx.lines,
+          remaining,
+          productId,
+          variantId,
+          promo.buyUnitId,
+          promo.buyUnitFactor,
+          bundles * buyBaseUnitsPerBundle
+        );
+        // Consume get side.
+        const getAffected = consume(
+          ctx.lines,
+          remaining,
+          productId,
+          variantId,
+          promo.getUnitId,
+          promo.getUnitFactor,
+          bundles * getBaseUnitsPerBundle
+        );
+        // Discount value comes from the get side's per-unit price.
+        const getUnitPrice = unitPriceForMatch(
+          ctx.lines,
+          productId,
+          variantId,
+          promo.getUnitId,
+          promo.getUnitFactor
+        );
+        totalDiscount = bundles * getQty * getUnitPrice;
+        affectedLines = Array.from(new Set([...buyAffected, ...getAffected]));
+      }
+    } else {
+      // No specific product — fall back to scope filter, single-unit BOGO.
+      const bundleSize = buyBaseUnitsPerBundle + getBaseUnitsPerBundle;
+      for (const line of ctx.lines) {
+        if (!matchesScope(promo, line)) continue;
+        const rem = remaining.get(line.id) ?? 0;
+        const bundles = Math.floor(rem / bundleSize);
+        if (bundles <= 0) continue;
+        const freeBase = bundles * getBaseUnitsPerBundle;
+        // Discount = (freeBase / line.unitFactor) × line.unitPrice = freeBase / line.unitFactor × line.unitPrice
+        const freeInLineUnit = freeBase / line.unitFactor;
+        const lineDiscount = freeInLineUnit * line.unitPrice;
+        if (lineDiscount <= 0) continue;
+        totalDiscount += lineDiscount;
+        affectedLines.push(line.id);
+        remaining.set(line.id, Math.max(0, rem - bundles * bundleSize));
+      }
     }
+
     if (totalDiscount > 0) {
       applied.push({
         promoId: promo.id,
@@ -191,23 +325,22 @@ export function resolvePromos(ctx: ResolverContext): AppliedPromo[] {
         promoName: promo.name,
         kind: 'bogo',
         level: 'line',
-        affectedLineIds: affected,
+        affectedLineIds: affectedLines,
         discountAmount: totalDiscount,
         description: promo.description || promo.name
       });
     }
   }
 
-  // 3. Line-level discount (% or fixed). Apply to remaining qty share per line.
-  // Pick the *single best* line-level discount per line.
+  // 3. Line-level discount (% or fixed). Pick the single best per line.
   const lineDiscounts = usable.filter(
     (p) => p.kind === 'discount' && p.level === 'line'
   );
   if (lineDiscounts.length > 0) {
     for (const line of ctx.lines) {
-      const rem = remaining.get(keyForLine(line)) ?? 0;
+      const rem = remaining.get(line.id) ?? 0;
       if (rem <= 0) continue;
-      const remShare = rem / line.baseQuantity; // 0..1 portion of this line still eligible
+      const remShare = rem / line.baseQuantity;
       const remainingSubtotal = line.subtotal * remShare;
 
       let bestPromo: Promotion | undefined;
@@ -236,7 +369,7 @@ export function resolvePromos(ctx: ResolverContext): AppliedPromo[] {
           discountAmount: bestAmt,
           description: bestPromo.description || bestPromo.name
         });
-        remaining.set(keyForLine(line), 0);
+        remaining.set(line.id, 0);
       }
     }
   }
@@ -286,7 +419,7 @@ export function resolvePromos(ctx: ResolverContext): AppliedPromo[] {
 }
 
 // Suggestion for a combo that's partially in the cart (at least one item
-// present) but missing others. Helps cashier upsell to complete the bundle.
+// present) but missing others. Includes unit-aware "Tambah 1 box" labels.
 export type ComboSuggestion = {
   promoId: string;
   promoName: string;
@@ -295,10 +428,22 @@ export type ComboSuggestion = {
     productId: string;
     variantId?: string;
     productName: string;
+    unitLabel?: string;     // e.g. "box × 6" when unit-strict
     quantity: number;
   }>;
   potentialDiscount: number;
 };
+
+function unitLabelFor(productId: string, unitId?: string, unitFactor?: number): string | undefined {
+  if (!unitId) return undefined;
+  const p = products.getById(productId);
+  if (!p) return undefined;
+  // For base unit (factor 1 + matching unitId), no label needed.
+  const isBase = unitId === p.unitId && (unitFactor ?? 1) === 1;
+  if (isBase) return undefined;
+  if (unitFactor === undefined) return undefined;
+  return `${unitId} × ${unitFactor}`;
+}
 
 export function suggestCombos(
   ctx: {
@@ -306,42 +451,52 @@ export function suggestCombos(
     at: Date;
     dismissedPromoIds?: string[];
   },
-  unitPriceFor: (productId: string, variantId?: string) => number
+  unitPriceFor: (productId: string, variantId?: string, unitId?: string, unitFactor?: number) => number
 ): ComboSuggestion[] {
   const usable = promotions
     .usableAt(ctx.at)
     .filter((p) => !ctx.dismissedPromoIds?.includes(p.id))
     .filter((p) => p.kind === 'combo');
 
-  // Total cart qty per (productId|variantId) key.
-  const inCart = new Map<string, number>();
-  for (const line of ctx.lines) {
-    const key = keyForLine(line);
-    inCart.set(key, (inCart.get(key) ?? 0) + line.baseQuantity);
-  }
+  const remaining = new Map<string, number>();
+  for (const line of ctx.lines) remaining.set(line.id, line.baseQuantity);
 
   const out: ComboSuggestion[] = [];
   for (const combo of usable) {
     if (!combo.comboItems || combo.comboItems.length === 0) continue;
 
-    // Must have at least ONE of the combo items in cart to suggest (avoids
-    // spamming every combo on an empty cart).
+    // Need at least one combo item present to suggest.
     const hasAny = combo.comboItems.some((item) => {
-      const key = `${item.productId}|${item.variantId ?? ''}`;
-      return (inCart.get(key) ?? 0) > 0;
+      const avail = availableFor(
+        ctx.lines,
+        remaining,
+        item.productId,
+        item.variantId,
+        item.unitId,
+        item.unitFactor
+      );
+      return avail > 0;
     });
     if (!hasAny) continue;
 
-    // Compute missing quantities for ONE bundle.
     const needed: ComboSuggestion['needed'] = [];
     let originalBundlePrice = 0;
     for (const item of combo.comboItems) {
-      const key = `${item.productId}|${item.variantId ?? ''}`;
-      const have = inCart.get(key) ?? 0;
-      const missing = Math.max(0, item.quantity - have);
-      const unitPrice = unitPriceFor(item.productId, item.variantId);
+      const baseUnitsPerBundle = item.quantity * (item.unitFactor ?? 1);
+      const avail = availableFor(
+        ctx.lines,
+        remaining,
+        item.productId,
+        item.variantId,
+        item.unitId,
+        item.unitFactor
+      );
+      const haveBundles = Math.floor(avail / baseUnitsPerBundle);
+      const unitPrice = unitPriceFor(item.productId, item.variantId, item.unitId, item.unitFactor);
       originalBundlePrice += unitPrice * item.quantity;
-      if (missing > 0) {
+      if (haveBundles < 1) {
+        const missingBase = baseUnitsPerBundle - avail;
+        const missingInUnit = Math.ceil(missingBase / (item.unitFactor ?? 1));
         const product = products.getById(item.productId);
         let productName = product?.name ?? 'Produk';
         if (item.variantId) {
@@ -352,11 +507,11 @@ export function suggestCombos(
           productId: item.productId,
           variantId: item.variantId,
           productName,
-          quantity: missing
+          unitLabel: unitLabelFor(item.productId, item.unitId, item.unitFactor),
+          quantity: missingInUnit
         });
       }
     }
-    // Skip when the combo is already fully claimable (it'll auto-apply).
     if (needed.length === 0) continue;
 
     const potentialDiscount = Math.max(0, originalBundlePrice - (combo.comboPrice ?? 0));
@@ -373,8 +528,6 @@ export function suggestCombos(
   return out;
 }
 
-// BOGO that's partially applicable on a line — qty isn't enough for a bundle
-// yet, but we can tell the cashier how many more to add for the next free.
 export type BogoSuggestion = {
   promoId: string;
   promoName: string;
@@ -382,53 +535,177 @@ export type BogoSuggestion = {
   productId: string;
   variantId?: string;
   unitsNeeded: number;
+  unitLabel?: string;        // unit of "needed" qty (defaults to product base)
   freeUnits: number;
+  freeUnitLabel?: string;    // unit of free qty
   potentialDiscount: number;
 };
 
-export function suggestBogos(
-  ctx: {
-    lines: CartLineForPromo[];
-    at: Date;
-    dismissedPromoIds?: string[];
-  }
-): BogoSuggestion[] {
+export function suggestBogos(ctx: {
+  lines: CartLineForPromo[];
+  at: Date;
+  dismissedPromoIds?: string[];
+}): BogoSuggestion[] {
   const usable = promotions
     .usableAt(ctx.at)
     .filter((p) => !ctx.dismissedPromoIds?.includes(p.id))
     .filter((p) => p.kind === 'bogo');
 
+  const remaining = new Map<string, number>();
+  for (const line of ctx.lines) remaining.set(line.id, line.baseQuantity);
+
   const out: BogoSuggestion[] = [];
   for (const promo of usable) {
-    const buy = promo.buyQuantity ?? 0;
-    const getQ = promo.getQuantity ?? 0;
-    const bundleSize = buy + getQ;
-    if (bundleSize <= 0) continue;
+    const buyQty = promo.buyQuantity ?? 0;
+    const getQty = promo.getQuantity ?? 0;
+    if (buyQty <= 0 || getQty <= 0) continue;
 
-    // Group cart qty by line — suggestion is per line so the UI can show inline.
-    for (const line of ctx.lines) {
-      if (promo.bogoProductId && line.productId !== promo.bogoProductId) continue;
-      if (!promo.bogoProductId) {
-        // No specific product: only suggest when in scope.
-        if (!matchesScope(promo, line)) continue;
-      }
-      const qty = line.baseQuantity;
-      // Skip when already at-or-beyond a bundle (resolver applied it). Suggest
-      // only the "missing N to next bundle" case.
-      const inCurrentBundle = qty % bundleSize;
-      if (qty > 0 && inCurrentBundle === 0) continue;
-      const unitsNeeded = bundleSize - inCurrentBundle;
-      const potentialDiscount = getQ * line.unitPrice;
+    const buyBaseUnitsPerBundle = buyQty * (promo.buyUnitFactor ?? 1);
+    const getBaseUnitsPerBundle = getQty * (promo.getUnitFactor ?? 1);
+
+    const productId = promo.bogoProductId;
+    if (!productId) continue; // scope-only BOGO doesn't suggest cleanly here
+    const variantId = promo.bogoVariantId;
+
+    const availBuy = availableFor(
+      ctx.lines,
+      remaining,
+      productId,
+      variantId,
+      promo.buyUnitId,
+      promo.buyUnitFactor
+    );
+    const sameUnit =
+      (promo.buyUnitId ?? '') === (promo.getUnitId ?? '') &&
+      (promo.buyUnitFactor ?? 1) === (promo.getUnitFactor ?? 1);
+
+    if (availBuy === 0) continue;
+
+    if (sameUnit) {
+      // Customer needs (buy + get) base units to claim 1 bundle. Suggest the
+      // remainder to next bundle when partial.
+      const bundleBase = buyBaseUnitsPerBundle + getBaseUnitsPerBundle;
+      const inCurrentBundle = availBuy % bundleBase;
+      if (inCurrentBundle === 0) continue;
+      const neededBase = bundleBase - inCurrentBundle;
+      const factor = promo.buyUnitFactor ?? 1;
+      const neededInUnit = Math.ceil(neededBase / factor);
+      const getUnitPrice = unitPriceForMatch(
+        ctx.lines,
+        productId,
+        variantId,
+        promo.getUnitId,
+        promo.getUnitFactor
+      );
       out.push({
         promoId: promo.id,
         promoName: promo.name,
         promoDescription: promo.description,
-        productId: line.productId,
-        variantId: line.variantId,
-        unitsNeeded,
-        freeUnits: getQ,
-        potentialDiscount
+        productId,
+        variantId,
+        unitsNeeded: neededInUnit,
+        unitLabel: unitLabelFor(productId, promo.buyUnitId, promo.buyUnitFactor),
+        freeUnits: getQty,
+        freeUnitLabel: unitLabelFor(productId, promo.getUnitId, promo.getUnitFactor),
+        potentialDiscount: getQty * getUnitPrice
       });
+    } else {
+      // Different units. Suggest based on whichever side is short of a full bundle.
+      const availGet = availableFor(
+        ctx.lines,
+        remaining,
+        productId,
+        variantId,
+        promo.getUnitId,
+        promo.getUnitFactor
+      );
+      const buyBundles = Math.floor(availBuy / buyBaseUnitsPerBundle);
+      const getBundles = Math.floor(availGet / getBaseUnitsPerBundle);
+      const claimable = Math.min(buyBundles, getBundles);
+      // If already fully claimable for as many bundles as buy can supply, skip.
+      if (claimable >= buyBundles && claimable >= getBundles && availBuy > 0 && availGet > 0) {
+        // If both sides have surplus rounding to same bundles, nothing more to suggest.
+        // Otherwise (one side short), suggest filling it.
+        if (buyBundles === getBundles) continue;
+      }
+      // Identify shortage:
+      if (buyBundles > getBundles) {
+        // Need more get-side to claim remaining buy bundles.
+        const targetBundles = buyBundles;
+        const neededGetBase = targetBundles * getBaseUnitsPerBundle - availGet;
+        if (neededGetBase <= 0) continue;
+        const factor = promo.getUnitFactor ?? 1;
+        const neededInUnit = Math.ceil(neededGetBase / factor);
+        const getUnitPrice = unitPriceForMatch(
+          ctx.lines,
+          productId,
+          variantId,
+          promo.getUnitId,
+          promo.getUnitFactor
+        );
+        out.push({
+          promoId: promo.id,
+          promoName: promo.name,
+          promoDescription: promo.description,
+          productId,
+          variantId,
+          unitsNeeded: neededInUnit,
+          unitLabel: unitLabelFor(productId, promo.getUnitId, promo.getUnitFactor),
+          freeUnits: getQty * (targetBundles - getBundles),
+          freeUnitLabel: unitLabelFor(productId, promo.getUnitId, promo.getUnitFactor),
+          potentialDiscount: (targetBundles - getBundles) * getQty * getUnitPrice
+        });
+      } else if (getBundles > buyBundles) {
+        // Need more buy-side.
+        const targetBundles = getBundles;
+        const neededBuyBase = targetBundles * buyBaseUnitsPerBundle - availBuy;
+        if (neededBuyBase <= 0) continue;
+        const factor = promo.buyUnitFactor ?? 1;
+        const neededInUnit = Math.ceil(neededBuyBase / factor);
+        const getUnitPrice = unitPriceForMatch(
+          ctx.lines,
+          productId,
+          variantId,
+          promo.getUnitId,
+          promo.getUnitFactor
+        );
+        out.push({
+          promoId: promo.id,
+          promoName: promo.name,
+          promoDescription: promo.description,
+          productId,
+          variantId,
+          unitsNeeded: neededInUnit,
+          unitLabel: unitLabelFor(productId, promo.buyUnitId, promo.buyUnitFactor),
+          freeUnits: getQty * (targetBundles - buyBundles),
+          freeUnitLabel: unitLabelFor(productId, promo.getUnitId, promo.getUnitFactor),
+          potentialDiscount: (targetBundles - buyBundles) * getQty * getUnitPrice
+        });
+      } else {
+        // Equal bundles claimable. Suggest one more bundle for upsell.
+        const neededBuy = buyBaseUnitsPerBundle;
+        const factor = promo.buyUnitFactor ?? 1;
+        const neededInUnit = Math.ceil(neededBuy / factor);
+        const getUnitPrice = unitPriceForMatch(
+          ctx.lines,
+          productId,
+          variantId,
+          promo.getUnitId,
+          promo.getUnitFactor
+        );
+        out.push({
+          promoId: promo.id,
+          promoName: promo.name,
+          promoDescription: promo.description,
+          productId,
+          variantId,
+          unitsNeeded: neededInUnit,
+          unitLabel: unitLabelFor(productId, promo.buyUnitId, promo.buyUnitFactor),
+          freeUnits: getQty,
+          freeUnitLabel: unitLabelFor(productId, promo.getUnitId, promo.getUnitFactor),
+          potentialDiscount: getQty * getUnitPrice
+        });
+      }
     }
   }
   return out;
@@ -443,11 +720,9 @@ export function distributePromosAcrossLines(
   const out = new Map<string, { lineDiscount: number; orderDiscountShare: number }>();
   for (const l of lines) out.set(l.id, { lineDiscount: 0, orderDiscountShare: 0 });
 
-  // Line-level discounts go to specific lines.
   for (const a of applied) {
     if (a.level !== 'line') continue;
     if (a.affectedLineIds.length === 0) continue;
-    // Distribute proportionally to those lines' subtotals.
     const totalSubtotal = a.affectedLineIds.reduce((s, id) => {
       const ln = lines.find((l) => l.id === id);
       return s + (ln?.subtotal ?? 0);
@@ -461,7 +736,6 @@ export function distributePromosAcrossLines(
     }
   }
 
-  // Order-level discount distributed proportionally across ALL lines by net subtotal.
   const orderApplied = applied.find((a) => a.level === 'order');
   if (orderApplied) {
     const netByLine = lines.map((l) => ({

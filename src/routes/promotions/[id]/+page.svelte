@@ -33,10 +33,41 @@
     type DiscountUnit,
     type ComboItem
   } from '$lib/stores/promotions.svelte';
-  import { products } from '$lib/stores/products.svelte';
+  import { products, type Product } from '$lib/stores/products.svelte';
   import { categories } from '$lib/stores/categories.svelte';
   import { pricelists } from '$lib/stores/pricelists.svelte';
+  import { units } from '$lib/stores/units.svelte';
   import { toast } from '$lib/stores/toast.svelte';
+
+  function unitOptionsFor(productId: string) {
+    const p = products.getById(productId);
+    if (!p) return [{ value: '', label: '— Semua unit —' }];
+    const baseName = units.getById(p.unitId)?.name ?? p.unitId;
+    const opts = [{ value: '', label: '— Semua unit —' }];
+    opts.push({ value: `${p.unitId}|1`, label: `${baseName} (dasar)` });
+    for (const pkg of p.units) {
+      const u = units.getById(pkg.unitId);
+      opts.push({
+        value: `${pkg.unitId}|${pkg.factor}`,
+        label: `${u?.name ?? pkg.unitId} × ${pkg.factor}`
+      });
+    }
+    return opts;
+  }
+
+  function variantOptionsFor(productId: string) {
+    const p = products.getById(productId);
+    const opts = [{ value: '', label: '— Semua varian —' }];
+    if (!p) return opts;
+    for (const v of p.variants) opts.push({ value: v.id, label: v.name });
+    return opts;
+  }
+
+  function parseUnitKey(key: string): { unitId?: string; factor?: number } {
+    if (!key) return {};
+    const [unitId, factorStr] = key.split('|');
+    return { unitId, factor: Number(factorStr) || 1 };
+  }
 
   const id = $derived(page.params.id ?? '');
   const isNew = $derived(id === 'new');
@@ -59,6 +90,9 @@
     buyQuantity: number;
     getQuantity: number;
     bogoProductId: string;
+    bogoVariantId: string;
+    buyUnitKey: string;          // "unitId|factor" — '' = base unit
+    getUnitKey: string;
 
     memberPricelistId: string;
     memberPercentOff: number;
@@ -94,6 +128,9 @@
     buyQuantity: 2,
     getQuantity: 1,
     bogoProductId: '',
+    bogoVariantId: '',
+    buyUnitKey: '',
+    getUnitKey: '',
 
     memberPricelistId: '',
     memberPercentOff: 5,
@@ -131,6 +168,13 @@
         buyQuantity: editing.buyQuantity ?? 2,
         getQuantity: editing.getQuantity ?? 1,
         bogoProductId: editing.bogoProductId ?? '',
+        bogoVariantId: editing.bogoVariantId ?? '',
+        buyUnitKey: editing.buyUnitId
+          ? `${editing.buyUnitId}|${editing.buyUnitFactor ?? 1}`
+          : '',
+        getUnitKey: editing.getUnitId
+          ? `${editing.getUnitId}|${editing.getUnitFactor ?? 1}`
+          : '',
         memberPricelistId: editing.memberPricelistId ?? '',
         memberPercentOff: editing.memberPercentOff ?? 5,
         productIds: editing.productIds ? [...editing.productIds] : [],
@@ -234,6 +278,29 @@
     form.comboItems = form.comboItems.filter((_, i) => i !== idx);
   }
 
+  function setComboItemUnit(idx: number, key: string) {
+    const parsed = parseUnitKey(key);
+    const item = form.comboItems[idx];
+    form.comboItems[idx] = {
+      ...item,
+      unitId: parsed.unitId,
+      unitFactor: parsed.factor
+    };
+  }
+
+  function setComboItemVariant(idx: number, variantId: string) {
+    const item = form.comboItems[idx];
+    form.comboItems[idx] = {
+      ...item,
+      variantId: variantId || undefined
+    };
+  }
+
+  function comboItemUnitKey(item: ComboItem): string {
+    if (!item.unitId) return '';
+    return `${item.unitId}|${item.unitFactor ?? 1}`;
+  }
+
   function validate(): boolean {
     const next: Record<string, string> = {};
     if (!form.name.trim()) next.name = 'Nama wajib diisi.';
@@ -299,6 +366,13 @@
       payload.buyQuantity = form.buyQuantity;
       payload.getQuantity = form.getQuantity;
       payload.bogoProductId = form.bogoProductId || undefined;
+      payload.bogoVariantId = form.bogoVariantId || undefined;
+      const buy = parseUnitKey(form.buyUnitKey);
+      const get = parseUnitKey(form.getUnitKey);
+      payload.buyUnitId = buy.unitId;
+      payload.buyUnitFactor = buy.factor;
+      payload.getUnitId = get.unitId;
+      payload.getUnitFactor = get.factor;
     }
     if (form.kind === 'member-tier') {
       payload.memberPricelistId = form.memberPricelistId;
@@ -427,25 +501,56 @@
             {#if errors.comboItems}
               <Alert variant="error" class="mb-2">{errors.comboItems}</Alert>
             {/if}
-            <div class="space-y-2">
+            <div class="space-y-3">
               {#each form.comboItems as item, idx}
-                <div class="grid gap-2 sm:grid-cols-[1fr_120px_36px]">
-                  <Select bind:value={item.productId} options={productOptions} />
-                  <Input
-                    type="number"
-                    min="1"
-                    step="1"
-                    placeholder="Jumlah"
-                    bind:value={item.quantity}
-                  />
-                  <button
-                    type="button"
-                    class="flex items-center justify-center rounded-md text-slate-400 hover:bg-rose-50 hover:text-rose-600"
-                    aria-label="Hapus item"
-                    onclick={() => removeComboItem(idx)}
-                  >
-                    <Trash2 class="h-4 w-4" />
-                  </button>
+                {@const prod = products.getById(item.productId)}
+                {@const hasVariants = !!(prod && prod.variants.length > 0)}
+                {@const hasPackaging = !!(prod && prod.units.length > 0)}
+                <div class="rounded-md border border-slate-200 bg-slate-50/40 p-2">
+                  <div class="grid gap-2 sm:grid-cols-[1fr_100px_28px]">
+                    <Select bind:value={item.productId} options={productOptions} />
+                    <Input
+                      type="number"
+                      min="1"
+                      step="1"
+                      placeholder="Jumlah"
+                      bind:value={item.quantity}
+                    />
+                    <button
+                      type="button"
+                      class="flex items-center justify-center rounded-md text-slate-400 hover:bg-rose-50 hover:text-rose-600"
+                      aria-label="Hapus item"
+                      onclick={() => removeComboItem(idx)}
+                    >
+                      <Trash2 class="h-4 w-4" />
+                    </button>
+                  </div>
+                  {#if hasVariants || hasPackaging}
+                    <div class="mt-2 grid gap-2 sm:grid-cols-2">
+                      {#if hasVariants}
+                        <Select
+                          value={item.variantId ?? ''}
+                          options={variantOptionsFor(item.productId)}
+                          onchange={(e) =>
+                            setComboItemVariant(
+                              idx,
+                              (e.currentTarget as HTMLSelectElement).value
+                            )}
+                        />
+                      {/if}
+                      {#if hasPackaging}
+                        <Select
+                          value={comboItemUnitKey(item)}
+                          options={unitOptionsFor(item.productId)}
+                          onchange={(e) =>
+                            setComboItemUnit(
+                              idx,
+                              (e.currentTarget as HTMLSelectElement).value
+                            )}
+                        />
+                      {/if}
+                    </div>
+                  {/if}
                 </div>
               {/each}
               {#if form.comboItems.length === 0}
@@ -464,31 +569,79 @@
             </div>
           </div>
         {:else if form.kind === 'bogo'}
-          <div class="mt-4 rounded-lg border border-slate-200 p-3">
-            <div class="grid gap-3 sm:grid-cols-3">
-              <Input
-                label="Beli (qty)"
-                type="number"
-                min="1"
-                step="1"
-                bind:value={form.buyQuantity}
-                error={errors.buyQuantity}
-              />
-              <Input
-                label="Gratis (qty)"
-                type="number"
-                min="1"
-                step="1"
-                bind:value={form.getQuantity}
-                error={errors.getQuantity}
-              />
+          <div class="mt-4 rounded-lg border border-slate-200 p-3 space-y-3">
+            <div class="grid gap-3 sm:grid-cols-2">
               <Select
-                label="Produk (opsional)"
+                label="Produk"
                 bind:value={form.bogoProductId}
-                options={[{ value: '', label: 'Semua produk' }, ...productOptions.slice(1)]}
-                hint="Kosongkan jika berlaku untuk semua produk dalam scope."
+                options={[{ value: '', label: 'Semua produk (pakai lingkup)' }, ...productOptions.slice(1)]}
+                hint="Pilih produk spesifik, atau biarkan kosong dan atur via lingkup."
               />
+              {#if form.bogoProductId}
+                {@const bogoProd = products.getById(form.bogoProductId)}
+                {#if bogoProd && bogoProd.variants.length > 0}
+                  <Select
+                    label="Varian (opsional)"
+                    bind:value={form.bogoVariantId}
+                    options={variantOptionsFor(form.bogoProductId)}
+                    hint="Kosongkan untuk semua varian."
+                  />
+                {/if}
+              {/if}
             </div>
+
+            <div class="rounded-md border border-slate-100 bg-slate-50/40 p-2">
+              <div class="mb-1.5 text-xs font-semibold tracking-wide text-slate-500 uppercase">
+                Beli
+              </div>
+              <div class="grid gap-2 sm:grid-cols-2">
+                <Input
+                  label="Jumlah"
+                  type="number"
+                  min="1"
+                  step="1"
+                  bind:value={form.buyQuantity}
+                  error={errors.buyQuantity}
+                />
+                {#if form.bogoProductId}
+                  <Select
+                    label="Unit beli"
+                    bind:value={form.buyUnitKey}
+                    options={unitOptionsFor(form.bogoProductId)}
+                  />
+                {/if}
+              </div>
+            </div>
+
+            <div class="rounded-md border border-slate-100 bg-slate-50/40 p-2">
+              <div class="mb-1.5 text-xs font-semibold tracking-wide text-slate-500 uppercase">
+                Gratis
+              </div>
+              <div class="grid gap-2 sm:grid-cols-2">
+                <Input
+                  label="Jumlah"
+                  type="number"
+                  min="1"
+                  step="1"
+                  bind:value={form.getQuantity}
+                  error={errors.getQuantity}
+                />
+                {#if form.bogoProductId}
+                  <Select
+                    label="Unit gratis"
+                    bind:value={form.getUnitKey}
+                    options={unitOptionsFor(form.bogoProductId)}
+                  />
+                {/if}
+              </div>
+            </div>
+
+            {#if form.bogoProductId}
+              <p class="text-xs text-slate-500">
+                Contoh: beli 1 box → gratis 1 pcs. Sistem akan menghitung bundle berdasarkan unit
+                pada masing-masing sisi.
+              </p>
+            {/if}
           </div>
         {:else if form.kind === 'member-tier'}
           <div class="mt-4 rounded-lg border border-slate-200 p-3">

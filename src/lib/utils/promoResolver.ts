@@ -41,6 +41,15 @@ function categoryOf(productId: string): string | undefined {
   return products.getById(productId)?.categoryId;
 }
 
+// Member-only filter: when promo.memberPricelistId is set, the customer must
+// be on that pricelist. For member-tier kind, the field IS the rule; for other
+// kinds it acts as an optional "khusus pelanggan" restriction.
+function customerMatchesMemberFilter(promo: Promotion, customer?: Customer): boolean {
+  if (!promo.memberPricelistId) return true;
+  if (!customer) return false;
+  return customer.pricelistId === promo.memberPricelistId;
+}
+
 function matchesScope(promo: Promotion, line: CartLineForPromo): boolean {
   const hasProductFilter = !!(promo.productIds && promo.productIds.length > 0);
   const hasCategoryFilter = !!(promo.categoryIds && promo.categoryIds.length > 0);
@@ -149,7 +158,8 @@ function originalBundlePrice(promo: Promotion, lines: CartLineForPromo[]): numbe
 export function resolvePromos(ctx: ResolverContext): AppliedPromo[] {
   const usable = promotions
     .usableAt(ctx.at)
-    .filter((p) => !ctx.dismissedPromoIds?.includes(p.id));
+    .filter((p) => !ctx.dismissedPromoIds?.includes(p.id))
+    .filter((p) => customerMatchesMemberFilter(p, ctx.customer));
 
   const applied: AppliedPromo[] = [];
 
@@ -393,8 +403,7 @@ export function resolvePromos(ctx: ResolverContext): AppliedPromo[] {
         amt = Math.min(promo.discountValue ?? 0, orderSubtotalNet);
       }
     } else if (promo.kind === 'member-tier') {
-      if (!ctx.customer) continue;
-      if (promo.memberPricelistId && ctx.customer.pricelistId !== promo.memberPricelistId) continue;
+      // Customer match is enforced by the upstream `customerMatchesMemberFilter` filter.
       amt = (orderSubtotalNet * (promo.memberPercentOff ?? 0)) / 100;
     }
     if (amt > bestOrderDiscount) {
@@ -448,6 +457,7 @@ function unitLabelFor(productId: string, unitId?: string, unitFactor?: number): 
 export function suggestCombos(
   ctx: {
     lines: CartLineForPromo[];
+    customer?: Customer;
     at: Date;
     dismissedPromoIds?: string[];
   },
@@ -456,6 +466,7 @@ export function suggestCombos(
   const usable = promotions
     .usableAt(ctx.at)
     .filter((p) => !ctx.dismissedPromoIds?.includes(p.id))
+    .filter((p) => customerMatchesMemberFilter(p, ctx.customer))
     .filter((p) => p.kind === 'combo');
 
   const remaining = new Map<string, number>();
@@ -543,12 +554,14 @@ export type BogoSuggestion = {
 
 export function suggestBogos(ctx: {
   lines: CartLineForPromo[];
+  customer?: Customer;
   at: Date;
   dismissedPromoIds?: string[];
 }): BogoSuggestion[] {
   const usable = promotions
     .usableAt(ctx.at)
     .filter((p) => !ctx.dismissedPromoIds?.includes(p.id))
+    .filter((p) => customerMatchesMemberFilter(p, ctx.customer))
     .filter((p) => p.kind === 'bogo');
 
   const remaining = new Map<string, number>();

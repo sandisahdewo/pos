@@ -200,7 +200,7 @@ const seed: Promotion[] = [
     level: 'line',
     discountUnit: 'percent',
     discountValue: 10,
-    categoryIds: ['cat_minuman'],
+    categoryIds: ['cat_1'],
     status: 'active',
     usageCount: 0,
     description: 'Diskon 10% untuk semua minuman.',
@@ -280,6 +280,21 @@ const seed: Promotion[] = [
     status: 'active',
     usageCount: 0,
     description: 'Beli 1 box (isi 6) Cola, dapat tambahan 1 pcs Cola gratis.',
+    notes: ''
+  },
+  {
+    id: 'prm_7',
+    code: 'PRM-007',
+    name: 'Diskon 15% Minuman Khusus Member',
+    kind: 'discount',
+    level: 'line',
+    discountUnit: 'percent',
+    discountValue: 15,
+    categoryIds: ['cat_1'],
+    memberPricelistId: 'pl_wholesale',
+    status: 'active',
+    usageCount: 0,
+    description: 'Pelanggan dengan daftar harga grosir dapat 15% diskon untuk semua minuman.',
     notes: ''
   }
 ];

@@ -8,7 +8,8 @@
     Plus,
     Trash2,
     Save,
-    Tag
+    Tag,
+    Users
   } from 'lucide-svelte';
   import {
     Alert,
@@ -377,6 +378,9 @@
     if (form.kind === 'member-tier') {
       payload.memberPricelistId = form.memberPricelistId;
       payload.memberPercentOff = form.memberPercentOff;
+    } else {
+      // Optional "khusus pelanggan" filter on any other kind.
+      payload.memberPricelistId = form.memberPricelistId || undefined;
     }
     return payload;
   }
@@ -574,8 +578,8 @@
               <Select
                 label="Produk"
                 bind:value={form.bogoProductId}
-                options={[{ value: '', label: 'Semua produk (pakai lingkup)' }, ...productOptions.slice(1)]}
-                hint="Pilih produk spesifik, atau biarkan kosong dan atur via lingkup."
+                options={[{ value: '', label: 'Semua produk (atur di bawah)' }, ...productOptions.slice(1)]}
+                hint="Pilih produk spesifik, atau biarkan kosong dan batasi via produk / kategori di bawah."
               />
               {#if form.bogoProductId}
                 {@const bogoProd = products.getById(form.bogoProductId)}
@@ -672,7 +676,7 @@
       {#if form.kind === 'discount' || form.kind === 'bogo'}
         <Card>
           <h2 class="mb-2 text-sm font-semibold tracking-wide text-slate-500 uppercase">
-            Lingkup (opsional)
+            Untuk produk / kategori (opsional)
           </h2>
 
           {@const totalScoped = form.productIds.length + form.categoryIds.length}
@@ -816,6 +820,27 @@
           </div>
         {/if}
       </Card>
+
+      {#if form.kind !== 'member-tier'}
+        <Card>
+          <h2 class="mb-2 flex items-center gap-2 text-sm font-semibold tracking-wide text-slate-500 uppercase">
+            <Users class="h-3.5 w-3.5" />
+            Khusus pelanggan (opsional)
+          </h2>
+          <p class="mb-3 text-xs text-slate-500">
+            Batasi promo hanya untuk pelanggan dengan daftar harga tertentu. Kosongkan agar berlaku untuk semua pelanggan.
+          </p>
+          <Select
+            bind:value={form.memberPricelistId}
+            options={[{ value: '', label: 'Semua pelanggan' }, ...pricelistOptions.slice(1)]}
+          />
+          {#if form.memberPricelistId}
+            <div class="mt-3 rounded-md border border-violet-100 bg-violet-50 px-3 py-2 text-xs text-violet-800">
+              <strong>Khusus member.</strong> Promo hanya muncul di kasir saat pelanggan dipilih dan daftar harga-nya cocok.
+            </div>
+          {/if}
+        </Card>
+      {/if}
 
       <Card>
         <h2 class="mb-3 flex items-center gap-2 text-sm font-semibold tracking-wide text-slate-500 uppercase">

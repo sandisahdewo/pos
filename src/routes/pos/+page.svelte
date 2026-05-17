@@ -291,9 +291,15 @@
     })
   );
 
-  // Active promos right now, used to badge product cards.
+  // Active promos right now, used to badge product cards. Member-only promos
+  // are hidden unless the cart's customer is on the matching pricelist.
   const activePromosNow = $derived(
-    promotions.items.filter((p) => isPromoUsable(p, new Date()))
+    promotions.items
+      .filter((p) => isPromoUsable(p, new Date()))
+      .filter((p) => {
+        if (!p.memberPricelistId) return true;
+        return cartCustomer?.pricelistId === p.memberPricelistId;
+      })
   );
 
   function promosForProductCard(product: Product): Promotion[] {
@@ -346,6 +352,7 @@
     suggestCombos(
       {
         lines: linesForPromo,
+        customer: cartCustomer,
         at: new Date(),
         dismissedPromoIds: session.dismissedPromoIds ?? []
       },
@@ -356,6 +363,7 @@
   const bogoSuggestions = $derived<BogoSuggestion[]>(
     suggestBogos({
       lines: linesForPromo,
+      customer: cartCustomer,
       at: new Date(),
       dismissedPromoIds: session.dismissedPromoIds ?? []
     })

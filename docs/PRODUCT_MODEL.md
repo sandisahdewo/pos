@@ -1586,6 +1586,26 @@ Seed example (PRM-006): "Beli 1 Box Cola Gratis 1 Pcs" with `bogoProductId='prd_
 
 **Decision — separate buy/get pools for cross-unit BOGO.** "Beli 1 box gratis 1 pcs" requires BOTH the box and the pcs to be in cart (cashier adds the free pcs line). Discount applies to the pcs line. Without the pcs in cart, the suggestion strip prompts "Tambah 1 pcs untuk gratis 1 pcs".
 
+### Khusus pelanggan / member-only filter (added 2026-05-17)
+
+`memberPricelistId` is now allowed on any promo kind (not just `member-tier`). When set, the promo only applies when the cart's customer is on the matching pricelist. Implemented as a single upstream filter:
+
+```ts
+function customerMatchesMemberFilter(promo, customer?): boolean {
+  if (!promo.memberPricelistId) return true;
+  if (!customer) return false;
+  return customer.pricelistId === promo.memberPricelistId;
+}
+```
+
+This filter runs in `resolvePromos`, `suggestCombos`, `suggestBogos`, and the POS product-card badge derivation. Effect: walk-in carts hide member-only promos entirely (no badge, no suggestion, no apply); promos appear only after a matching customer is picked.
+
+Form: a new "Khusus pelanggan (opsional)" card in the right sidebar of `/promotions/[id]` for `discount` / `combo` / `bogo` kinds (member-tier already uses `memberPricelistId` inline). `/promotions` list shows a `Khusus member` badge next to the name.
+
+Seed PRM-007: "Diskon 15% Minuman Khusus Member" — discount + categoryIds=['cat_1'] + memberPricelistId='pl_wholesale'. Only fires when wholesale-pricelist customer is selected in POS.
+
+**Decision — hide vs. show-with-grayed-out.** Hidden when customer doesn't match. Showing-grayed-out would be more discoverable but adds noise to walk-in carts; hidden keeps the focus on actionable promos. Owner can still see all configured promos in `/promotions`.
+
 ---
 
 That's the master product. If you're picking this up cold, read this doc, then open `src/lib/stores/products.svelte.ts` and `src/lib/components/products/ProductForm.svelte` — those two files plus this doc are 90% of the surface area.

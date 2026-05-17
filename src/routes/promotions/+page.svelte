@@ -195,7 +195,12 @@
         </a>
       {:else if column.key === 'name'}
         <div class="min-w-0">
-          <div class="truncate font-medium text-slate-900">{row.name}</div>
+          <div class="flex items-center gap-1.5">
+            <span class="truncate font-medium text-slate-900">{row.name}</span>
+            {#if row.memberPricelistId && row.kind !== 'member-tier'}
+              <Badge size="sm" variant="info">Khusus member</Badge>
+            {/if}
+          </div>
           {#if row.description}
             <div class="truncate text-xs text-slate-500">{row.description}</div>
           {/if}

@@ -1606,28 +1606,49 @@ Seed PRM-007: "Diskon 15% Minuman Khusus Member" — discount + categoryIds=['ca
 
 **Decision — hide vs. show-with-grayed-out.** Hidden when customer doesn't match. Showing-grayed-out would be more discoverable but adds noise to walk-in carts; hidden keeps the focus on actionable promos. Owner can still see all configured promos in `/promotions`.
 
-### Scope unit filter (added 2026-05-17)
+### Per-product scope (added 2026-05-17, evolved same day)
 
-Discount / BOGO scope can be further narrowed by packaging unit:
+Promotion scope is now keyed per-product, with optional variant + unit constraints embedded per entry:
 
 ```ts
+type ProductScope = {
+  productId: string;
+  variantId?: string;     // when set: line must match this variant
+  unitId?: string;        // when set: line must be in this packaging
+  unitFactor?: number;
+};
 type Promotion = {
   ...,
-  scopeUnitId?: string;        // line must use this unit
-  scopeUnitFactor?: number;    // base units per scope unit
+  productScopes?: ProductScope[];   // replaces former productIds: string[]
+  categoryIds?: string[];           // unchanged — union match
 };
 ```
 
-`matchesScope` evaluates product/category as a union (OR), then applies the unit filter as an additional AND:
+`matchesScope` evaluates productScopes and categoryIds as a union (OR):
 
 ```
-scopeMatch = (no scope set) OR (in productIds) OR (in categoryIds)
-final = scopeMatch AND (unit filter not set, OR line's unitId/factor match)
+match = (no scope set)
+     OR (any productScope: productId match AND optional variant match AND optional unit match)
+     OR (any categoryIds entry matches the line's category)
 ```
 
-Example PRM-008: "Diskon Rp 5.000 Cola per Box" — `productIds=['prd_5']`, `scopeUnitId='unit_2'`, `scopeUnitFactor=6`, `discountUnit='fixed'`, `discountValue=5000`. Buying Cola in pcs unit → no discount. Buying Cola in box (factor 6) → Rp 5.000 off the line.
+Different products in the same promo can have different unit/variant constraints. Example:
 
-**Form constraint — single-product only.** The unit picker in `/promotions/[id]` only appears when scope has exactly one product (and that product has packaging). For multi-product or category scope, the field is hidden because different products have different unit sets. If a saved promo has scopeUnitId but the user later widens the scope, a warning Alert reminds them the unit filter will be ignored.
+```ts
+productScopes: [
+  { productId: 'prd_5', unitId: 'unit_2', unitFactor: 6 },  // Cola only in box
+  { productId: 'prd_3' },                                    // Croissant, any
+  { productId: 'prd_4', variantId: 'var_white' }             // Mug only White variant
+]
+```
+
+`/promotions/[id]` form: each row in the product checklist becomes interactive. Checking a product toggles a `ProductScope` entry. When checked AND the product has variants or packaging, inline variant + unit Selects appear under the row. A small "dibatasi" pill appears in the row when variant/unit is set.
+
+Standalone `scopeUnitId/scopeUnitFactor` fields were removed (data and form). Existing seeds that used them migrated to `productScopes`.
+
+Example PRM-008: "Diskon Rp 5.000 Cola per Box" — `productScopes: [{ productId: 'prd_5', unitId: 'unit_2', unitFactor: 6 }]`. Buy Cola in pcs → no discount. Buy Cola in box → Rp 5.000 off the line.
+
+**Decision — per-row inline vs. global filter.** The earlier global "Hanya untuk unit tertentu" Select only worked when scope was exactly one product. Embedding the constraint inside each scope entry removes that limitation and keeps everything in one list — no separate panel below. Trade-off: schema change (`string[]` → `ProductScope[]`) and the per-row form is more complex, but matches the natural mental model ("for these products, optionally with these constraints").
 
 ---
 

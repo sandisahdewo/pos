@@ -11,6 +11,15 @@ export type ComboItem = {
   quantity: number;      // in unitId (or base if unitId unset)
 };
 
+// Per-product scope entry — each scoped product can carry its own variant
+// and/or unit constraint. Empty variantId/unitId = any.
+export type ProductScope = {
+  productId: string;
+  variantId?: string;
+  unitId?: string;
+  unitFactor?: number;
+};
+
 export type Promotion = {
   id: string;
   code: string;
@@ -41,12 +50,10 @@ export type Promotion = {
   memberPricelistId?: string;
   memberPercentOff?: number;
 
-  // Scope (applies to discount kind primarily). Unit filter narrows further:
-  // when set, line must be in this packaging (e.g., only Cola in box).
-  productIds?: string[];
+  // Scope. productScopes can carry per-product variant + unit constraints;
+  // a line matches if it's in ANY productScope OR ANY categoryIds entry.
+  productScopes?: ProductScope[];
   categoryIds?: string[];
-  scopeUnitId?: string;
-  scopeUnitFactor?: number;
   minimumPurchase?: number;
 
   // Activation window
@@ -165,10 +172,10 @@ function scopeIncludes(
   productId: string,
   productCategoryId: string | undefined
 ): boolean {
-  const hasProd = !!(promo.productIds && promo.productIds.length > 0);
+  const hasProd = !!(promo.productScopes && promo.productScopes.length > 0);
   const hasCat = !!(promo.categoryIds && promo.categoryIds.length > 0);
   if (!hasProd && !hasCat) return false;
-  if (hasProd && promo.productIds!.includes(productId)) return true;
+  if (hasProd && promo.productScopes!.some((s) => s.productId === productId)) return true;
   if (hasCat && productCategoryId && promo.categoryIds!.includes(productCategoryId)) return true;
   return false;
 }
@@ -308,9 +315,7 @@ const seed: Promotion[] = [
     level: 'line',
     discountUnit: 'fixed',
     discountValue: 5000,
-    productIds: ['prd_5'],
-    scopeUnitId: 'unit_2',
-    scopeUnitFactor: 6,
+    productScopes: [{ productId: 'prd_5', unitId: 'unit_2', unitFactor: 6 }],
     status: 'active',
     usageCount: 0,
     description: 'Diskon Rp 5.000 hanya saat Cola dibeli per box (isi 6), tidak berlaku saat dibeli per pcs.',

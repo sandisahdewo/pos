@@ -51,24 +51,29 @@ function customerMatchesMemberFilter(promo: Promotion, customer?: Customer): boo
 }
 
 function matchesScope(promo: Promotion, line: CartLineForPromo): boolean {
-  // Product / category OR-match (union).
-  const hasProductFilter = !!(promo.productIds && promo.productIds.length > 0);
+  const hasProductFilter = !!(promo.productScopes && promo.productScopes.length > 0);
   const hasCategoryFilter = !!(promo.categoryIds && promo.categoryIds.length > 0);
-  let scopeMatch = !hasProductFilter && !hasCategoryFilter;
-  if (hasProductFilter && promo.productIds!.includes(line.productId)) scopeMatch = true;
-  if (!scopeMatch && hasCategoryFilter) {
-    const cat = categoryOf(line.productId);
-    if (cat && promo.categoryIds!.includes(cat)) scopeMatch = true;
-  }
-  if (!scopeMatch) return false;
+  // No filter set → applies to all products.
+  if (!hasProductFilter && !hasCategoryFilter) return true;
 
-  // Unit filter (AND on top): when set, line must use this packaging.
-  if (promo.scopeUnitId !== undefined) {
-    if (line.unitId !== promo.scopeUnitId) return false;
-    if (promo.scopeUnitFactor !== undefined && line.unitFactor !== promo.scopeUnitFactor)
-      return false;
+  // Product scope: line matches if any entry covers it. Each entry can
+  // optionally constrain variant + unit (AND within the entry, OR across).
+  if (hasProductFilter) {
+    for (const scope of promo.productScopes!) {
+      if (scope.productId !== line.productId) continue;
+      if (scope.variantId && (line.variantId ?? '') !== scope.variantId) continue;
+      if (scope.unitId && line.unitId !== scope.unitId) continue;
+      if (scope.unitFactor !== undefined && line.unitFactor !== scope.unitFactor) continue;
+      return true;
+    }
   }
-  return true;
+
+  // Category union (no per-entry variant/unit).
+  if (hasCategoryFilter) {
+    const cat = categoryOf(line.productId);
+    if (cat && promo.categoryIds!.includes(cat)) return true;
+  }
+  return false;
 }
 
 // Match a cart line against optional (variant + unit) filters. unitFactor is

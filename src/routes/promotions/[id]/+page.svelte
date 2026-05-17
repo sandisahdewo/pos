@@ -28,6 +28,7 @@
     promoLevelLabels,
     promoStatusLabels,
     type Promotion,
+    type ProductScope,
     type PromoKind,
     type PromoLevel,
     type PromoStatus,
@@ -98,9 +99,8 @@
     memberPricelistId: string;
     memberPercentOff: number;
 
-    productIds: string[];
+    productScopes: ProductScope[];
     categoryIds: string[];
-    scopeUnitKey: string;       // "unitId|factor" — '' = any unit
     minimumPurchase: number;
 
     startDate: string;
@@ -137,9 +137,8 @@
     memberPricelistId: '',
     memberPercentOff: 5,
 
-    productIds: [],
+    productScopes: [],
     categoryIds: [],
-    scopeUnitKey: '',
     minimumPurchase: 0,
 
     startDate: '',
@@ -180,11 +179,10 @@
           : '',
         memberPricelistId: editing.memberPricelistId ?? '',
         memberPercentOff: editing.memberPercentOff ?? 5,
-        productIds: editing.productIds ? [...editing.productIds] : [],
+        productScopes: editing.productScopes
+          ? editing.productScopes.map((s) => ({ ...s }))
+          : [],
         categoryIds: editing.categoryIds ? [...editing.categoryIds] : [],
-        scopeUnitKey: editing.scopeUnitId
-          ? `${editing.scopeUnitId}|${editing.scopeUnitFactor ?? 1}`
-          : '',
         minimumPurchase: editing.minimumPurchase ?? 0,
         startDate: editing.startDate ?? '',
         endDate: editing.endDate ?? '',
@@ -260,12 +258,52 @@
     }
   }
 
-  function toggleProduct(pid: string) {
-    if (form.productIds.includes(pid)) {
-      form.productIds = form.productIds.filter((x) => x !== pid);
+  function scopeIndexFor(pid: string): number {
+    return form.productScopes.findIndex((s) => s.productId === pid);
+  }
+
+  function isProductScoped(pid: string): boolean {
+    return scopeIndexFor(pid) >= 0;
+  }
+
+  function scopeFor(pid: string): ProductScope | undefined {
+    const idx = scopeIndexFor(pid);
+    return idx >= 0 ? form.productScopes[idx] : undefined;
+  }
+
+  function toggleProductScope(pid: string) {
+    const idx = scopeIndexFor(pid);
+    if (idx >= 0) {
+      form.productScopes = form.productScopes.filter((_, i) => i !== idx);
     } else {
-      form.productIds = [...form.productIds, pid];
+      form.productScopes = [...form.productScopes, { productId: pid }];
     }
+  }
+
+  function updateScopeVariant(pid: string, variantId: string) {
+    const idx = scopeIndexFor(pid);
+    if (idx < 0) return;
+    form.productScopes[idx] = {
+      ...form.productScopes[idx],
+      variantId: variantId || undefined
+    };
+  }
+
+  function updateScopeUnit(pid: string, unitKey: string) {
+    const idx = scopeIndexFor(pid);
+    if (idx < 0) return;
+    const parsed = parseUnitKey(unitKey);
+    form.productScopes[idx] = {
+      ...form.productScopes[idx],
+      unitId: parsed.unitId,
+      unitFactor: parsed.factor
+    };
+  }
+
+  function scopeUnitKeyFor(pid: string): string {
+    const s = scopeFor(pid);
+    if (!s?.unitId) return '';
+    return `${s.unitId}|${s.unitFactor ?? 1}`;
   }
 
   function toggleCategory(cid: string) {
@@ -350,11 +388,9 @@
       kind: form.kind,
       level: form.level,
       status: form.status,
-      productIds: form.productIds.length ? form.productIds : undefined,
+      productScopes: form.productScopes.length ? form.productScopes : undefined,
       categoryIds: form.categoryIds.length ? form.categoryIds : undefined,
       minimumPurchase: form.minimumPurchase > 0 ? form.minimumPurchase : undefined,
-      scopeUnitId: undefined,
-      scopeUnitFactor: undefined,
       startDate: form.startDate || undefined,
       endDate: form.endDate || undefined,
       daysOfWeek: form.daysOfWeek.length ? form.daysOfWeek : undefined,
@@ -365,17 +401,6 @@
     if (form.kind === 'discount') {
       payload.discountUnit = form.discountUnit;
       payload.discountValue = form.discountValue;
-    }
-    // Unit filter only meaningful when scoped to exactly one product. Persist
-    // when the form has a value AND the scope is unambiguous.
-    if (
-      (form.kind === 'discount' || form.kind === 'bogo') &&
-      form.productIds.length === 1 &&
-      form.scopeUnitKey
-    ) {
-      const u = parseUnitKey(form.scopeUnitKey);
-      payload.scopeUnitId = u.unitId;
-      payload.scopeUnitFactor = u.factor;
     }
     if (form.kind === 'combo') {
       payload.comboItems = form.comboItems;
@@ -697,7 +722,7 @@
             Untuk produk / kategori (opsional)
           </h2>
 
-          {@const totalScoped = form.productIds.length + form.categoryIds.length}
+          {@const totalScoped = form.productScopes.length + form.categoryIds.length}
           {#if totalScoped === 0}
             <div class="mb-3 rounded-md border border-sky-100 bg-sky-50 px-3 py-2 text-xs text-sky-800">
               <strong>Saat ini:</strong> berlaku untuk <strong>semua produk</strong>.
@@ -706,23 +731,24 @@
           {:else}
             <div class="mb-3 rounded-md border border-brand-100 bg-brand-50 px-3 py-2 text-xs text-brand-800">
               <strong>Saat ini:</strong> berlaku untuk
-              {#if form.productIds.length > 0}
-                <strong>{form.productIds.length} produk</strong>
+              {#if form.productScopes.length > 0}
+                <strong>{form.productScopes.length} produk</strong>
               {/if}
-              {#if form.productIds.length > 0 && form.categoryIds.length > 0}
+              {#if form.productScopes.length > 0 && form.categoryIds.length > 0}
                 <span class="text-slate-500"> atau </span>
               {/if}
               {#if form.categoryIds.length > 0}
                 <strong>{form.categoryIds.length} kategori</strong>
               {/if}.
-              {#if form.productIds.length > 0 && form.categoryIds.length > 0}
+              {#if form.productScopes.length > 0 && form.categoryIds.length > 0}
                 Produk yang masuk salah satu daftar akan terkena promo.
               {/if}
             </div>
           {/if}
 
           <p class="mb-3 text-xs text-slate-500">
-            Bisa pilih satu saja, dua-duanya, atau biarkan kosong. Tidak wajib mengisi keduanya.
+            Centang produk untuk membatasi promo. Tiap produk bisa dibatasi lebih lanjut ke varian
+            atau unit (mis. hanya saat dibeli per box).
           </p>
 
           <div class="grid gap-3 sm:grid-cols-[1fr_auto_1fr]">
@@ -730,39 +756,76 @@
               <div class="mb-1.5 flex items-center justify-between">
                 <div class="text-sm font-medium text-slate-700">
                   Produk spesifik
-                  {#if form.productIds.length > 0}
+                  {#if form.productScopes.length > 0}
                     <span class="ml-1 rounded-full bg-brand-100 px-1.5 py-0.5 text-[10px] font-semibold text-brand-700">
-                      {form.productIds.length}
+                      {form.productScopes.length}
                     </span>
                   {/if}
                 </div>
-                {#if form.productIds.length > 0}
+                {#if form.productScopes.length > 0}
                   <button
                     type="button"
                     class="text-[11px] text-slate-500 hover:text-slate-800"
-                    onclick={() => (form.productIds = [])}
+                    onclick={() => (form.productScopes = [])}
                   >
                     Kosongkan
                   </button>
                 {/if}
               </div>
-              <div class="max-h-44 overflow-y-auto rounded-md border border-slate-200">
+              <div class="max-h-72 overflow-y-auto rounded-md border border-slate-200">
                 {#each products.items.filter((p) => p.status === 'active') as p (p.id)}
-                  <button
-                    type="button"
-                    class="flex w-full items-center gap-2 border-b border-slate-100 px-3 py-1.5 text-left text-sm last:border-b-0 hover:bg-slate-50 {form.productIds.includes(p.id)
-                      ? 'bg-brand-50/50'
-                      : ''}"
-                    onclick={() => toggleProduct(p.id)}
-                  >
-                    <input
-                      type="checkbox"
-                      class="rounded border-slate-300"
-                      checked={form.productIds.includes(p.id)}
-                      readonly
-                    />
-                    <span class="flex-1 truncate">{p.name}</span>
-                  </button>
+                  {@const checked = isProductScoped(p.id)}
+                  {@const hasVariants = p.variants.length > 0}
+                  {@const hasPackaging = p.units.length > 0}
+                  <div class="border-b border-slate-100 last:border-b-0 {checked ? 'bg-brand-50/40' : ''}">
+                    <button
+                      type="button"
+                      class="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-slate-50"
+                      onclick={() => toggleProductScope(p.id)}
+                    >
+                      <input
+                        type="checkbox"
+                        class="rounded border-slate-300"
+                        {checked}
+                        readonly
+                      />
+                      <span class="flex-1 truncate">{p.name}</span>
+                      {#if checked}
+                        {@const s = scopeFor(p.id)}
+                        {#if s?.unitId || s?.variantId}
+                          <span class="rounded-full bg-brand-100 px-1.5 py-0.5 text-[10px] font-medium text-brand-700">
+                            dibatasi
+                          </span>
+                        {/if}
+                      {/if}
+                    </button>
+                    {#if checked && (hasVariants || hasPackaging)}
+                      <div class="grid gap-2 px-3 pb-2 sm:grid-cols-2">
+                        {#if hasVariants}
+                          <Select
+                            value={scopeFor(p.id)?.variantId ?? ''}
+                            options={variantOptionsFor(p.id)}
+                            onchange={(e) =>
+                              updateScopeVariant(
+                                p.id,
+                                (e.currentTarget as HTMLSelectElement).value
+                              )}
+                          />
+                        {/if}
+                        {#if hasPackaging}
+                          <Select
+                            value={scopeUnitKeyFor(p.id)}
+                            options={unitOptionsFor(p.id)}
+                            onchange={(e) =>
+                              updateScopeUnit(
+                                p.id,
+                                (e.currentTarget as HTMLSelectElement).value
+                              )}
+                          />
+                        {/if}
+                      </div>
+                    {/if}
+                  </div>
                 {/each}
               </div>
             </div>
@@ -791,7 +854,7 @@
                   </button>
                 {/if}
               </div>
-              <div class="max-h-44 overflow-y-auto rounded-md border border-slate-200">
+              <div class="max-h-72 overflow-y-auto rounded-md border border-slate-200">
                 {#each categories.items as c (c.id)}
                   <button
                     type="button"
@@ -812,29 +875,6 @@
               </div>
             </div>
           </div>
-
-          {#if form.productIds.length === 1}
-            {@const onlyProd = products.getById(form.productIds[0])}
-            {#if onlyProd && onlyProd.units.length > 0}
-              <div class="mt-4 rounded-md border border-slate-100 bg-slate-50/40 p-3">
-                <div class="mb-1.5 text-sm font-medium text-slate-700">
-                  Hanya untuk unit tertentu (opsional)
-                </div>
-                <p class="mb-2 text-xs text-slate-500">
-                  Misal: diskon hanya berlaku saat dibeli dalam <strong>box</strong>, bukan satuan
-                  pcs. Kosongkan untuk berlaku di semua unit.
-                </p>
-                <Select
-                  bind:value={form.scopeUnitKey}
-                  options={unitOptionsFor(form.productIds[0])}
-                />
-              </div>
-            {/if}
-          {:else if form.scopeUnitKey}
-            <div class="mt-4 rounded-md border border-amber-100 bg-amber-50/60 px-3 py-2 text-xs text-amber-800">
-              Filter unit hanya bisa dipakai saat lingkup adalah satu produk tunggal. Filter saat ini akan diabaikan.
-            </div>
-          {/if}
 
           {#if form.level === 'order'}
             <div class="mt-4">

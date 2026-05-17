@@ -23,7 +23,8 @@
     PageHeader,
     Select,
     StatCard,
-    Table
+    Table,
+    Tabs
   } from '$lib/components/ui';
   import {
     promotions,
@@ -36,8 +37,55 @@
     type PromoKind,
     type PromoStatus
   } from '$lib/stores/promotions.svelte';
+  import { products, type Product } from '$lib/stores/products.svelte';
+  import { categories, type Category } from '$lib/stores/categories.svelte';
   import { toast } from '$lib/stores/toast.svelte';
   import { formatRupiah } from '$lib/utils/currency';
+
+  let view = $state<'list' | 'attached'>('list');
+
+  // Compute which promos "target" a given product. A promo targets a product if:
+  // - it appears in productScopes
+  // - the product's category appears in categoryIds
+  // - bogoProductId matches
+  // - any combo item matches
+  function promosForProduct(p: Product): Promotion[] {
+    return promotions.items.filter((promo) => {
+      if (promo.productScopes?.some((s) => s.productId === p.id)) return true;
+      if (promo.categoryIds?.includes(p.categoryId)) return true;
+      if (promo.bogoProductId === p.id) return true;
+      if (promo.comboItems?.some((c) => c.productId === p.id)) return true;
+      return false;
+    });
+  }
+
+  function promosForCategory(c: Category): Promotion[] {
+    return promotions.items.filter((promo) => promo.categoryIds?.includes(c.id));
+  }
+
+  const productsWithPromos = $derived(
+    products.items
+      .filter((p) => p.status === 'active')
+      .map((p) => ({ product: p, promos: promosForProduct(p) }))
+      .filter((row) => row.promos.length > 0)
+      .sort((a, b) => b.promos.length - a.promos.length)
+  );
+
+  const categoriesWithPromos = $derived(
+    categories.items
+      .map((c) => ({ category: c, promos: promosForCategory(c) }))
+      .filter((row) => row.promos.length > 0)
+      .sort((a, b) => b.promos.length - a.promos.length)
+  );
+
+  const viewTabs = $derived([
+    { value: 'list', label: 'Daftar Promo', badge: promotions.items.length.toString() },
+    {
+      value: 'attached',
+      label: 'Per Produk & Kategori',
+      badge: (productsWithPromos.length + categoriesWithPromos.length).toString()
+    }
+  ]);
 
   let search = $state('');
   let kindFilter = $state<'' | PromoKind>('');
@@ -186,6 +234,11 @@
   <StatCard label="Total dipakai" value={totalUsage.toString()} icon={Tag} accent="sky" />
 </div>
 
+<div class="mb-3">
+  <Tabs tabs={viewTabs} bind:value={view} />
+</div>
+
+{#if view === 'list'}
 <Card padded={false}>
   <div class="flex flex-wrap items-center gap-2 border-b border-slate-100 px-4 py-3">
     <div class="min-w-[220px] flex-1">
@@ -269,6 +322,112 @@
     {/snippet}
   </Table>
 </Card>
+{:else}
+  <div class="grid gap-4 lg:grid-cols-2">
+    <Card padded={false}>
+      <div class="flex items-center justify-between border-b border-slate-100 px-4 py-3">
+        <h3 class="flex items-center gap-2 text-sm font-semibold text-slate-700">
+          <Package class="h-4 w-4 text-slate-400" />
+          Produk dengan promo
+        </h3>
+        <span class="text-xs text-slate-500">{productsWithPromos.length} produk</span>
+      </div>
+      {#if productsWithPromos.length === 0}
+        <div class="flex flex-col items-center gap-1.5 px-4 py-8 text-center">
+          <Package class="h-7 w-7 text-slate-300" />
+          <p class="text-xs text-slate-500">
+            Belum ada produk yang punya promo. Tambah promo lalu pilih produk di "Untuk produk / kategori".
+          </p>
+        </div>
+      {:else}
+        <ul class="divide-y divide-slate-100">
+          {#each productsWithPromos as row (row.product.id)}
+            <li class="px-4 py-3">
+              <div class="flex items-start justify-between gap-3">
+                <div class="min-w-0">
+                  <div class="truncate text-sm font-medium text-slate-900">
+                    {row.product.name}
+                  </div>
+                  <div class="mt-0.5 text-xs text-slate-500">
+                    {categories.getById(row.product.categoryId)?.name ?? '—'}
+                  </div>
+                </div>
+                <span class="rounded-full bg-brand-100 px-2 py-0.5 text-[10px] font-semibold text-brand-700">
+                  {row.promos.length}
+                </span>
+              </div>
+              <div class="mt-2 flex flex-wrap gap-1.5">
+                {#each row.promos as p (p.id)}
+                  <a
+                    href="/promotions/{p.id}"
+                    title={`${p.name} — ${p.description}`}
+                    class="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-0.5 text-[11px] text-slate-700 hover:border-brand-300 hover:bg-brand-50 hover:text-brand-700"
+                  >
+                    <span class="font-mono text-[10px] text-slate-500">{p.code}</span>
+                    <span class="truncate max-w-[180px]">{p.name}</span>
+                    <Badge variant={promoStatusVariant[p.status]} size="sm" dot>
+                      {promoKindLabels[p.kind]}
+                    </Badge>
+                  </a>
+                {/each}
+              </div>
+            </li>
+          {/each}
+        </ul>
+      {/if}
+    </Card>
+
+    <Card padded={false}>
+      <div class="flex items-center justify-between border-b border-slate-100 px-4 py-3">
+        <h3 class="flex items-center gap-2 text-sm font-semibold text-slate-700">
+          <Tag class="h-4 w-4 text-slate-400" />
+          Kategori dengan promo
+        </h3>
+        <span class="text-xs text-slate-500">{categoriesWithPromos.length} kategori</span>
+      </div>
+      {#if categoriesWithPromos.length === 0}
+        <div class="flex flex-col items-center gap-1.5 px-4 py-8 text-center">
+          <Tag class="h-7 w-7 text-slate-300" />
+          <p class="text-xs text-slate-500">
+            Belum ada kategori yang punya promo. Tambah promo lalu pilih kategori di "Untuk produk / kategori".
+          </p>
+        </div>
+      {:else}
+        <ul class="divide-y divide-slate-100">
+          {#each categoriesWithPromos as row (row.category.id)}
+            <li class="px-4 py-3">
+              <div class="flex items-start justify-between gap-3">
+                <div class="min-w-0">
+                  <div class="truncate text-sm font-medium text-slate-900">
+                    {row.category.name}
+                  </div>
+                </div>
+                <span class="rounded-full bg-brand-100 px-2 py-0.5 text-[10px] font-semibold text-brand-700">
+                  {row.promos.length}
+                </span>
+              </div>
+              <div class="mt-2 flex flex-wrap gap-1.5">
+                {#each row.promos as p (p.id)}
+                  <a
+                    href="/promotions/{p.id}"
+                    title={`${p.name} — ${p.description}`}
+                    class="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-0.5 text-[11px] text-slate-700 hover:border-brand-300 hover:bg-brand-50 hover:text-brand-700"
+                  >
+                    <span class="font-mono text-[10px] text-slate-500">{p.code}</span>
+                    <span class="truncate max-w-[180px]">{p.name}</span>
+                    <Badge variant={promoStatusVariant[p.status]} size="sm" dot>
+                      {promoKindLabels[p.kind]}
+                    </Badge>
+                  </a>
+                {/each}
+              </div>
+            </li>
+          {/each}
+        </ul>
+      {/if}
+    </Card>
+  </div>
+{/if}
 
 <ConfirmDialog
   bind:open={confirmOpen}

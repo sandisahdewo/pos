@@ -51,15 +51,24 @@ function customerMatchesMemberFilter(promo: Promotion, customer?: Customer): boo
 }
 
 function matchesScope(promo: Promotion, line: CartLineForPromo): boolean {
+  // Product / category OR-match (union).
   const hasProductFilter = !!(promo.productIds && promo.productIds.length > 0);
   const hasCategoryFilter = !!(promo.categoryIds && promo.categoryIds.length > 0);
-  if (!hasProductFilter && !hasCategoryFilter) return true;
-  if (hasProductFilter && promo.productIds!.includes(line.productId)) return true;
-  if (hasCategoryFilter) {
+  let scopeMatch = !hasProductFilter && !hasCategoryFilter;
+  if (hasProductFilter && promo.productIds!.includes(line.productId)) scopeMatch = true;
+  if (!scopeMatch && hasCategoryFilter) {
     const cat = categoryOf(line.productId);
-    if (cat && promo.categoryIds!.includes(cat)) return true;
+    if (cat && promo.categoryIds!.includes(cat)) scopeMatch = true;
   }
-  return false;
+  if (!scopeMatch) return false;
+
+  // Unit filter (AND on top): when set, line must use this packaging.
+  if (promo.scopeUnitId !== undefined) {
+    if (line.unitId !== promo.scopeUnitId) return false;
+    if (promo.scopeUnitFactor !== undefined && line.unitFactor !== promo.scopeUnitFactor)
+      return false;
+  }
+  return true;
 }
 
 // Match a cart line against optional (variant + unit) filters. unitFactor is

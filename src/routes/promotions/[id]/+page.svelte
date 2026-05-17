@@ -100,6 +100,7 @@
 
     productIds: string[];
     categoryIds: string[];
+    scopeUnitKey: string;       // "unitId|factor" — '' = any unit
     minimumPurchase: number;
 
     startDate: string;
@@ -138,6 +139,7 @@
 
     productIds: [],
     categoryIds: [],
+    scopeUnitKey: '',
     minimumPurchase: 0,
 
     startDate: '',
@@ -180,6 +182,9 @@
         memberPercentOff: editing.memberPercentOff ?? 5,
         productIds: editing.productIds ? [...editing.productIds] : [],
         categoryIds: editing.categoryIds ? [...editing.categoryIds] : [],
+        scopeUnitKey: editing.scopeUnitId
+          ? `${editing.scopeUnitId}|${editing.scopeUnitFactor ?? 1}`
+          : '',
         minimumPurchase: editing.minimumPurchase ?? 0,
         startDate: editing.startDate ?? '',
         endDate: editing.endDate ?? '',
@@ -348,6 +353,8 @@
       productIds: form.productIds.length ? form.productIds : undefined,
       categoryIds: form.categoryIds.length ? form.categoryIds : undefined,
       minimumPurchase: form.minimumPurchase > 0 ? form.minimumPurchase : undefined,
+      scopeUnitId: undefined,
+      scopeUnitFactor: undefined,
       startDate: form.startDate || undefined,
       endDate: form.endDate || undefined,
       daysOfWeek: form.daysOfWeek.length ? form.daysOfWeek : undefined,
@@ -358,6 +365,17 @@
     if (form.kind === 'discount') {
       payload.discountUnit = form.discountUnit;
       payload.discountValue = form.discountValue;
+    }
+    // Unit filter only meaningful when scoped to exactly one product. Persist
+    // when the form has a value AND the scope is unambiguous.
+    if (
+      (form.kind === 'discount' || form.kind === 'bogo') &&
+      form.productIds.length === 1 &&
+      form.scopeUnitKey
+    ) {
+      const u = parseUnitKey(form.scopeUnitKey);
+      payload.scopeUnitId = u.unitId;
+      payload.scopeUnitFactor = u.factor;
     }
     if (form.kind === 'combo') {
       payload.comboItems = form.comboItems;
@@ -794,6 +812,29 @@
               </div>
             </div>
           </div>
+
+          {#if form.productIds.length === 1}
+            {@const onlyProd = products.getById(form.productIds[0])}
+            {#if onlyProd && onlyProd.units.length > 0}
+              <div class="mt-4 rounded-md border border-slate-100 bg-slate-50/40 p-3">
+                <div class="mb-1.5 text-sm font-medium text-slate-700">
+                  Hanya untuk unit tertentu (opsional)
+                </div>
+                <p class="mb-2 text-xs text-slate-500">
+                  Misal: diskon hanya berlaku saat dibeli dalam <strong>box</strong>, bukan satuan
+                  pcs. Kosongkan untuk berlaku di semua unit.
+                </p>
+                <Select
+                  bind:value={form.scopeUnitKey}
+                  options={unitOptionsFor(form.productIds[0])}
+                />
+              </div>
+            {/if}
+          {:else if form.scopeUnitKey}
+            <div class="mt-4 rounded-md border border-amber-100 bg-amber-50/60 px-3 py-2 text-xs text-amber-800">
+              Filter unit hanya bisa dipakai saat lingkup adalah satu produk tunggal. Filter saat ini akan diabaikan.
+            </div>
+          {/if}
 
           {#if form.level === 'order'}
             <div class="mt-4">

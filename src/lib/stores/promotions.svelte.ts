@@ -41,9 +41,12 @@ export type Promotion = {
   memberPricelistId?: string;
   memberPercentOff?: number;
 
-  // Scope (applies to discount kind primarily)
+  // Scope (applies to discount kind primarily). Unit filter narrows further:
+  // when set, line must be in this packaging (e.g., only Cola in box).
   productIds?: string[];
   categoryIds?: string[];
+  scopeUnitId?: string;
+  scopeUnitFactor?: number;
   minimumPurchase?: number;
 
   // Activation window
@@ -295,6 +298,22 @@ const seed: Promotion[] = [
     status: 'active',
     usageCount: 0,
     description: 'Pelanggan dengan daftar harga grosir dapat 15% diskon untuk semua minuman.',
+    notes: ''
+  },
+  {
+    id: 'prm_8',
+    code: 'PRM-008',
+    name: 'Diskon Rp 5.000 Cola per Box',
+    kind: 'discount',
+    level: 'line',
+    discountUnit: 'fixed',
+    discountValue: 5000,
+    productIds: ['prd_5'],
+    scopeUnitId: 'unit_2',
+    scopeUnitFactor: 6,
+    status: 'active',
+    usageCount: 0,
+    description: 'Diskon Rp 5.000 hanya saat Cola dibeli per box (isi 6), tidak berlaku saat dibeli per pcs.',
     notes: ''
   }
 ];

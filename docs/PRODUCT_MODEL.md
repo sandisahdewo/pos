@@ -1606,6 +1606,29 @@ Seed PRM-007: "Diskon 15% Minuman Khusus Member" — discount + categoryIds=['ca
 
 **Decision — hide vs. show-with-grayed-out.** Hidden when customer doesn't match. Showing-grayed-out would be more discoverable but adds noise to walk-in carts; hidden keeps the focus on actionable promos. Owner can still see all configured promos in `/promotions`.
 
+### Scope unit filter (added 2026-05-17)
+
+Discount / BOGO scope can be further narrowed by packaging unit:
+
+```ts
+type Promotion = {
+  ...,
+  scopeUnitId?: string;        // line must use this unit
+  scopeUnitFactor?: number;    // base units per scope unit
+};
+```
+
+`matchesScope` evaluates product/category as a union (OR), then applies the unit filter as an additional AND:
+
+```
+scopeMatch = (no scope set) OR (in productIds) OR (in categoryIds)
+final = scopeMatch AND (unit filter not set, OR line's unitId/factor match)
+```
+
+Example PRM-008: "Diskon Rp 5.000 Cola per Box" — `productIds=['prd_5']`, `scopeUnitId='unit_2'`, `scopeUnitFactor=6`, `discountUnit='fixed'`, `discountValue=5000`. Buying Cola in pcs unit → no discount. Buying Cola in box (factor 6) → Rp 5.000 off the line.
+
+**Form constraint — single-product only.** The unit picker in `/promotions/[id]` only appears when scope has exactly one product (and that product has packaging). For multi-product or category scope, the field is hidden because different products have different unit sets. If a saved promo has scopeUnitId but the user later widens the scope, a warning Alert reminds them the unit filter will be ignored.
+
 ---
 
 That's the master product. If you're picking this up cold, read this doc, then open `src/lib/stores/products.svelte.ts` and `src/lib/components/products/ProductForm.svelte` — those two files plus this doc are 90% of the surface area.

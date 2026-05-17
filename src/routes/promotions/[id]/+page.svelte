@@ -39,7 +39,30 @@
   import { categories } from '$lib/stores/categories.svelte';
   import { pricelists } from '$lib/stores/pricelists.svelte';
   import { units } from '$lib/stores/units.svelte';
+  import { batches } from '$lib/stores/batches.svelte';
   import { toast } from '$lib/stores/toast.svelte';
+
+  function productHasExpirableBatch(productId: string): boolean {
+    return batches.items.some((b) => b.productId === productId && !!b.expiresAt);
+  }
+
+  function categoryHasExpirableBatch(categoryId: string): boolean {
+    return products.items.some(
+      (p) => p.categoryId === categoryId && productHasExpirableBatch(p.id)
+    );
+  }
+
+  const scopeProductList = $derived(
+    products.items
+      .filter((p) => p.status === 'active')
+      .filter((p) => (form.kind === 'expiring-batch' ? productHasExpirableBatch(p.id) : true))
+  );
+
+  const scopeCategoryList = $derived(
+    categories.items.filter((c) =>
+      form.kind === 'expiring-batch' ? categoryHasExpirableBatch(c.id) : true
+    )
+  );
 
   function unitOptionsFor(productId: string) {
     const p = products.getById(productId);
@@ -839,7 +862,13 @@
                 {/if}
               </div>
               <div class="max-h-72 overflow-y-auto rounded-md border border-slate-200">
-                {#each products.items.filter((p) => p.status === 'active') as p (p.id)}
+                {#if form.kind === 'expiring-batch' && scopeProductList.length === 0}
+                  <div class="px-3 py-3 text-center text-xs text-amber-700">
+                    Tidak ada produk dengan batch ber-tanggal kedaluwarsa. Terima PO dengan
+                    tanggal expired untuk mengaktifkan produk di sini, atau pakai filter Kategori.
+                  </div>
+                {/if}
+                {#each scopeProductList as p (p.id)}
                   {@const checked = isProductScoped(p.id)}
                   {@const hasVariants = p.variants.length > 0}
                   {@const hasPackaging = p.units.length > 0}
@@ -921,7 +950,12 @@
                 {/if}
               </div>
               <div class="max-h-72 overflow-y-auto rounded-md border border-slate-200">
-                {#each categories.items as c (c.id)}
+                {#if form.kind === 'expiring-batch' && scopeCategoryList.length === 0}
+                  <div class="px-3 py-3 text-center text-xs text-amber-700">
+                    Tidak ada kategori dengan produk ber-batch expired.
+                  </div>
+                {/if}
+                {#each scopeCategoryList as c (c.id)}
                   <button
                     type="button"
                     class="flex w-full items-center gap-2 border-b border-slate-100 px-3 py-1.5 text-left text-sm last:border-b-0 hover:bg-slate-50 {form.categoryIds.includes(c.id)

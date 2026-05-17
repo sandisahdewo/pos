@@ -1,4 +1,5 @@
 import { products } from '$lib/stores/products.svelte';
+import { batches } from '$lib/stores/batches.svelte';
 import {
   promotions,
   type PromoKind,
@@ -6,6 +7,29 @@ import {
   type Promotion
 } from '$lib/stores/promotions.svelte';
 import type { Customer } from '$lib/stores/customers.svelte';
+
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+// Total base units in expiring batches for a (product, variant?), where
+// "expiring" = expiresAt within `withinDays` of today. Ignores batches with
+// no expiresAt set.
+function expiringStockFor(
+  productId: string,
+  variantId: string | undefined,
+  withinDays: number
+): number {
+  const cutoff = Date.now() + withinDays * MS_PER_DAY;
+  let total = 0;
+  for (const b of batches.items) {
+    if (b.productId !== productId) continue;
+    if ((b.variantId ?? '') !== (variantId ?? '')) continue;
+    if (!b.expiresAt) continue;
+    const t = new Date(b.expiresAt).getTime();
+    if (Number.isNaN(t) || t > cutoff) continue;
+    total += b.qtyRemaining;
+  }
+  return total;
+}
 
 export type CartLineForPromo = {
   id: string;
@@ -350,6 +374,54 @@ export function resolvePromos(ctx: ResolverContext): AppliedPromo[] {
         kind: 'bogo',
         level: 'line',
         affectedLineIds: affectedLines,
+        discountAmount: totalDiscount,
+        description: promo.description || promo.name
+      });
+    }
+  }
+
+  // 2.5. Expiring-batch markdown. For each scope-matching line, compute how
+  //      many base units come from expiring batches; discount per-unit.
+  const expiringPromos = usable.filter((p) => p.kind === 'expiring-batch');
+  for (const promo of expiringPromos) {
+    const threshold = promo.daysToExpiryThreshold ?? 3;
+    const unit = promo.expiryDiscountUnit ?? 'percent';
+    const value = promo.expiryDiscountValue ?? 0;
+    if (value <= 0) continue;
+
+    const affected: string[] = [];
+    let totalDiscount = 0;
+    for (const line of ctx.lines) {
+      const rem = remaining.get(line.id) ?? 0;
+      if (rem <= 0) continue;
+      if (!matchesScope(promo, line)) continue;
+
+      const eligibleBase = expiringStockFor(line.productId, line.variantId, threshold);
+      const claimableBase = Math.min(eligibleBase, rem);
+      if (claimableBase <= 0) continue;
+
+      // Convert claimable base units back to the line's chosen unit.
+      const claimableInLineUnit = claimableBase / line.unitFactor;
+      let amt = 0;
+      if (unit === 'percent') {
+        amt = claimableInLineUnit * line.unitPrice * (value / 100);
+      } else {
+        // Fixed = Rp per chosen-unit of the line. (Owner sets per-pcs, per-box, etc.)
+        amt = claimableInLineUnit * value;
+      }
+      if (amt <= 0) continue;
+      totalDiscount += amt;
+      affected.push(line.id);
+      remaining.set(line.id, Math.max(0, rem - claimableBase));
+    }
+    if (totalDiscount > 0) {
+      applied.push({
+        promoId: promo.id,
+        promoCode: promo.code,
+        promoName: promo.name,
+        kind: 'expiring-batch',
+        level: 'line',
+        affectedLineIds: affected,
         discountAmount: totalDiscount,
         description: promo.description || promo.name
       });

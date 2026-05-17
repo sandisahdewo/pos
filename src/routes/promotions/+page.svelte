@@ -13,6 +13,7 @@
     Package,
     Users
   } from 'lucide-svelte';
+  // CalendarDays reused for expiring-batch icon
   import {
     Badge,
     Button,
@@ -115,6 +116,13 @@
         return `Beli ${p.buyQuantity} gratis ${p.getQuantity}`;
       case 'member-tier':
         return `${p.memberPercentOff ?? 0}% off member`;
+      case 'expiring-batch': {
+        const val =
+          p.expiryDiscountUnit === 'percent'
+            ? `${p.expiryDiscountValue ?? 0}% off`
+            : `−${formatRupiah(p.expiryDiscountValue ?? 0)}/unit`;
+        return `${val} (≤ ${p.daysToExpiryThreshold ?? 0} hari)`;
+      }
     }
   }
 
@@ -128,6 +136,8 @@
         return Gift;
       case 'member-tier':
         return Users;
+      case 'expiring-batch':
+        return CalendarDays;
     }
   }
 

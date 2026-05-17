@@ -1650,6 +1650,40 @@ Example PRM-008: "Diskon Rp 5.000 Cola per Box" — `productScopes: [{ productId
 
 **Decision — per-row inline vs. global filter.** The earlier global "Hanya untuk unit tertentu" Select only worked when scope was exactly one product. Embedding the constraint inside each scope entry removes that limitation and keeps everything in one list — no separate panel below. Trade-off: schema change (`string[]` → `ProductScope[]`) and the per-row form is more complex, but matches the natural mental model ("for these products, optionally with these constraints").
 
+### Expiring-batch markdown (added 2026-05-17)
+
+The **first promo kind that depends on inventory state**, not just cart math. Use case: "Diskon 50% untuk batch yang akan kedaluwarsa dalam ≤ 3 hari".
+
+```ts
+type Promotion = {
+  ...,
+  kind: 'discount' | 'combo' | 'bogo' | 'member-tier' | 'expiring-batch',
+  daysToExpiryThreshold?: number;       // batches expiring within N days = eligible
+  expiryDiscountUnit?: 'percent' | 'fixed';
+  expiryDiscountValue?: number;         // percent (0..100) or Rp per chosen-unit of line
+};
+```
+
+Resolver helper `expiringStockFor(productId, variantId, withinDays)` sums `qtyRemaining` across batches where `expiresAt ≤ today + withinDays`. The expiring-batch pass runs between BOGO and line-level discount:
+
+1. For each cart line matching the promo's scope (`productScopes` / `categoryIds`):
+2. `eligibleBase = expiringStockFor(line.productId, line.variantId, threshold)`
+3. `claimableBase = min(eligibleBase, line.baseQuantity remaining)`
+4. Convert claimableBase back to line's chosen unit, apply per-unit discount (% or Rp)
+5. Push `AppliedPromo` (kind = `expiring-batch`), deduct claimable from `remaining` so subsequent line-level discount doesn't double-apply
+
+**Per-unit math.** If line has 5 Susu and 2 come from expiring batches, the discount applies to those 2 units only (`2 × unitPrice × 50% = discount`). Mixed-pricing per line is correct because FIFO + expiry-first allocation already pulls expiring stock first at charge time; the discount mirrors what's actually being sold.
+
+**Reuses existing scope semantics.** `productScopes` lets the owner write "50% off Susu Murni varian Strawberry, ≤ 3 hari mau expired" (specific product + variant). `categoryIds` lets the owner write "50% off semua Bahan Segar mau expired" (broad).
+
+**Allocation untouched.** Current FIFO + expiry-first batch depletion is already correct for this — expiring batches get sold first, the discount mirrors that. No allocation engine changes needed; the resolver only inspects batch state.
+
+**`/promotions` list** — describeValue shows e.g. `50% off (≤ 3 hari)`; kindIcon uses CalendarDays. shortPromoLabel produces `Exp −50%` for product card badges.
+
+Seed PRM-009: "Diskon 50% Bahan Segar Mau Expired" — kind=`expiring-batch`, `daysToExpiryThreshold=3`, `expiryDiscountUnit='percent'`, `expiryDiscountValue=50`, `categoryIds=['cat_5']`. With seed batches, Telur Ayam (batch_10, expires 2026-05-20) and Daging Sapi Cincang (batch_11, expires 2026-05-15, already past) become eligible based on today's date.
+
+**Decision — depends on inventory state.** Unlike all prior promo kinds (which are pure cart math), expiring-batch reads `batches.items` at resolve time. This couples the promo engine to inventory state, but is necessary — the whole point is that the discount is a function of which physical units are about to expire. Trade-off is the resolver becomes slightly less deterministic from the cart's perspective (the same cart with different batch state yields different discount). Acceptable; this is a feature, not a bug.
+
 ---
 
 That's the master product. If you're picking this up cold, read this doc, then open `src/lib/stores/products.svelte.ts` and `src/lib/components/products/ProductForm.svelte` — those two files plus this doc are 90% of the surface area.

@@ -44,7 +44,7 @@ export type OrderPromoApplication = {
   promoId: string;
   promoCode: string;
   promoName: string;
-  kind: 'discount' | 'combo' | 'bogo' | 'member-tier';
+  kind: 'discount' | 'combo' | 'bogo' | 'member-tier' | 'expiring-batch';
   level: 'line' | 'order';
   affectedLineIds: string[];
   discountAmount: number;

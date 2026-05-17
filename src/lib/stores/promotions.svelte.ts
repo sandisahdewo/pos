@@ -1,4 +1,4 @@
-export type PromoKind = 'discount' | 'combo' | 'bogo' | 'member-tier';
+export type PromoKind = 'discount' | 'combo' | 'bogo' | 'member-tier' | 'expiring-batch';
 export type PromoStatus = 'active' | 'scheduled' | 'expired' | 'archived';
 export type PromoLevel = 'line' | 'order';
 export type DiscountUnit = 'percent' | 'fixed';
@@ -50,6 +50,12 @@ export type Promotion = {
   memberPricelistId?: string;
   memberPercentOff?: number;
 
+  // 'expiring-batch' fields — discount applies to units coming from batches
+  // whose expiresAt is within `daysToExpiryThreshold` of today.
+  daysToExpiryThreshold?: number;
+  expiryDiscountUnit?: DiscountUnit;
+  expiryDiscountValue?: number;
+
   // Scope. productScopes can carry per-product variant + unit constraints;
   // a line matches if it's in ANY productScope OR ANY categoryIds entry.
   productScopes?: ProductScope[];
@@ -78,7 +84,8 @@ export const promoKindLabels: Record<PromoKind, string> = {
   discount: 'Diskon',
   combo: 'Paket combo',
   bogo: 'Beli N gratis M',
-  'member-tier': 'Diskon member'
+  'member-tier': 'Diskon member',
+  'expiring-batch': 'Diskon mau expired'
 };
 
 export const promoStatusLabels: Record<PromoStatus, string> = {
@@ -160,6 +167,7 @@ export function promoTargetsProduct(
       return scopeIncludes(promo, productId, productCategoryId);
     }
     case 'discount':
+    case 'expiring-batch':
       return scopeIncludes(promo, productId, productCategoryId);
     case 'member-tier':
     default:
@@ -197,6 +205,14 @@ export function shortPromoLabel(p: Promotion): string {
       return `${p.buyQuantity ?? 1}+${p.getQuantity ?? 1}`;
     case 'member-tier':
       return `${p.memberPercentOff ?? 0}%`;
+    case 'expiring-batch':
+      if (p.expiryDiscountUnit === 'percent') return `Exp −${p.expiryDiscountValue ?? 0}%`;
+      if (p.expiryDiscountUnit === 'fixed') {
+        const v = p.expiryDiscountValue ?? 0;
+        if (v >= 1000) return `Exp −${Math.round(v / 1000)}k`;
+        return `Exp −${v}`;
+      }
+      return 'Mau exp';
   }
 }
 
@@ -319,6 +335,21 @@ const seed: Promotion[] = [
     status: 'active',
     usageCount: 0,
     description: 'Diskon Rp 5.000 hanya saat Cola dibeli per box (isi 6), tidak berlaku saat dibeli per pcs.',
+    notes: ''
+  },
+  {
+    id: 'prm_9',
+    code: 'PRM-009',
+    name: 'Diskon 50% Bahan Segar Mau Expired',
+    kind: 'expiring-batch',
+    level: 'line',
+    daysToExpiryThreshold: 3,
+    expiryDiscountUnit: 'percent',
+    expiryDiscountValue: 50,
+    categoryIds: ['cat_5'],
+    status: 'active',
+    usageCount: 0,
+    description: 'Diskon 50% otomatis untuk unit yang berasal dari batch Bahan Segar yang akan kedaluwarsa dalam 3 hari.',
     notes: ''
   }
 ];

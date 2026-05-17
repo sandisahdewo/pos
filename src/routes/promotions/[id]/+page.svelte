@@ -99,6 +99,10 @@
     memberPricelistId: string;
     memberPercentOff: number;
 
+    daysToExpiryThreshold: number;
+    expiryDiscountUnit: DiscountUnit;
+    expiryDiscountValue: number;
+
     productScopes: ProductScope[];
     categoryIds: string[];
     minimumPurchase: number;
@@ -136,6 +140,10 @@
 
     memberPricelistId: '',
     memberPercentOff: 5,
+
+    daysToExpiryThreshold: 3,
+    expiryDiscountUnit: 'percent',
+    expiryDiscountValue: 50,
 
     productScopes: [],
     categoryIds: [],
@@ -179,6 +187,9 @@
           : '',
         memberPricelistId: editing.memberPricelistId ?? '',
         memberPercentOff: editing.memberPercentOff ?? 5,
+        daysToExpiryThreshold: editing.daysToExpiryThreshold ?? 3,
+        expiryDiscountUnit: editing.expiryDiscountUnit ?? 'percent',
+        expiryDiscountValue: editing.expiryDiscountValue ?? 50,
         productScopes: editing.productScopes
           ? editing.productScopes.map((s) => ({ ...s }))
           : [],
@@ -200,7 +211,7 @@
   $effect(() => {
     if (form.kind === 'member-tier') {
       form.level = 'order';
-    } else if (form.kind === 'combo' || form.kind === 'bogo') {
+    } else if (form.kind === 'combo' || form.kind === 'bogo' || form.kind === 'expiring-batch') {
       form.level = 'line';
     }
   });
@@ -209,7 +220,8 @@
     { value: 'discount', label: promoKindLabels.discount },
     { value: 'combo', label: promoKindLabels.combo },
     { value: 'bogo', label: promoKindLabels.bogo },
-    { value: 'member-tier', label: promoKindLabels['member-tier'] }
+    { value: 'member-tier', label: promoKindLabels['member-tier'] },
+    { value: 'expiring-batch', label: promoKindLabels['expiring-batch'] }
   ];
 
   const levelOptions = [
@@ -369,6 +381,14 @@
       if (form.memberPercentOff <= 0 || form.memberPercentOff > 100)
         next.memberPercentOff = 'Persentase harus antara 1 dan 100.';
     }
+    if (form.kind === 'expiring-batch') {
+      if (form.daysToExpiryThreshold <= 0)
+        next.daysToExpiryThreshold = 'Ambang hari harus > 0.';
+      if (form.expiryDiscountValue <= 0)
+        next.expiryDiscountValue = 'Nilai diskon harus > 0.';
+      if (form.expiryDiscountUnit === 'percent' && form.expiryDiscountValue > 100)
+        next.expiryDiscountValue = 'Persentase tidak boleh lebih dari 100.';
+    }
 
     if (form.startDate && form.endDate && form.endDate < form.startDate)
       next.endDate = 'Tanggal selesai tidak boleh sebelum tanggal mulai.';
@@ -424,6 +444,11 @@
     } else {
       // Optional "khusus pelanggan" filter on any other kind.
       payload.memberPricelistId = form.memberPricelistId || undefined;
+    }
+    if (form.kind === 'expiring-batch') {
+      payload.daysToExpiryThreshold = form.daysToExpiryThreshold;
+      payload.expiryDiscountUnit = form.expiryDiscountUnit;
+      payload.expiryDiscountValue = form.expiryDiscountValue;
     }
     return payload;
   }
@@ -713,10 +738,51 @@
               </Input>
             </div>
           </div>
+        {:else if form.kind === 'expiring-batch'}
+          <div class="mt-4 rounded-lg border border-slate-200 p-3 space-y-3">
+            <div class="grid gap-3 sm:grid-cols-3">
+              <Input
+                label="Ambang hari sebelum expired"
+                type="number"
+                min="1"
+                step="1"
+                bind:value={form.daysToExpiryThreshold}
+                error={errors.daysToExpiryThreshold}
+                hint="Batch dengan expiry ≤ N hari dari sekarang akan dianggap mau expired."
+              />
+              <Select
+                label="Unit diskon"
+                bind:value={form.expiryDiscountUnit}
+                options={discountUnitOptions}
+              />
+              {#if form.expiryDiscountUnit === 'percent'}
+                <Input
+                  label="Persentase"
+                  type="number"
+                  min="0"
+                  max="100"
+                  step="1"
+                  bind:value={form.expiryDiscountValue}
+                  error={errors.expiryDiscountValue}
+                >
+                  {#snippet trailing()}<Percent class="h-4 w-4" />{/snippet}
+                </Input>
+              {:else}
+                <MoneyInput
+                  label="Diskon per unit"
+                  bind:value={form.expiryDiscountValue}
+                  error={errors.expiryDiscountValue}
+                />
+              {/if}
+            </div>
+            <div class="rounded-md border border-amber-100 bg-amber-50/60 px-3 py-2 text-xs text-amber-800">
+              Diskon otomatis berlaku untuk unit yang berasal dari batch mau expired (FIFO + expiry-first sudah mengarahkan ke batch tersebut lebih dulu). Atur produk/kategori di bawah; jika kosong berlaku untuk semua.
+            </div>
+          </div>
         {/if}
       </Card>
 
-      {#if form.kind === 'discount' || form.kind === 'bogo'}
+      {#if form.kind === 'discount' || form.kind === 'bogo' || form.kind === 'expiring-batch'}
         <Card>
           <h2 class="mb-2 text-sm font-semibold tracking-wide text-slate-500 uppercase">
             Untuk produk / kategori (opsional)

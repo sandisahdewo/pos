@@ -39,10 +39,99 @@
   } from '$lib/stores/promotions.svelte';
   import { products, type Product } from '$lib/stores/products.svelte';
   import { categories, type Category } from '$lib/stores/categories.svelte';
+  import { orders } from '$lib/stores/orders.svelte';
   import { toast } from '$lib/stores/toast.svelte';
   import { formatRupiah } from '$lib/utils/currency';
 
-  let view = $state<'list' | 'attached'>('list');
+  let view = $state<'list' | 'attached' | 'analytics'>('list');
+
+  type PromoStats = {
+    promoId: string;
+    promo: Promotion;
+    uses: number;
+    totalDiscount: number;
+    avgDiscount: number;
+    uniqueCustomers: number;
+    lastUsedAt?: string;
+    firstUsedAt?: string;
+  };
+
+  const promoStats = $derived.by<PromoStats[]>(() => {
+    const map = new Map<string, { uses: number; total: number; customers: Set<string>; first?: string; last?: string }>();
+    for (const o of orders.items) {
+      if (o.status === 'cancelled') continue;
+      if (!o.appliedPromos || o.appliedPromos.length === 0) continue;
+      for (const ap of o.appliedPromos) {
+        let entry = map.get(ap.promoId);
+        if (!entry) {
+          entry = { uses: 0, total: 0, customers: new Set<string>() };
+          map.set(ap.promoId, entry);
+        }
+        entry.uses += 1;
+        entry.total += ap.discountAmount;
+        if (o.customerId) entry.customers.add(o.customerId);
+        if (!entry.first || o.createdAt < entry.first) entry.first = o.createdAt;
+        if (!entry.last || o.createdAt > entry.last) entry.last = o.createdAt;
+      }
+    }
+    return promotions.items.map((p) => {
+      const e = map.get(p.id);
+      const uses = e?.uses ?? 0;
+      const total = e?.total ?? 0;
+      return {
+        promoId: p.id,
+        promo: p,
+        uses,
+        totalDiscount: total,
+        avgDiscount: uses > 0 ? total / uses : 0,
+        uniqueCustomers: e?.customers.size ?? 0,
+        firstUsedAt: e?.first,
+        lastUsedAt: e?.last
+      };
+    });
+  });
+
+  const totalUses = $derived(promoStats.reduce((s, r) => s + r.uses, 0));
+  const totalDiscountGiven = $derived(promoStats.reduce((s, r) => s + r.totalDiscount, 0));
+  const topPromo = $derived(
+    promoStats.slice().sort((a, b) => b.totalDiscount - a.totalDiscount)[0]
+  );
+  const unusedPromoCount = $derived(promoStats.filter((r) => r.uses === 0).length);
+
+  let analyticsSort = $state<'discount' | 'uses' | 'last' | 'avg'>('discount');
+
+  const sortOptions: { v: 'discount' | 'uses' | 'avg' | 'last'; l: string }[] = [
+    { v: 'discount', l: 'Diskon terbanyak' },
+    { v: 'uses', l: 'Paling sering dipakai' },
+    { v: 'avg', l: 'Rata-rata diskon' },
+    { v: 'last', l: 'Terakhir dipakai' }
+  ];
+
+  const sortedStats = $derived.by(() => {
+    const arr = promoStats.slice();
+    switch (analyticsSort) {
+      case 'discount':
+        return arr.sort((a, b) => b.totalDiscount - a.totalDiscount);
+      case 'uses':
+        return arr.sort((a, b) => b.uses - a.uses);
+      case 'avg':
+        return arr.sort((a, b) => b.avgDiscount - a.avgDiscount);
+      case 'last':
+        return arr.sort((a, b) => (b.lastUsedAt ?? '').localeCompare(a.lastUsedAt ?? ''));
+    }
+  });
+
+  function fmtRelativeDate(iso?: string): string {
+    if (!iso) return '—';
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return iso;
+    const diffMs = Date.now() - d.getTime();
+    const diffDays = Math.floor(diffMs / (24 * 60 * 60 * 1000));
+    if (diffDays === 0) return 'Hari ini';
+    if (diffDays === 1) return 'Kemarin';
+    if (diffDays < 7) return `${diffDays} hari lalu`;
+    return d.toLocaleDateString('id-ID', { day: '2-digit', month: 'short' });
+  }
 
   // Compute which promos "target" a given product. A promo targets a product if:
   // - it appears in productScopes
@@ -84,7 +173,8 @@
       value: 'attached',
       label: 'Per Produk & Kategori',
       badge: (productsWithPromos.length + categoriesWithPromos.length).toString()
-    }
+    },
+    { value: 'analytics', label: 'Performa', badge: totalUses.toString() }
   ]);
 
   let search = $state('');
@@ -322,7 +412,7 @@
     {/snippet}
   </Table>
 </Card>
-{:else}
+{:else if view === 'attached'}
   <div class="grid gap-4 lg:grid-cols-2">
     <Card padded={false}>
       <div class="flex items-center justify-between border-b border-slate-100 px-4 py-3">
@@ -427,6 +517,99 @@
       {/if}
     </Card>
   </div>
+{:else if view === 'analytics'}
+  <div class="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+    <StatCard label="Total dipakai" value={totalUses.toString()} icon={Tag} accent="brand" />
+    <StatCard
+      label="Total diskon diberikan"
+      value={formatRupiah(totalDiscountGiven)}
+      icon={BadgePercent}
+      accent="emerald"
+    />
+    <StatCard
+      label="Top performer"
+      value={topPromo && topPromo.uses > 0 ? topPromo.promo.code : '—'}
+      icon={Sparkles}
+      accent="sky"
+    />
+    <StatCard
+      label="Belum pernah dipakai"
+      value={unusedPromoCount.toString()}
+      icon={CalendarDays}
+      accent={unusedPromoCount > 0 ? 'amber' : 'brand'}
+    />
+  </div>
+
+  <Card padded={false}>
+    <div class="flex flex-wrap items-center gap-2 border-b border-slate-100 px-4 py-3">
+      <div class="text-xs font-medium text-slate-500">Urutkan:</div>
+      {#each sortOptions as opt (opt.v)}
+        <button
+          type="button"
+          class="rounded-md px-2.5 py-1 text-xs font-medium {analyticsSort === opt.v
+            ? 'bg-brand-50 text-brand-700'
+            : 'text-slate-600 hover:bg-slate-100'}"
+          onclick={() => (analyticsSort = opt.v)}
+        >
+          {opt.l}
+        </button>
+      {/each}
+    </div>
+
+    {#if sortedStats.length === 0}
+      <div class="flex flex-col items-center gap-2 py-10 text-center">
+        <Sparkles class="h-7 w-7 text-slate-300" />
+        <p class="text-sm text-slate-500">Belum ada data analitik.</p>
+      </div>
+    {:else}
+      <ul class="divide-y divide-slate-100">
+        {#each sortedStats as row (row.promoId)}
+          {@const used = row.uses > 0}
+          <li class="px-4 py-3 {used ? '' : 'opacity-60'}">
+            <div class="flex flex-wrap items-start justify-between gap-3">
+              <div class="min-w-0 flex-1">
+                <div class="flex items-center gap-2">
+                  <a
+                    href="/promotions/{row.promo.id}"
+                    class="font-mono text-xs text-slate-500 hover:text-brand-700"
+                  >
+                    {row.promo.code}
+                  </a>
+                  <a
+                    href="/promotions/{row.promo.id}"
+                    class="truncate font-medium text-slate-900 hover:text-brand-700 hover:underline"
+                  >
+                    {row.promo.name}
+                  </a>
+                  <Badge size="sm" variant={promoStatusVariant[row.promo.status]} dot>
+                    {promoKindLabels[row.promo.kind]}
+                  </Badge>
+                </div>
+                <div class="mt-0.5 flex flex-wrap gap-x-3 gap-y-1 text-xs text-slate-500">
+                  <span><span class="text-slate-400">Dipakai:</span> <span class="font-medium text-slate-700">{row.uses}×</span></span>
+                  <span><span class="text-slate-400">Pelanggan unik:</span> <span class="font-medium text-slate-700">{row.uniqueCustomers}</span></span>
+                  <span><span class="text-slate-400">Pertama:</span> {fmtRelativeDate(row.firstUsedAt)}</span>
+                  <span><span class="text-slate-400">Terakhir:</span> {fmtRelativeDate(row.lastUsedAt)}</span>
+                </div>
+              </div>
+              <div class="text-right">
+                <div class="text-base font-semibold text-emerald-700">
+                  −{formatRupiah(row.totalDiscount)}
+                </div>
+                {#if used}
+                  <div class="text-[11px] text-slate-500">
+                    Rata-rata {formatRupiah(row.avgDiscount)}/transaksi
+                  </div>
+                {:else}
+                  <div class="text-[11px] text-slate-400">belum ada transaksi</div>
+                {/if}
+              </div>
+            </div>
+          </li>
+        {/each}
+      </ul>
+    {/if}
+  </Card>
 {/if}
 
 <ConfirmDialog

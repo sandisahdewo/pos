@@ -17,7 +17,8 @@
     Layers,
     Camera,
     X as XIcon,
-    Activity
+    Activity,
+    Factory
   } from 'lucide-svelte';
   import { goto } from '$app/navigation';
   import {
@@ -221,6 +222,22 @@
       : `${s.count} batch kedaluwarsa ≤ ${s.minDays} hari`;
   }
 
+  // Real produced-batch stock for a composite product (across all variants and
+  // batches). Used by the row UI to distinguish "from production" from
+  // "derived from component availability".
+  function compositeBatchStock(p: Product): number {
+    if (p.kind !== 'composite') return 0;
+    let n = 0;
+    if (p.variants.length > 0) {
+      for (const v of p.variants) {
+        n += batches.forStock(p.id, v.id).reduce((s, b) => s + b.qtyRemaining, 0);
+      }
+    } else {
+      n += batches.forStock(p.id).reduce((s, b) => s + b.qtyRemaining, 0);
+    }
+    return n;
+  }
+
   // For each packaging defined on a product, compute how many *whole* packagings
   // the current base-unit stock fills, plus the leftover in base units.
   // Used to spell out conversions on each inventory row.
@@ -249,7 +266,7 @@
       key: 'id' as const,
       label: '',
       align: 'right' as const,
-      width: locationsOn ? (auditOn ? '300px' : '260px') : auditOn ? '240px' : '200px'
+      width: locationsOn ? (auditOn ? '332px' : '292px') : auditOn ? '272px' : '232px'
     }
   ]);
 
@@ -718,12 +735,14 @@
         {/if}
       {:else if column.key === 'stock'}
         {@const total = totalStock(row)}
-        {@const breakdown = isComposite(row) ? null : stockBreakdown(row.id)}
+        {@const breakdown = row.kind === 'composite' ? null : stockBreakdown(row.id)}
         {@const u = unitFor(row.unitId)}
         {@const packs = packagingBreakdown(row)}
         {@const expSoon = expiringSoonSummary(row)}
         {@const runway = daysOfSupply(row.id, undefined, 30)}
         {@const band = runwayBandFor(runway)}
+        {@const realCompositeStock =
+          row.kind === 'composite' ? compositeBatchStock(row) : 0}
         <div class="text-right">
           <div title="Total stok dalam satuan dasar">
             <span class="text-base font-semibold text-slate-900">{total}</span>
@@ -731,6 +750,21 @@
               {u?.name ?? u?.code ?? ''}
             </span>
           </div>
+          {#if row.kind === 'composite'}
+            <div class="mt-1 flex items-center justify-end gap-1.5 text-[10px]">
+              {#if realCompositeStock > 0}
+                <span class="inline-flex items-center gap-1 rounded bg-emerald-50 px-1.5 py-0.5 font-semibold text-emerald-700">
+                  <Factory class="h-2.5 w-2.5" />
+                  {realCompositeStock} dari produksi
+                </span>
+              {/if}
+              {#if total > realCompositeStock}
+                <span class="inline-flex items-center gap-1 rounded bg-sky-50 px-1.5 py-0.5 font-semibold text-sky-700">
+                  {total - realCompositeStock} dari bahan
+                </span>
+              {/if}
+            </div>
+          {/if}
 
           {#if packs.length > 0}
             <div class="mt-1.5">
@@ -819,7 +853,23 @@
         <Badge variant={sb.variant} size="sm">{sb.label}</Badge>
       {:else if column.key === 'id'}
         <div class="flex items-center justify-end gap-1.5">
-          {#if !isComposite(row)}
+          {#if row.kind === 'composite'}
+            <Button size="sm" variant="outline" href="/production/new?productId={row.id}">
+              <Factory class="h-3.5 w-3.5" />
+              Produksi
+            </Button>
+            {#if locationsOn}
+              <Button
+                size="sm"
+                variant="outline"
+                onclick={() => openMove(row)}
+                disabled={totalStock(row) === 0}
+              >
+                <ArrowLeftRight class="h-3.5 w-3.5" />
+                Pindah
+              </Button>
+            {/if}
+          {:else}
             <Button size="sm" variant="outline" onclick={() => openAdjust(row)}>
               <SlidersHorizontal class="h-3.5 w-3.5" />
               Atur
@@ -836,6 +886,14 @@
               </Button>
             {/if}
           {/if}
+          <a
+            href="/inventory/{row.id}/label"
+            class="rounded-md p-1.5 text-slate-500 hover:bg-brand-50 hover:text-brand-700"
+            aria-label="Cetak label rak"
+            title="Cetak label rak"
+          >
+            <Printer class="h-4 w-4" />
+          </a>
           <button
             type="button"
             class="rounded-md p-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-700"

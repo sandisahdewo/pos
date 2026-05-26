@@ -1,5 +1,7 @@
 import { orders, type Order, type PaymentMethod } from '$lib/stores/orders.svelte';
 import { products } from '$lib/stores/products.svelte';
+import { categories } from '$lib/stores/categories.svelte';
+import { units } from '$lib/stores/units.svelte';
 
 export type SalesPeriod = {
   startISO: string;  // inclusive YYYY-MM-DD
@@ -188,6 +190,116 @@ export function topProducts(p: SalesPeriod, limit = 10): ProductBucket[] {
   return Array.from(map.values())
     .sort((a, b) => b.revenue - a.revenue)
     .slice(0, limit);
+}
+
+export type ProfitByProductBucket = {
+  productId: string;
+  productName: string;
+  categoryId: string;
+  categoryName: string;
+  qtyBase: number;
+  unitCode: string;
+  orderLineCount: number;     // number of order lines that touched this product
+  revenue: number;
+  cogs: number;
+  profit: number;
+  marginPct: number;          // (profit / revenue) × 100
+  unitsRevenue: number;       // revenue per base unit (avg sale)
+  unitsCogs: number;          // COGS per base unit (avg cost)
+  unitsProfit: number;        // profit per base unit
+};
+
+export type ProfitByCategoryBucket = {
+  categoryId: string;
+  categoryName: string;
+  productCount: number;       // distinct products that contributed
+  qtyBase: number;
+  revenue: number;
+  cogs: number;
+  profit: number;
+  marginPct: number;
+};
+
+// Aggregates revenue + actual COGS (from `batchAllocations` FIFO snapshots) per
+// product in the given period. Cancelled orders are excluded (via `ordersIn`).
+// COGS is honest — it reflects the unit costs actually paid for the units sold,
+// not whatever `product.cost` says today.
+export function profitByProduct(p: SalesPeriod): ProfitByProductBucket[] {
+  const map = new Map<string, ProfitByProductBucket>();
+  for (const o of ordersIn(p)) {
+    for (const line of o.lines) {
+      let bucket = map.get(line.productId);
+      if (!bucket) {
+        const prod = products.getById(line.productId);
+        const cat = prod ? categories.getById(prod.categoryId) : undefined;
+        const unitCode = prod ? units.getById(prod.unitId)?.code ?? '' : line.unitCode;
+        bucket = {
+          productId: line.productId,
+          productName: prod?.name ?? line.productName,
+          categoryId: prod?.categoryId ?? '',
+          categoryName: cat?.name ?? '—',
+          qtyBase: 0,
+          unitCode,
+          orderLineCount: 0,
+          revenue: 0,
+          cogs: 0,
+          profit: 0,
+          marginPct: 0,
+          unitsRevenue: 0,
+          unitsCogs: 0,
+          unitsProfit: 0
+        };
+        map.set(line.productId, bucket);
+      }
+      bucket.qtyBase += line.quantity * line.unitFactor;
+      bucket.orderLineCount += 1;
+      bucket.revenue += line.lineTotal;
+      for (const alloc of line.batchAllocations) {
+        bucket.cogs += alloc.qtyTaken * alloc.unitCost;
+      }
+    }
+  }
+  for (const b of map.values()) {
+    b.profit = b.revenue - b.cogs;
+    b.marginPct = b.revenue > 0 ? (b.profit / b.revenue) * 100 : 0;
+    if (b.qtyBase > 0) {
+      b.unitsRevenue = b.revenue / b.qtyBase;
+      b.unitsCogs = b.cogs / b.qtyBase;
+      b.unitsProfit = b.profit / b.qtyBase;
+    }
+  }
+  return Array.from(map.values()).sort((a, b) => b.profit - a.profit);
+}
+
+// Aggregates the per-product buckets up to category level.
+export function profitByCategory(p: SalesPeriod): ProfitByCategoryBucket[] {
+  const products = profitByProduct(p);
+  const map = new Map<string, ProfitByCategoryBucket>();
+  for (const pb of products) {
+    let bucket = map.get(pb.categoryId);
+    if (!bucket) {
+      bucket = {
+        categoryId: pb.categoryId,
+        categoryName: pb.categoryName,
+        productCount: 0,
+        qtyBase: 0,
+        revenue: 0,
+        cogs: 0,
+        profit: 0,
+        marginPct: 0
+      };
+      map.set(pb.categoryId, bucket);
+    }
+    bucket.productCount += 1;
+    bucket.qtyBase += pb.qtyBase;
+    bucket.revenue += pb.revenue;
+    bucket.cogs += pb.cogs;
+  }
+  for (const c of map.values()) {
+    c.profit = c.revenue - c.cogs;
+    c.marginPct = c.revenue > 0 ? (c.profit / c.revenue) * 100 : 0;
+  }
+  return Array.from(map.values()).sort((a, b) => b.profit - a.profit);
 }
 
 export function cashierBuckets(p: SalesPeriod): CashierBucket[] {

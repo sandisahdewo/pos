@@ -27,11 +27,16 @@
     isAdvanced,
     pricelistEntries,
     priceRange,
+    pricingMode,
+    pricingModeLabels,
     products,
+    type PricingMode,
     type Product,
     type ProductStatus
   } from '$lib/stores/products.svelte';
   import { categories } from '$lib/stores/categories.svelte';
+  import { brands } from '$lib/stores/brands.svelte';
+  import { tags } from '$lib/stores/tags.svelte';
   import { units } from '$lib/stores/units.svelte';
   import { pricelists } from '$lib/stores/pricelists.svelte';
   import { purchaseOrders } from '$lib/stores/purchaseOrders.svelte';
@@ -40,6 +45,7 @@
 
   let search = $state('');
   let categoryFilter = $state('');
+  let brandFilter = $state('');
   let statusFilter = $state<'' | ProductStatus>('');
   let modeFilter = $state<'' | 'simple' | 'advanced'>('');
 
@@ -53,6 +59,11 @@
   const filterCategoryOptions = $derived([
     { value: '', label: 'Semua kategori' },
     ...categoryOptions
+  ]);
+
+  const filterBrandOptions = $derived([
+    { value: '', label: 'Semua brand' },
+    ...brands.active().map((b) => ({ value: b.id, label: b.name }))
   ]);
 
   const filterStatusOptions = [
@@ -69,16 +80,24 @@
 
   const filtered = $derived.by(() => {
     const q = search.trim().toLowerCase();
+    // When filtering by category, include products in any descendant category
+    // too — so picking "Minuman" surfaces "Kopi" and "Kopi › Single Origin".
+    const categoryFilterSet = categoryFilter
+      ? new Set([categoryFilter, ...categories.descendantsOf(categoryFilter).map((c) => c.id)])
+      : null;
     return products.items.filter((p) => {
-      if (categoryFilter && p.categoryId !== categoryFilter) return false;
+      if (categoryFilterSet && !categoryFilterSet.has(p.categoryId)) return false;
+      if (brandFilter && p.brandId !== brandFilter) return false;
       if (statusFilter && p.status !== statusFilter) return false;
       if (modeFilter === 'simple' && isAdvanced(p)) return false;
       if (modeFilter === 'advanced' && !isAdvanced(p)) return false;
       if (!q) return true;
+      const brand = p.brandId ? brands.getById(p.brandId)?.name ?? '' : '';
       const hay = [
         p.name,
         p.sku,
         p.description,
+        brand,
         ...p.variants.map((v) => `${v.name} ${v.sku}`)
       ]
         .join(' ')
@@ -113,6 +132,32 @@
     const ids = pricelistEntries(p);
     ids.delete(pricelists.defaultId());
     return ids.size;
+  }
+
+  function pricingModeStyle(mode: PricingMode): string {
+    switch (mode) {
+      case 'fixed':
+        return 'bg-slate-100 text-slate-700';
+      case 'manual-markup':
+        return 'bg-sky-50 text-sky-700';
+      case 'dynamic-markup':
+        return 'bg-emerald-50 text-emerald-700';
+      case 'mixed':
+        return 'bg-amber-50 text-amber-700';
+    }
+  }
+
+  function pricingModeTitle(mode: PricingMode): string {
+    switch (mode) {
+      case 'fixed':
+        return 'Harga tetap — tidak bergantung pada biaya.';
+      case 'manual-markup':
+        return 'Markup di atas Biaya beli yang diatur manual.';
+      case 'dynamic-markup':
+        return 'Markup di atas biaya batch — otomatis mengikuti PO terbaru.';
+      case 'mixed':
+        return 'Beberapa entry harga tetap, beberapa markup.';
+    }
   }
 
   function askDelete(p: Product) {
@@ -155,6 +200,7 @@
       </Input>
     </div>
     <Select bind:value={categoryFilter} options={filterCategoryOptions} class="w-44" />
+    <Select bind:value={brandFilter} options={filterBrandOptions} class="w-40" />
     <Select bind:value={statusFilter} options={filterStatusOptions} class="w-36" />
     <Select bind:value={modeFilter} options={filterModeOptions} class="w-40" />
   </div>
@@ -206,9 +252,19 @@
                   Konsinyasi
                 </span>
               {/if}
+              {#each row.tags ?? [] as tagName (tagName)}
+                {@const tag = tags.getByName(tagName)}
+                <Badge variant={tag?.color ?? 'neutral'} size="sm">{tagName}</Badge>
+              {/each}
             </div>
             <div class="flex items-center gap-2 text-xs">
               <code class="font-mono text-slate-500">{row.sku}</code>
+              {#if row.brandId}
+                {@const brand = brands.getById(row.brandId)}
+                {#if brand}
+                  <span class="text-slate-500">· {brand.name}</span>
+                {/if}
+              {/if}
               {#if row.units.length > 0}
                 <span class="inline-flex items-center gap-1 text-slate-500">
                   <Layers class="h-3 w-3" />
@@ -237,8 +293,17 @@
       {:else if column.key === 'prices'}
         {@const extras = extraPricelistCount(row)}
         {@const tiered = hasAnyTier(row)}
+        {@const mode = pricingMode(row)}
         <div class="inline-flex items-center justify-end gap-1.5">
           <span class="font-medium text-slate-900">{priceLabel(row)}</span>
+          <span
+            class="inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-medium {pricingModeStyle(
+              mode
+            )}"
+            title={pricingModeTitle(mode)}
+          >
+            {pricingModeLabels[mode]}
+          </span>
           {#if tiered}
             <span
               class="inline-flex items-center gap-0.5 rounded-full bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700"

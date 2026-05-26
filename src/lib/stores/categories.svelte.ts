@@ -9,6 +9,7 @@ export type Category = {
   description: string;
   color: CategoryColor;
   taxRateId: string;
+  parentId?: string; // when set, this is a sub-category — undefined/empty = root
 };
 
 export type CategoryInput = Omit<Category, 'id' | 'slug'> & { slug?: string };
@@ -61,6 +62,33 @@ const seed: Category[] = [
     description: 'Bahan baku perishable: telur, daging, sayur. Wajib pakai pelacakan batch + kedaluwarsa.',
     color: 'success',
     taxRateId: 'tax_exempt'
+  },
+  {
+    id: 'cat_6',
+    name: 'Kopi',
+    slug: 'kopi',
+    description: 'Sub-kategori minuman — kopi panas/dingin.',
+    color: 'info',
+    taxRateId: '',
+    parentId: 'cat_1'
+  },
+  {
+    id: 'cat_7',
+    name: 'Single Origin',
+    slug: 'kopi-single-origin',
+    description: 'Sub-sub-kategori — biji single origin (Sumatra, Toraja, dll.).',
+    color: 'info',
+    taxRateId: '',
+    parentId: 'cat_6'
+  },
+  {
+    id: 'cat_8',
+    name: 'Pastry',
+    slug: 'pastry',
+    description: 'Sub-kategori makanan — croissant, donut, kue.',
+    color: 'warning',
+    taxRateId: '',
+    parentId: 'cat_2'
   }
 ];
 
@@ -96,6 +124,49 @@ class CategoriesStore {
 
   getById(id: string): Category | undefined {
     return this.items.find((c) => c.id === id);
+  }
+
+  // Walk up from this category to root. Order: root first, this last.
+  // Defensive against cycles (caps at 16 hops).
+  path(id: string): Category[] {
+    const out: Category[] = [];
+    let current = this.getById(id);
+    const seen = new Set<string>();
+    while (current && !seen.has(current.id) && out.length < 16) {
+      seen.add(current.id);
+      out.unshift(current);
+      current = current.parentId ? this.getById(current.parentId) : undefined;
+    }
+    return out;
+  }
+
+  // All descendants of this category, recursively. Excludes the input id.
+  descendantsOf(id: string): Category[] {
+    const out: Category[] = [];
+    const stack = [id];
+    while (stack.length > 0) {
+      const next = stack.pop()!;
+      for (const c of this.items) {
+        if (c.parentId === next && !out.find((o) => o.id === c.id)) {
+          out.push(c);
+          stack.push(c.id);
+        }
+      }
+    }
+    return out;
+  }
+
+  // Cycle prevention: is `ancestorId` an ancestor of `descendantId`? Used to
+  // block setting parent to self or to one's own descendant.
+  isAncestorOf(ancestorId: string, descendantId: string): boolean {
+    let current = this.getById(descendantId);
+    const seen = new Set<string>();
+    while (current && !seen.has(current.id)) {
+      seen.add(current.id);
+      if (current.parentId === ancestorId) return true;
+      current = current.parentId ? this.getById(current.parentId) : undefined;
+    }
+    return false;
   }
 }
 

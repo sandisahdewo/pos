@@ -24,3 +24,4 @@ export { default as Table } from './Table.svelte';
 export { default as Tabs } from './Tabs.svelte';
 export { default as Textarea } from './Textarea.svelte';
 export { default as Toggle } from './Toggle.svelte';
+export { default as Tooltip } from './Tooltip.svelte';

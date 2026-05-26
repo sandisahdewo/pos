@@ -3,6 +3,7 @@
     BadgePercent,
     Pencil,
     Plus,
+    Printer,
     Search,
     Tag,
     Trash2,
@@ -240,7 +241,7 @@
     { key: 'window' as const, label: 'Periode', width: '150px' },
     { key: 'usage' as const, label: 'Pakai', align: 'right' as const, width: '80px' },
     { key: 'status' as const, label: 'Status', width: '120px' },
-    { key: 'actions' as const, label: '', align: 'right' as const, width: '90px' }
+    { key: 'actions' as const, label: '', align: 'right' as const, width: '120px' }
   ];
 
   function describeValue(p: Promotion): string {
@@ -382,6 +383,14 @@
         </Badge>
       {:else if column.key === 'actions'}
         <div class="flex justify-end gap-1">
+          <a
+            href="/promotions/{row.id}/label"
+            class="rounded-md p-1.5 text-slate-500 hover:bg-brand-50 hover:text-brand-700"
+            aria-label="Cetak label"
+            title="Cetak label"
+          >
+            <Printer class="h-4 w-4" />
+          </a>
           <a
             href="/promotions/{row.id}"
             class="rounded-md p-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-700"

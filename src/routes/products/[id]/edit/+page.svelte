@@ -10,8 +10,14 @@
   const id = $derived(page.params.id ?? '');
   const product = $derived(id ? products.getById(id) : undefined);
 
-  function save(data: ProductInput) {
-    const updated = products.update(id, data);
+  function save(
+    data: ProductInput,
+    context?: { priceChangeSource?: 'manual' | 'bulk-adjust' | 'system'; priceChangeNotes?: string }
+  ) {
+    const updated = products.update(id, data, {
+      source: context?.priceChangeSource,
+      notes: context?.priceChangeNotes
+    });
     if (!updated) throw new Error(`Product ${id} not found during save.`);
     toast.success('Produk diperbarui', data.name);
     goto('/products');

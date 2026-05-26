@@ -161,6 +161,10 @@
         return 'info';
       case 'return-consignor':
         return 'brand';
+      case 'production-in':
+        return 'success';
+      case 'production-out':
+        return 'warning';
     }
   }
 

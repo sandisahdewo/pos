@@ -1,9 +1,11 @@
 <script lang="ts">
   import type { Snippet } from 'svelte';
   import type { HTMLInputAttributes } from 'svelte/elements';
+  import Tooltip from './Tooltip.svelte';
 
   type Props = Omit<HTMLInputAttributes, 'class'> & {
     label?: string;
+    tooltip?: string;
     hint?: string;
     error?: string;
     leading?: Snippet;
@@ -13,6 +15,7 @@
 
   let {
     label,
+    tooltip,
     hint,
     error,
     leading,
@@ -26,7 +29,12 @@
 
 <div class={klass}>
   {#if label}
-    <label for={id} class="mb-1.5 block text-sm font-medium text-slate-700">{label}</label>
+    <div class="mb-1.5 flex items-center gap-1.5">
+      <label for={id} class="block text-sm font-medium text-slate-700">{label}</label>
+      {#if tooltip}
+        <Tooltip content={tooltip} />
+      {/if}
+    </div>
   {/if}
   <div class="relative">
     {#if leading}

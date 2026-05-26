@@ -1,11 +1,13 @@
 <script lang="ts">
   import { ChevronDown } from 'lucide-svelte';
   import type { HTMLSelectAttributes } from 'svelte/elements';
+  import Tooltip from './Tooltip.svelte';
 
   type Option = { value: string; label: string; disabled?: boolean };
 
   type Props = Omit<HTMLSelectAttributes, 'class'> & {
     label?: string;
+    tooltip?: string;
     hint?: string;
     error?: string;
     options: Option[];
@@ -15,6 +17,7 @@
 
   let {
     label,
+    tooltip,
     hint,
     error,
     options,
@@ -28,7 +31,12 @@
 
 <div class={klass}>
   {#if label}
-    <label for={id} class="mb-1.5 block text-sm font-medium text-slate-700">{label}</label>
+    <div class="mb-1.5 flex items-center gap-1.5">
+      <label for={id} class="block text-sm font-medium text-slate-700">{label}</label>
+      {#if tooltip}
+        <Tooltip content={tooltip} />
+      {/if}
+    </div>
   {/if}
   <div class="relative">
     <select

@@ -195,6 +195,85 @@ const seed: Batch[] = [
     expiresAt: '2026-05-15',
     locationId: 'loc_gudang',
     notes: 'Initial seed — 2 kg.'
+  },
+  // Ayam Mentah (prd_10) — one batch per cut so production runs have stock
+  // to draw from immediately. Expiry set to a few days out; the fried-chicken
+  // production flow will snapshot these costs into the produced batch.
+  {
+    id: 'batch_12',
+    code: 'BATCH-2026-012',
+    productId: 'prd_10',
+    variantId: 'v_chk_paha',
+    ownership: 'owned',
+    supplierId: 'sup_2',
+    unitCost: 12000,
+    qtyReceived: 20,
+    qtyRemaining: 20,
+    receivedAt: '2026-05-21',
+    expiresAt: '2026-05-24',
+    locationId: 'loc_gudang',
+    notes: 'Initial seed — paha ayam mentah.'
+  },
+  {
+    id: 'batch_13',
+    code: 'BATCH-2026-013',
+    productId: 'prd_10',
+    variantId: 'v_chk_dada',
+    ownership: 'owned',
+    supplierId: 'sup_2',
+    unitCost: 15000,
+    qtyReceived: 15,
+    qtyRemaining: 15,
+    receivedAt: '2026-05-21',
+    expiresAt: '2026-05-24',
+    locationId: 'loc_gudang',
+    notes: 'Initial seed — dada ayam mentah.'
+  },
+  {
+    id: 'batch_14',
+    code: 'BATCH-2026-014',
+    productId: 'prd_10',
+    variantId: 'v_chk_sayap',
+    ownership: 'owned',
+    supplierId: 'sup_2',
+    unitCost: 5000,
+    qtyReceived: 30,
+    qtyRemaining: 30,
+    receivedAt: '2026-05-21',
+    expiresAt: '2026-05-24',
+    locationId: 'loc_gudang',
+    notes: 'Initial seed — sayap ayam mentah.'
+  },
+  {
+    id: 'batch_15',
+    code: 'BATCH-2026-015',
+    productId: 'prd_10',
+    variantId: 'v_chk_drum',
+    ownership: 'owned',
+    supplierId: 'sup_2',
+    unitCost: 8000,
+    qtyReceived: 25,
+    qtyRemaining: 25,
+    receivedAt: '2026-05-21',
+    expiresAt: '2026-05-24',
+    locationId: 'loc_gudang',
+    notes: 'Initial seed — drumstick ayam mentah.'
+  },
+  // Newer (more expensive) Latte batch — paired with prd_2's `fifo-current`
+  // markup source to demo dynamic pricing. Sale stays at the batch_2 cost
+  // (12.000) until batch_2 depletes, then snaps to batch_16's 13.000.
+  {
+    id: 'batch_16',
+    code: 'BATCH-2026-016',
+    productId: 'prd_2',
+    ownership: 'owned',
+    supplierId: 'sup_1',
+    unitCost: 13000,
+    qtyReceived: 40,
+    qtyRemaining: 40,
+    receivedAt: '2026-05-18',
+    locationId: 'loc_gudang',
+    notes: 'Initial seed — Latte stok lanjutan harga lebih tinggi.'
   }
 ];
 

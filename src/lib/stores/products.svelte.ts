@@ -2,7 +2,13 @@ import { pricelists } from './pricelists.svelte';
 import { categories, type Category } from './categories.svelte';
 import { taxRates, type TaxRate } from './taxRates.svelte';
 import { suppliers, type Supplier } from './suppliers.svelte';
-import { stockOf } from './batches.svelte';
+import { batches, stockOf } from './batches.svelte';
+import { units as unitsStore } from './units.svelte';
+import {
+  priceChanges,
+  type PriceChangeInput,
+  type PriceChangeSource
+} from './priceChanges.svelte';
 
 export type ProductStatus = 'active' | 'archived';
 
@@ -12,14 +18,83 @@ export const productKindOptions: { value: ProductKind; label: string; descriptio
   {
     value: 'goods',
     label: 'Barang',
-    description: 'Dibeli jadi, dijual apa adanya. Mendukung varian dan satuan kemasan.'
+    description: 'Dibeli dari pemasok, dijual apa adanya. Bisa punya pilihan warna/ukuran atau dijual dalam dus.'
   },
   {
     value: 'composite',
-    label: 'Komposit',
-    description: 'Dibuat atau dirakit dari produk lain (resep / paket).'
+    label: 'Resep / Paket',
+    description: 'Dibuat atau dirakit dari produk lain. Contoh: mie ayam = mie + ayam + saus, atau paket combo.'
   }
 ];
+
+// Cost basis that markup-based pricing reads from. Fixed-price strategies
+// ignore this — they're absolute. Affects markup_pct + markup_amount only.
+//   'manual'       — Product.cost (manual baseline, current behaviour).
+//                    Sale price never moves on its own; operator adjusts it.
+//   'fifo-current' — unitCost of the OLDEST owned batch with stock left
+//                    (the next one FIFO will consume). Sale price snaps to
+//                    the next batch's cost when the current one depletes.
+//   'batch-avg'    — weighted-avg of all owned batches' unitCost. Sale price
+//                    drifts gradually as old/new stock blends.
+// All three fall back to Product.cost when no owned batch exists yet.
+export type MarkupCostSource = 'manual' | 'fifo-current' | 'batch-avg';
+
+export const markupCostSourceOptions: {
+  value: MarkupCostSource;
+  label: string;
+  description: string;
+}[] = [
+  {
+    value: 'manual',
+    label: 'Biaya beli yang saya isi sendiri',
+    description:
+      'Sistem pakai angka di kolom "Biaya beli" di atas. Harga jual hanya berubah kalau saya update angka biayanya.'
+  },
+  {
+    value: 'fifo-current',
+    label: 'Harga beli stok yang sedang dijual',
+    description:
+      'Sistem otomatis pakai harga beli stok lama dulu. Saat stok itu habis, harga jual loncat ke harga beli stok berikutnya. Cocok kalau harga pemasok sering naik-turun.'
+  },
+  {
+    value: 'batch-avg',
+    label: 'Rata-rata harga beli semua stok',
+    description:
+      'Sistem hitung rata-rata harga beli dari semua stok yang masih ada. Harga jual bergeser halus saat stok lama bercampur dengan stok baru.'
+  }
+];
+
+// How a composite reaches the customer:
+//   'flexible' — produced ahead when convenient; if no produced batch is available
+//     at sale, components are deducted on-the-fly. Suits cafe combos, fried chicken
+//     (pre-fry batches that fall back to fresh-make when warmer empties).
+//   'strict'   — must be produced before it can be sold. No component fallback.
+//     Suits hampers, kotak nasi, kits where "fresh-make at till" is nonsensical.
+export type ProductionMode = 'flexible' | 'strict';
+
+export const productionModeOptions: {
+  value: ProductionMode;
+  label: string;
+  description: string;
+}[] = [
+  {
+    value: 'flexible',
+    label: 'Fleksibel',
+    description:
+      'Bisa disiapkan duluan, atau dibuat saat ada pesanan. Kalau stok produksi habis, sistem otomatis hitung dari bahan baku. Cocok untuk gorengan, ayam goreng, menu kafe.'
+  },
+  {
+    value: 'strict',
+    label: 'Wajib disiapkan dulu',
+    description:
+      'Harus dibuat sebelum bisa dijual. Tidak otomatis pakai bahan baku — kalau belum disiapkan, tidak bisa dijual. Cocok untuk hampers, paket gift box, kotak nasi.'
+  }
+];
+
+export const productionModeLabels: Record<ProductionMode, string> = {
+  flexible: 'Fleksibel',
+  strict: 'Wajib disiapkan dulu'
+};
 
 export type PricingKind = 'fixed' | 'markup_amount' | 'markup_pct';
 
@@ -57,7 +132,21 @@ export type CompositeComponent = {
   productId: string;
   variantId?: string;
   quantity: number;
+  // Optional packaging selector. When operator wants to express the recipe in
+  // a non-base unit (e.g., "1 ekor ayam" instead of "8 potong"), pick a
+  // packaging of the component product. Stock math, cost math, and
+  // consumption all multiply by `unitFactor` to convert back to base.
+  // Defaults: unitId = component product's base unit, unitFactor = 1.
+  unitId?: string;
+  unitFactor?: number;
 };
+
+// Resolve the base-unit quantity of a recipe component, honouring the
+// optional packaging selector. Used by cost math, producibility checks, and
+// consumption flows (deductComponents in orders, production runs, etc.).
+export function componentBaseQty(c: CompositeComponent): number {
+  return c.quantity * (c.unitFactor ?? 1);
+}
 
 export type ProductVariant = {
   id: string;
@@ -69,6 +158,8 @@ export type ProductVariant = {
   values: Record<string, string>;
   imageUrl: string;
   components: CompositeComponent[];
+  // When set, overrides the parent composite's productionMode for this variant only.
+  productionMode?: ProductionMode;
 };
 
 export type ProductExtra = {
@@ -90,8 +181,16 @@ export type Product = {
   status: ProductStatus;
   description: string;
   taxRateId?: string;
+  brandId?: string;              // optional FK -> brands store
+  tags?: string[];                // tag names (match against tags store for color/visibility); default []
   suppliers: ProductSupplier[];   // multi-supplier list; at most one isPrimary
   imageUrl: string;
+  // Barcode for the base unit (pcs). For simple products this is the only
+  // place to put a UPC/EAN. For products with packagings, this is the can /
+  // bottle code; dus / karton get pack.barcode instead. For variant products
+  // this is usually empty (variant.barcode is the per-variant code); if set,
+  // it acts as a parent GTIN that auto-picks the first variant on scan.
+  barcode?: string;
   units: ProductPackaging[];
   attributes: ProductAttribute[];
   variants: ProductVariant[];
@@ -99,6 +198,22 @@ export type Product = {
   extras: ProductExtra[];
   requiresBatchLabel?: boolean;   // print a thermal label per received batch (perishables, lot-tracked items)
   requiresExpiration?: boolean;   // capture expiration date on every batch; FIFO walks expiration ASC
+  // Regulatory / warranty info — optional, only used for regulated categories
+  // (kosmetik, makanan, obat) or durable goods (elektronik).
+  bpomNumber?: string;            // nomor izin edar BPOM (mis. "POM NA 18101200123")
+  halalCertNumber?: string;       // nomor sertifikat MUI Halal
+  warrantyMonths?: number;        // masa garansi dalam bulan (untuk elektronik/perabot)
+  // Free-form additional info — operator can put anything here that doesn't fit
+  // a structured field. Used as a per-product key-value bag.
+  metadata?: Record<string, string>;
+  markupCostSource?: MarkupCostSource;  // cost basis for markup_* strategies; default 'manual'
+  // Composite-only. Default 'flexible' (the existing behaviour for any seeded
+  // composite that omits the field). Variants may override per-variant.
+  productionMode?: ProductionMode;
+  // Composite-only. When set, the production modal pre-fills `expiresAt` on the
+  // produced batch as (now + N hours). Pairs with the expiring-batch promo so
+  // warmer-batches that age out get marked down automatically.
+  shelfLifeAfterProductionHours?: number;
 };
 
 // Per-(product, supplier) sourcing config. A product can have multiple supplier
@@ -110,6 +225,7 @@ export type ProductSupplier = {
   unitCost: number;              // this supplier's unit cost (overrides product.cost for PO autofill)
   leadTimeDays?: number;         // override Supplier.leadTimeDays for this product (undefined = use supplier's default)
   supplierSku: string;            // supplier's catalog code / their SKU for this product
+  minOrderQty?: number;          // supplier-side MOQ in base units; PO form warns when qty < this
   notes: string;
 };
 
@@ -126,10 +242,16 @@ export function taxRateFor(product: Product): TaxRate | undefined {
     const own = taxRates.getById(product.taxRateId);
     if (own) return own;
   }
-  const cat: Category | undefined = categories.getById(product.categoryId);
-  if (cat?.taxRateId) {
-    const fromCat = taxRates.getById(cat.taxRateId);
-    if (fromCat) return fromCat;
+  // Walk the category chain from the product's category up to root, returning
+  // the first ancestor that has a taxRateId set. Lets a sub-category inherit
+  // tax from its parent without having to repeat the field.
+  const chain = categories.path(product.categoryId);
+  for (let i = chain.length - 1; i >= 0; i--) {
+    const cat = chain[i];
+    if (cat.taxRateId) {
+      const fromCat = taxRates.getById(cat.taxRateId);
+      if (fromCat) return fromCat;
+    }
   }
   return taxRates.default();
 }
@@ -193,9 +315,9 @@ function componentBaseCost(c: CompositeComponent): number {
   if (!product) return 0;
   if (c.variantId) {
     const v = product.variants.find((vv) => vv.id === c.variantId);
-    if (v) return v.cost;
+    if (v) return effectiveVariantCost(v, product);
   }
-  return product.cost;
+  return effectiveCost(product);
 }
 
 function componentAvailableStock(c: CompositeComponent): number {
@@ -211,43 +333,159 @@ function componentAvailableStock(c: CompositeComponent): number {
 }
 
 function componentsCost(comps: CompositeComponent[]): number {
-  return comps.reduce((sum, c) => sum + c.quantity * componentBaseCost(c), 0);
+  return comps.reduce((sum, c) => sum + componentBaseQty(c) * componentBaseCost(c), 0);
 }
 
 function componentsProducible(comps: CompositeComponent[]): number {
   if (comps.length === 0) return 0;
   if (comps.some((c) => c.quantity <= 0)) return 0;
   return Math.min(
-    ...comps.map((c) => Math.floor(componentAvailableStock(c) / c.quantity))
+    ...comps.map((c) => Math.floor(componentAvailableStock(c) / componentBaseQty(c)))
   );
 }
 
-export function effectiveVariantCost(v: ProductVariant): number {
-  if (v.components.length > 0) return componentsCost(v.components);
-  return v.cost;
+// Resolve cost from the configured source. All sources fall back to the given
+// `manualFallback` when no owned batch is available — that keeps newly-created
+// products usable before the first PO lands, and (importantly) lets the
+// product-edit form preview reflect an unsaved cost edit.
+//
+// Exported so the form can call it with the source picked in the form (which
+// may differ from the saved value), enabling honest preview of sale prices.
+export function costFromSource(
+  productId: string,
+  variantId: string | undefined,
+  source: MarkupCostSource,
+  manualFallback: number
+): number {
+  if (source === 'manual') return manualFallback;
+  // Resolve the owned-batches scope. Mirrors currentCost's variant aggregation:
+  // when variantId is omitted on a variant-bearing product, aggregate across
+  // all variants rather than matching variantId === undefined (which would
+  // find nothing).
+  let ownedBatches;
+  if (variantId !== undefined) {
+    ownedBatches = batches
+      .forStock(productId, variantId)
+      .filter((b) => b.ownership === 'owned');
+  } else {
+    const product = products.getById(productId);
+    if (product && product.variants.length > 0) {
+      ownedBatches = batches
+        .forProduct(productId)
+        .filter((b) => b.ownership === 'owned' && b.qtyRemaining > 0);
+    } else {
+      ownedBatches = batches.forStock(productId).filter((b) => b.ownership === 'owned');
+    }
+  }
+  if (ownedBatches.length === 0) return manualFallback;
+  if (source === 'fifo-current') {
+    // forStock already sorts FIFO; forProduct (variant-aggregate path) only
+    // sorts by receivedAt, so re-sort to honour expiry-first ordering.
+    const fifoSorted = [...ownedBatches].sort((a, b) => {
+      const aExp = a.expiresAt ?? '9999-12-31';
+      const bExp = b.expiresAt ?? '9999-12-31';
+      if (aExp !== bExp) return aExp.localeCompare(bExp);
+      return a.receivedAt.localeCompare(b.receivedAt);
+    });
+    return fifoSorted[0].unitCost;
+  }
+  // batch-avg
+  const totalQty = ownedBatches.reduce((s, b) => s + b.qtyRemaining, 0);
+  if (totalQty <= 0) return manualFallback;
+  return ownedBatches.reduce((s, b) => s + b.qtyRemaining * b.unitCost, 0) / totalQty;
+}
+
+export function effectiveVariantCost(v: ProductVariant, p?: Product): number {
+  // Composite variant — cost from its recipe, each component honoring its own source.
+  if (v.components.length > 0) {
+    const recipeCost = componentsCost(v.components);
+    if (!p) return recipeCost;
+    return costFromSource(
+      p.id,
+      v.id,
+      p.markupCostSource ?? 'manual',
+      recipeCost
+    );
+  }
+  // Goods variant — source decides; fall back to v.cost when no batch yet.
+  if (!p) return v.cost;
+  return costFromSource(p.id, v.id, p.markupCostSource ?? 'manual', v.cost);
+}
+
+// Resolve the active production mode for a (composite, variant?) pair. Variant
+// override wins; falls back to product-level mode; default 'flexible'.
+export function productionModeOf(p: Product, variantId?: string): ProductionMode {
+  if (variantId) {
+    const v = p.variants.find((vv) => vv.id === variantId);
+    if (v?.productionMode) return v.productionMode;
+  }
+  return p.productionMode ?? 'flexible';
+}
+
+// Resolve the recipe for a (composite, variant?) pair. Variant `components`
+// override the product's recipe when non-empty.
+export function recipeOf(p: Product, variantId?: string): CompositeComponent[] {
+  if (variantId) {
+    const v = p.variants.find((vv) => vv.id === variantId);
+    if (v && v.components.length > 0) return v.components;
+  }
+  return p.components;
+}
+
+// Pure component-derived producibility. Exposed for the production-modal
+// planner ("how many can I make right now?") and for the flexible-mode fallback
+// inside producibleStock.
+export function componentsProducibleFor(comps: CompositeComponent[]): number {
+  return componentsProducible(comps);
 }
 
 export function producibleVariantStock(productId: string, v: ProductVariant): number {
-  if (v.components.length > 0) return componentsProducible(v.components);
-  return stockOf(productId, v.id);
+  const p = products.getById(productId);
+  if (!p || p.kind !== 'composite') {
+    // Goods variant — just batch stock.
+    return stockOf(productId, v.id);
+  }
+  // Composite variant: real batch stock first; in flexible mode fall back to
+  // component-derived capacity when no produced stock exists.
+  const real = stockOf(productId, v.id);
+  if (real > 0) return real;
+  const mode = productionModeOf(p, v.id);
+  if (mode === 'strict') return 0;
+  const recipe = v.components.length > 0 ? v.components : p.components;
+  return componentsProducible(recipe);
 }
 
 export function effectiveCost(p: Product): number {
-  if (p.components.length === 0) return p.cost;
-  return componentsCost(p.components);
+  // Composite — recipe-derived cost, then source-aware lookup (so a composite
+  // with produced batches can also track FIFO / batch-avg).
+  if (p.components.length > 0) {
+    const recipeCost = componentsCost(p.components);
+    return costFromSource(p.id, undefined, p.markupCostSource ?? 'manual', recipeCost);
+  }
+  // Goods — source-aware lookup; manual fallback to product.cost.
+  return costFromSource(p.id, undefined, p.markupCostSource ?? 'manual', p.cost);
 }
 
 export function producibleStock(p: Product): number {
-  if (p.components.length === 0) return stockOf(p.id);
-  return componentsProducible(p.components);
+  if (p.kind !== 'composite') return stockOf(p.id);
+  // Composite without variants: real batch stock first; flexible mode falls
+  // back to component-derived capacity. Variant-bearing composites should
+  // route through producibleVariantStock per-variant instead.
+  if (p.variants.length === 0) {
+    const real = stockOf(p.id);
+    if (real > 0) return real;
+    if (productionModeOf(p) === 'strict') return 0;
+    return componentsProducible(p.components);
+  }
+  return p.variants.reduce((s, v) => s + producibleVariantStock(p.id, v), 0);
 }
 
 export type ProductInput = Omit<Product, 'id'>;
 
 export const pricingKindOptions: { value: PricingKind; label: string }[] = [
-  { value: 'fixed', label: 'Fixed price' },
-  { value: 'markup_amount', label: 'Cost + amount' },
-  { value: 'markup_pct', label: 'Markup %' }
+  { value: 'fixed', label: 'Harga tetap' },
+  { value: 'markup_amount', label: 'Biaya + nominal' },
+  { value: 'markup_pct', label: 'Persen untung' }
 ];
 
 export function isPercentKind(kind: PricingKind): boolean {
@@ -470,7 +708,8 @@ const seed: Product[] = [
     cost: 12000,
     prices: [retail({ kind: 'markup_pct', value: 175 })],
     status: 'active',
-    description: 'Whole milk latte with single-origin espresso.',
+    description: 'Whole milk latte — markup follows current FIFO batch cost.',
+    markupCostSource: 'fifo-current',
     suppliers: [
       {
         supplierId: 'sup_1',
@@ -595,6 +834,8 @@ const seed: Product[] = [
     sku: 'BEV-CKA-330',
     name: 'Cola 330mL',
     categoryId: 'cat_1',
+    brandId: 'brand_coca-cola',
+    tags: ['Best Seller', 'Promo'],
     unitId: 'unit_1',
     cost: 3500,
     prices: [
@@ -650,6 +891,7 @@ const seed: Product[] = [
     sku: 'BEV-WTR-500',
     name: 'Spring Water 500mL',
     categoryId: 'cat_1',
+    brandId: 'brand_aqua',
     unitId: 'unit_5',
     cost: 2500,
     prices: [retail({ kind: 'fixed', value: 5000 })],
@@ -777,6 +1019,184 @@ const seed: Product[] = [
     extras: [],
     requiresBatchLabel: true,
     requiresExpiration: true
+  },
+  // === prd_10: Ayam Mentah (goods, variant per cut) ===
+  // Raw side of the fried-chicken flow. Each cut is its own variant with its
+  // own cost, price, and seeded batch stock — production runs draw from these.
+  {
+    id: 'prd_10',
+    kind: 'goods',
+    sku: 'BHN-AYM-001',
+    name: 'Ayam Mentah',
+    categoryId: 'cat_5',
+    unitId: 'unit_1',
+    cost: 10000,
+    prices: [retail({ kind: 'markup_pct', value: 30 })],
+    status: 'active',
+    description: 'Ayam potong segar — bahan baku untuk ayam goreng. Tiap cut adalah varian sendiri.',
+    suppliers: [
+      {
+        supplierId: 'sup_2',
+        isPrimary: true,
+        unitCost: 10000,
+        leadTimeDays: 1,
+        supplierSku: 'RS-AYM',
+        notes: 'Datang chilled tiap pagi.'
+      }
+    ],
+    imageUrl: 'https://picsum.photos/seed/pos-ayam-mentah/240/240',
+    units: [],
+    attributes: [{ id: 'attr_chk_cut', name: 'Cut', values: ['Paha', 'Dada', 'Sayap', 'Drumstick'] }],
+    variants: [
+      {
+        id: 'v_chk_paha',
+        name: 'Paha',
+        sku: 'BHN-AYM-PHA',
+        cost: 12000,
+        prices: [retail({ kind: 'fixed', value: 18000 })],
+        barcode: '',
+        values: { Cut: 'Paha' },
+        imageUrl: '',
+        components: []
+      },
+      {
+        id: 'v_chk_dada',
+        name: 'Dada',
+        sku: 'BHN-AYM-DDA',
+        cost: 15000,
+        prices: [retail({ kind: 'fixed', value: 22000 })],
+        barcode: '',
+        values: { Cut: 'Dada' },
+        imageUrl: '',
+        components: []
+      },
+      {
+        id: 'v_chk_sayap',
+        name: 'Sayap',
+        sku: 'BHN-AYM-SYP',
+        cost: 5000,
+        prices: [retail({ kind: 'fixed', value: 10000 })],
+        barcode: '',
+        values: { Cut: 'Sayap' },
+        imageUrl: '',
+        components: []
+      },
+      {
+        id: 'v_chk_drum',
+        name: 'Drumstick',
+        sku: 'BHN-AYM-DRM',
+        cost: 8000,
+        prices: [retail({ kind: 'fixed', value: 14000 })],
+        barcode: '',
+        values: { Cut: 'Drumstick' },
+        imageUrl: '',
+        components: []
+      }
+    ],
+    components: [],
+    extras: [],
+    requiresBatchLabel: true,
+    requiresExpiration: true
+  },
+  // === prd_11: Ayam Goreng (composite, flexible mode, variant per cut) ===
+  // Fried side. Each variant references the matching raw cut. Mode 'flexible'
+  // means you can pre-fry batches into the warmer and they're preferred at
+  // sale, but if the warmer empties the system falls back to deducting raw
+  // chicken on the fly (the cafe-style fresh-make path).
+  {
+    id: 'prd_11',
+    kind: 'composite',
+    sku: 'MKN-AYG-001',
+    name: 'Ayam Goreng',
+    categoryId: 'cat_2',
+    unitId: 'unit_1',
+    cost: 0,
+    prices: [retail({ kind: 'fixed', value: 25000 })],
+    status: 'active',
+    description:
+      'Ayam goreng krispi. Pilih cut — paha, dada, sayap, atau drumstick. Bisa pre-fry untuk display warmer.',
+    suppliers: [],
+    imageUrl: 'https://picsum.photos/seed/pos-ayam-goreng/240/240',
+    units: [],
+    attributes: [{ id: 'attr_ayg_cut', name: 'Cut', values: ['Paha', 'Dada', 'Sayap', 'Drumstick'] }],
+    variants: [
+      {
+        id: 'v_ayg_paha',
+        name: 'Paha',
+        sku: 'MKN-AYG-PHA',
+        cost: 0,
+        prices: [retail({ kind: 'fixed', value: 25000 })],
+        barcode: '',
+        values: { Cut: 'Paha' },
+        imageUrl: '',
+        components: [{ id: 'cmp_ayg_paha', productId: 'prd_10', variantId: 'v_chk_paha', quantity: 1 }]
+      },
+      {
+        id: 'v_ayg_dada',
+        name: 'Dada',
+        sku: 'MKN-AYG-DDA',
+        cost: 0,
+        prices: [retail({ kind: 'fixed', value: 30000 })],
+        barcode: '',
+        values: { Cut: 'Dada' },
+        imageUrl: '',
+        components: [{ id: 'cmp_ayg_dada', productId: 'prd_10', variantId: 'v_chk_dada', quantity: 1 }]
+      },
+      {
+        id: 'v_ayg_sayap',
+        name: 'Sayap',
+        sku: 'MKN-AYG-SYP',
+        cost: 0,
+        prices: [retail({ kind: 'fixed', value: 13000 })],
+        barcode: '',
+        values: { Cut: 'Sayap' },
+        imageUrl: '',
+        components: [{ id: 'cmp_ayg_sayap', productId: 'prd_10', variantId: 'v_chk_sayap', quantity: 1 }]
+      },
+      {
+        id: 'v_ayg_drum',
+        name: 'Drumstick',
+        sku: 'MKN-AYG-DRM',
+        cost: 0,
+        prices: [retail({ kind: 'fixed', value: 18000 })],
+        barcode: '',
+        values: { Cut: 'Drumstick' },
+        imageUrl: '',
+        components: [{ id: 'cmp_ayg_drum', productId: 'prd_10', variantId: 'v_chk_drum', quantity: 1 }]
+      }
+    ],
+    components: [],
+    extras: [],
+    productionMode: 'flexible',
+    shelfLifeAfterProductionHours: 2,
+    requiresExpiration: true
+  },
+  // === prd_12: Hampers Lebaran (composite, strict mode, no variants) ===
+  // Demonstrates the other end of the spectrum — the operator must produce
+  // these before they can be sold. No fallback to components, because making
+  // a hamper at the till in front of the customer doesn't make sense.
+  {
+    id: 'prd_12',
+    kind: 'composite',
+    sku: 'MER-HMP-001',
+    name: 'Hampers Lebaran',
+    categoryId: 'cat_3',
+    unitId: 'unit_1',
+    cost: 0,
+    prices: [retail({ kind: 'fixed', value: 150000 })],
+    status: 'active',
+    description: 'Paket hampers — 4 croissant + 6 cola. Harus dirakit lebih dulu sebelum dijual.',
+    suppliers: [],
+    imageUrl: 'https://picsum.photos/seed/pos-hampers/240/240',
+    units: [],
+    attributes: [],
+    variants: [],
+    components: [
+      { id: 'cmp_hmp_crs', productId: 'prd_3', quantity: 4 },
+      { id: 'cmp_hmp_cola', productId: 'prd_5', quantity: 6 }
+    ],
+    extras: [],
+    productionMode: 'strict'
   }
 ];
 
@@ -790,11 +1210,28 @@ class ProductsStore {
     return product;
   }
 
-  update(id: string, patch: Partial<ProductInput>): Product | undefined {
+  update(
+    id: string,
+    patch: Partial<ProductInput>,
+    options?: { source?: PriceChangeSource; notes?: string }
+  ): Product | undefined {
     const idx = this.items.findIndex((p) => p.id === id);
     if (idx === -1) return undefined;
-    this.items[idx] = { ...this.items[idx], ...patch };
-    return this.items[idx];
+    const before = this.items[idx];
+    const after = { ...before, ...patch };
+    this.items[idx] = after;
+    // Compute the price diff against the *new* state — pricing reads from
+    // batches/source which all live outside the product itself; we want to
+    // capture how the resulting sale price moved, not just the literal field.
+    const diffs = diffPriceEntries(before, after);
+    if (diffs.length > 0) {
+      const source: PriceChangeSource = options?.source ?? 'manual';
+      const notes = options?.notes ?? '';
+      priceChanges.addMany(
+        diffs.map((d) => ({ ...d, source, notes }))
+      );
+    }
+    return after;
   }
 
   remove(id: string) {
@@ -803,6 +1240,10 @@ class ProductsStore {
 
   getById(id: string): Product | undefined {
     return this.items.find((p) => p.id === id);
+  }
+
+  countByBrand(brandId: string): number {
+    return this.items.reduce((n, p) => (p.brandId === brandId ? n + 1 : n), 0);
   }
 
   countByCategory(categoryId: string): number {
@@ -828,6 +1269,146 @@ class ProductsStore {
 }
 
 export const products = new ProductsStore();
+
+// ─── Price-change diffing ────────────────────────────────────────────────
+// Compares old vs new product price entries (product-level + variant-level +
+// packaging-level + tiers) and produces one PriceChangeInput per actually-
+// changed strategy. Same `(scope, pricelistId, tierMinQty?)` tuple identifies
+// a row across old and new.
+
+function strategyEq(a: PricingStrategy, b: PricingStrategy): boolean {
+  if (a.kind !== b.kind) return false;
+  return Math.abs(a.value - b.value) < 0.0001;
+}
+
+function packagingLabelFor(pack: ProductPackaging): string {
+  const u = unitsStore.getById(pack.unitId);
+  const name = u?.name ?? pack.unitId;
+  return `${name} · isi ${pack.factor}`;
+}
+
+function compareEntries(
+  before: PricelistEntry[],
+  after: PricelistEntry[],
+  context: {
+    productId: string;
+    productName: string;
+    variantId?: string;
+    variantName?: string;
+    packagingIndex?: number;
+    packagingLabel?: string;
+    oldCost: number;
+    newCost: number;
+  }
+): Omit<PriceChangeInput, 'source' | 'notes'>[] {
+  const out: Omit<PriceChangeInput, 'source' | 'notes'>[] = [];
+  const afterByPid = new Map<string, PricelistEntry>();
+  for (const e of after) afterByPid.set(e.pricelistId, e);
+  for (const oldEntry of before) {
+    const newEntry = afterByPid.get(oldEntry.pricelistId);
+    if (!newEntry) continue; // pricelist entry removed — we don't log deletions yet
+    const pl = pricelists.getById(oldEntry.pricelistId);
+    const pricelistName = pl?.name ?? oldEntry.pricelistId;
+    // Base entry diff
+    if (!strategyEq(oldEntry.pricing, newEntry.pricing)) {
+      out.push({
+        productId: context.productId,
+        productName: context.productName,
+        variantId: context.variantId,
+        variantName: context.variantName,
+        packagingIndex: context.packagingIndex,
+        packagingLabel: context.packagingLabel,
+        pricelistId: oldEntry.pricelistId,
+        pricelistName,
+        oldStrategy: oldEntry.pricing,
+        newStrategy: newEntry.pricing,
+        oldSale: computeSalePrice(context.oldCost, oldEntry.pricing),
+        newSale: computeSalePrice(context.newCost, newEntry.pricing),
+        cost: context.newCost
+      });
+    }
+    // Tier diff — match by minQty. Added/removed tiers are skipped for v1.
+    const newTiersByMin = new Map<number, PricingTier>();
+    for (const t of newEntry.tiers) newTiersByMin.set(t.minQty, t);
+    for (const oldTier of oldEntry.tiers) {
+      const newTier = newTiersByMin.get(oldTier.minQty);
+      if (!newTier) continue;
+      if (strategyEq(oldTier.pricing, newTier.pricing)) continue;
+      out.push({
+        productId: context.productId,
+        productName: context.productName,
+        variantId: context.variantId,
+        variantName: context.variantName,
+        packagingIndex: context.packagingIndex,
+        packagingLabel: context.packagingLabel,
+        pricelistId: oldEntry.pricelistId,
+        pricelistName,
+        tierMinQty: oldTier.minQty,
+        oldStrategy: oldTier.pricing,
+        newStrategy: newTier.pricing,
+        oldSale: computeSalePrice(context.oldCost, oldTier.pricing),
+        newSale: computeSalePrice(context.newCost, newTier.pricing),
+        cost: context.newCost
+      });
+    }
+  }
+  return out;
+}
+
+function diffPriceEntries(
+  before: Product,
+  after: Product
+): Omit<PriceChangeInput, 'source' | 'notes'>[] {
+  const out: Omit<PriceChangeInput, 'source' | 'notes'>[] = [];
+  const oldCostProduct = effectiveCost(before);
+  const newCostProduct = effectiveCost(after);
+  // Product-level prices
+  out.push(
+    ...compareEntries(before.prices, after.prices, {
+      productId: after.id,
+      productName: after.name,
+      oldCost: oldCostProduct,
+      newCost: newCostProduct
+    })
+  );
+  // Variant-level prices — match by variant id
+  const oldVariants = new Map(before.variants.map((v) => [v.id, v]));
+  for (const v of after.variants) {
+    const ov = oldVariants.get(v.id);
+    if (!ov) continue;
+    const oldVCost = effectiveVariantCost(ov, before);
+    const newVCost = effectiveVariantCost(v, after);
+    out.push(
+      ...compareEntries(ov.prices, v.prices, {
+        productId: after.id,
+        productName: after.name,
+        variantId: v.id,
+        variantName: v.name,
+        oldCost: oldVCost,
+        newCost: newVCost
+      })
+    );
+  }
+  // Packaging-level prices — match by index (packagings are positional)
+  for (let i = 0; i < after.units.length; i++) {
+    const np = after.units[i];
+    const op = before.units[i];
+    if (!op) continue;
+    const label = packagingLabelFor(np);
+    out.push(
+      ...compareEntries(op.prices, np.prices, {
+        productId: after.id,
+        productName: after.name,
+        packagingIndex: i,
+        packagingLabel: label,
+        // For packaging, the cost driving markup math is factor × productCost.
+        oldCost: op.factor * oldCostProduct,
+        newCost: np.factor * newCostProduct
+      })
+    );
+  }
+  return out;
+}
 
 export function totalStock(p: Product): number {
   if (p.variants.length > 0) {
@@ -869,7 +1450,7 @@ export function priceRange(
   for (const v of p.variants) {
     const entry = effectiveEntry(v.prices, pid, fallback) ?? base;
     if (!entry) continue;
-    const sale = computeSalePrice(effectiveVariantCost(v), entry.pricing);
+    const sale = computeSalePrice(effectiveVariantCost(v, p), entry.pricing);
     if (Number.isFinite(sale)) prices.push(sale);
   }
   for (const u of p.units) {
@@ -897,3 +1478,92 @@ export function hasAnyTier(p: Product): boolean {
   if (p.units.some((u) => u.prices.some((e) => e.tiers.length > 0))) return true;
   return false;
 }
+
+// Classify a product's pricing mode for at-a-glance review in the product list.
+//   'fixed'           — every entry uses kind: 'fixed'. Operator owns price changes.
+//   'manual-markup'   — has markup_* entries; markupCostSource = 'manual'. Operator
+//                       updates Biaya beli (or markup) to move the sale price.
+//   'dynamic-markup'  — has markup_* entries; markupCostSource = 'fifo-current' or
+//                       'batch-avg'. Sale price tracks batch cost automatically.
+//   'mixed'           — both fixed and markup entries exist (e.g. retail = markup,
+//                       wholesale = fixed). Behaviour depends on the row.
+export type PricingMode = 'fixed' | 'manual-markup' | 'dynamic-markup' | 'mixed';
+
+export function pricingMode(p: Product): PricingMode {
+  let hasMarkup = false;
+  let hasFixed = false;
+  const visit = (entries: PricelistEntry[]) => {
+    for (const e of entries) {
+      const kinds: PricingKind[] = [e.pricing.kind, ...e.tiers.map((t) => t.pricing.kind)];
+      for (const k of kinds) {
+        if (k === 'fixed') hasFixed = true;
+        else hasMarkup = true;
+      }
+    }
+  };
+  visit(p.prices);
+  for (const v of p.variants) visit(v.prices);
+  for (const u of p.units) visit(u.prices);
+  if (hasMarkup && hasFixed) return 'mixed';
+  if (hasMarkup) {
+    return (p.markupCostSource ?? 'manual') === 'manual' ? 'manual-markup' : 'dynamic-markup';
+  }
+  return 'fixed';
+}
+
+// Where a barcode is registered. Used by the form validator to point the
+// admin at the conflicting source ("already used in [Product X] (variant Black)").
+export type BarcodeOwner = {
+  productId: string;
+  productName: string;
+  scope: 'product' | 'variant' | 'packaging';
+  // Human label for the inner scope: variant name (variant) or
+  // "{unitName} · isi {factor}" (packaging). Empty for product-level.
+  scopeLabel?: string;
+};
+
+// Walk the catalog to find who currently owns this barcode. Pass excludeProductId
+// while editing a product so its own rows don't trigger a conflict against itself.
+// Returns null when the barcode is free or empty.
+export function findBarcodeOwner(
+  barcode: string,
+  excludeProductId?: string
+): BarcodeOwner | null {
+  if (!barcode) return null;
+  for (const p of products.items) {
+    if (p.id === excludeProductId) continue;
+    if (p.barcode && p.barcode === barcode) {
+      return { productId: p.id, productName: p.name, scope: 'product' };
+    }
+    for (const v of p.variants) {
+      if (v.barcode && v.barcode === barcode) {
+        return {
+          productId: p.id,
+          productName: p.name,
+          scope: 'variant',
+          scopeLabel: v.name || v.sku
+        };
+      }
+    }
+    for (const u of p.units) {
+      if (u.barcode && u.barcode === barcode) {
+        const unit = unitsStore.getById(u.unitId);
+        const unitLabel = unit ? `${unit.name} · isi ${u.factor}` : `kemasan · isi ${u.factor}`;
+        return {
+          productId: p.id,
+          productName: p.name,
+          scope: 'packaging',
+          scopeLabel: unitLabel
+        };
+      }
+    }
+  }
+  return null;
+}
+
+export const pricingModeLabels: Record<PricingMode, string> = {
+  fixed: 'Statis',
+  'manual-markup': 'Markup manual',
+  'dynamic-markup': 'Ikut PO',
+  mixed: 'Campur'
+};

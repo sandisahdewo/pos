@@ -1,9 +1,11 @@
 <script lang="ts">
   import { formatRupiahNumber, parseRupiahNumber } from '$lib/utils/currency';
+  import Tooltip from './Tooltip.svelte';
 
   type Props = {
     value?: number;
     label?: string;
+    tooltip?: string;
     hint?: string;
     error?: string;
     placeholder?: string;
@@ -17,6 +19,7 @@
   let {
     value = $bindable(0),
     label,
+    tooltip,
     hint,
     error,
     placeholder = '0',
@@ -73,7 +76,12 @@
 
 <div class={klass}>
   {#if label}
-    <label for={id} class="mb-1.5 block text-sm font-medium text-slate-700">{label}</label>
+    <div class="mb-1.5 flex items-center gap-1.5">
+      <label for={id} class="block text-sm font-medium text-slate-700">{label}</label>
+      {#if tooltip}
+        <Tooltip content={tooltip} />
+      {/if}
+    </div>
   {/if}
   <div class="relative">
     {#if prefix}

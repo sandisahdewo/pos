@@ -73,7 +73,7 @@
       const v = p.variants.find((vv) => vv.id === line.variantId);
       if (v) {
         const entry = effectiveEntry(v.prices, pricelistId, pricelistId);
-        if (entry) return computeSalePrice(effectiveVariantCost(v), entry.pricing);
+        if (entry) return computeSalePrice(effectiveVariantCost(v, p), entry.pricing);
       }
     }
     return basePrice(p, pricelistId);
@@ -322,6 +322,15 @@
             {@const marginPct =
               hetPerLineUnit > 0 ? (lineMargin / hetPerLineUnit) * 100 : 0}
             {@const marginNegative = isConsignment && hetPerLineUnit > 0 && lineMargin < 0}
+            {@const productForLine = products.getById(line.productId)}
+            {@const supplierMOQ = (() => {
+              if (!productForLine || !form.supplierId) return 0;
+              const ps = (productForLine.suppliers ?? []).find(
+                (s) => s.supplierId === form.supplierId
+              );
+              return ps?.minOrderQty ?? 0;
+            })()}
+            {@const moqShortfall = supplierMOQ > 0 && baseQty > 0 && baseQty < supplierMOQ}
             <div class="rounded-lg border border-slate-200 bg-white p-3">
               <div class="grid gap-3 md:grid-cols-[2fr_1.5fr_auto] md:items-end">
                 <Select
@@ -395,6 +404,18 @@
                   &middot; biaya per {baseUnit.code}
                   <span class="font-medium text-slate-700">{formatRupiah(baseUnitCost)}</span>
                 </p>
+              {/if}
+              {#if moqShortfall && baseUnit}
+                <div
+                  class="mt-2 flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-xs text-amber-800"
+                >
+                  <AlertTriangle class="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                  <span>
+                    Pemasok ini biasanya minta minimal
+                    <span class="font-semibold">{supplierMOQ} {baseUnit.code}</span>
+                    per pesanan. Saat ini cuma {baseQty} {baseUnit.code}.
+                  </span>
+                </div>
               {/if}
               {#if isConsignment && line.productId}
                 <div

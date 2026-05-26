@@ -11,6 +11,8 @@
     X,
     Package,
     Boxes,
+    Factory,
+    History,
     Image as ImageIcon,
     ChevronRight
   } from 'lucide-svelte';
@@ -26,9 +28,12 @@
     PricingInput,
     Select,
     Textarea,
-    Toggle
+    Toggle,
+    Tooltip
   } from '$lib/components/ui';
   import { categories } from '$lib/stores/categories.svelte';
+  import { brands } from '$lib/stores/brands.svelte';
+  import { tags } from '$lib/stores/tags.svelte';
   import { units } from '$lib/stores/units.svelte';
   import { pricelists } from '$lib/stores/pricelists.svelte';
   import { taxRates } from '$lib/stores/taxRates.svelte';
@@ -39,15 +44,20 @@
     activeAttributes,
     cloneEntry,
     computeSalePrice,
+    costFromSource,
     emptyEntry,
+    findBarcodeOwner,
     findEntry,
     priceWithTax,
     productKindOptions,
+    productionModeOptions,
+    markupCostSourceOptions,
     products,
     regenerateVariants,
     validatePricing,
     variantCombinations,
     type CompositeComponent,
+    type MarkupCostSource,
     type PricelistEntry,
     type Product,
     type ProductAttribute,
@@ -57,15 +67,23 @@
     type ProductPackaging,
     type ProductStatus,
     type ProductSupplier,
-    type ProductVariant
+    type ProductVariant,
+    type ProductionMode
   } from '$lib/stores/products.svelte';
   import { stockOf } from '$lib/stores/batches.svelte';
+  import type { PriceChangeSource } from '$lib/stores/priceChanges.svelte';
   import TierEditor from './TierEditor.svelte';
+  import PriceAdjustmentModal, {
+    type PriceChangePatch
+  } from './PriceAdjustmentModal.svelte';
 
   type Props = {
     product?: Product | null;
     submitLabel?: string;
-    onSubmit: (data: ProductInput) => Product;
+    onSubmit: (
+      data: ProductInput,
+      context?: { priceChangeSource?: PriceChangeSource; priceChangeNotes?: string }
+    ) => Product;
     onCancel: () => void;
   };
 
@@ -80,8 +98,11 @@
   type FormState = {
     sku: string;
     name: string;
+    barcode: string;
     kind: ProductKind;
     categoryId: string;
+    brandId: string;
+    tags: string[];
     unitId: string;
     cost: number;
     prices: PricelistEntry[];
@@ -97,6 +118,13 @@
     extras: ProductExtra[];
     requiresBatchLabel: boolean;
     requiresExpiration: boolean;
+    productionMode: ProductionMode;
+    shelfLifeAfterProductionHours: number; // 0 = unset
+    markupCostSource: MarkupCostSource;
+    bpomNumber: string;
+    halalCertNumber: string;
+    warrantyMonths: number; // 0 = unset
+    metadataPairs: { key: string; value: string }[];
   };
 
   function initial(): FormState {
@@ -104,8 +132,11 @@
     return {
       sku: product?.sku ?? '',
       name: product?.name ?? '',
+      barcode: product?.barcode ?? '',
       kind: product?.kind ?? 'goods',
       categoryId: product?.categoryId ?? categories.items[0]?.id ?? '',
+      brandId: product?.brandId ?? '',
+      tags: product?.tags ? [...product.tags] : [],
       unitId: product?.unitId ?? units.items[0]?.id ?? '',
       cost: product?.cost ?? 0,
       prices: product?.prices?.map(cloneEntry) ?? [emptyEntry(defaultId)],
@@ -135,7 +166,16 @@
           components: e.components.map((c) => ({ ...c }))
         })) ?? [],
       requiresBatchLabel: product?.requiresBatchLabel ?? false,
-      requiresExpiration: product?.requiresExpiration ?? false
+      requiresExpiration: product?.requiresExpiration ?? false,
+      productionMode: product?.productionMode ?? 'flexible',
+      shelfLifeAfterProductionHours: product?.shelfLifeAfterProductionHours ?? 0,
+      markupCostSource: product?.markupCostSource ?? 'manual',
+      bpomNumber: product?.bpomNumber ?? '',
+      halalCertNumber: product?.halalCertNumber ?? '',
+      warrantyMonths: product?.warrantyMonths ?? 0,
+      metadataPairs: product?.metadata
+        ? Object.entries(product.metadata).map(([key, value]) => ({ key, value }))
+        : []
     };
   }
 
@@ -143,14 +183,21 @@
   let errors = $state<Record<string, string>>({});
 
   const categoryOptions = $derived(
-    categories.items.map((c) => ({ value: c.id, label: c.name }))
+    categories.items.map((c) => ({
+      value: c.id,
+      label: categories.path(c.id).map((p) => p.name).join(' › ')
+    }))
   );
+  const brandOptions = $derived([
+    { value: '', label: 'Tanpa brand' },
+    ...brands.active().map((b) => ({ value: b.id, label: b.name }))
+  ]);
   const unitOptions = $derived(
     units.items.map((u) => ({ value: u.id, label: `${u.name} (${u.code})` }))
   );
   const statusOptions = [
-    { value: 'active', label: 'Active' },
-    { value: 'archived', label: 'Archived' }
+    { value: 'active', label: 'Aktif' },
+    { value: 'archived', label: 'Diarsipkan' }
   ];
 
   const baseUnit = $derived(units.getById(form.unitId));
@@ -302,6 +349,54 @@
     }
   }
 
+  // Check barcode uniqueness — both within the form (operator typo) and across
+  // the rest of the catalog (cross-product collision). Empty barcodes are
+  // ignored; same code reused at multiple scopes within this product is also
+  // flagged because the scan resolver would only ever resolve to one of them.
+  function validateBarcodes(next: Record<string, string>) {
+    const inForm: { key: string; code: string; scopeLabel: string }[] = [];
+    if (form.barcode.trim()) {
+      inForm.push({ key: 'barcode', code: form.barcode.trim(), scopeLabel: 'produk' });
+    }
+    form.variants.forEach((v, i) => {
+      const code = v.barcode.trim();
+      if (!code) return;
+      inForm.push({
+        key: `v_${i}_barcode`,
+        code,
+        scopeLabel: `varian ${v.name || `#${i + 1}`}`
+      });
+    });
+    form.units.forEach((u, i) => {
+      const code = u.barcode.trim();
+      if (!code) return;
+      const unit = units.getById(u.unitId);
+      const unitLabel = unit ? `${unit.name} · isi ${u.factor}` : `kemasan #${i + 1}`;
+      inForm.push({ key: `u_${i}_barcode`, code, scopeLabel: unitLabel });
+    });
+
+    // 1. Internal duplicates (within this form).
+    const seen = new Map<string, string>();
+    for (const entry of inForm) {
+      const prior = seen.get(entry.code);
+      if (prior) {
+        next[entry.key] = `Barcode sama dengan ${prior} di produk ini.`;
+      } else {
+        seen.set(entry.code, entry.scopeLabel);
+      }
+    }
+
+    // 2. Cross-product collisions.
+    for (const entry of inForm) {
+      if (next[entry.key]) continue;
+      const owner = findBarcodeOwner(entry.code, product?.id);
+      if (owner) {
+        const detail = owner.scopeLabel ? ` (${owner.scopeLabel})` : '';
+        next[entry.key] = `Barcode sudah dipakai di "${owner.productName}"${detail}.`;
+      }
+    }
+  }
+
   function validate(): boolean {
     const next: Record<string, string> = {};
 
@@ -362,6 +457,8 @@
       validateEntries(v.prices, `v_${i}_`, next);
     });
 
+    validateBarcodes(next);
+
     errors = next;
     return Object.keys(next).length === 0;
   }
@@ -374,7 +471,10 @@
     const payload: ProductInput = {
       sku: form.sku.trim(),
       name: form.name.trim(),
+      barcode: form.barcode.trim() || undefined,
       categoryId: form.categoryId,
+      brandId: form.brandId || undefined,
+      tags: form.tags.length > 0 ? form.tags : undefined,
       unitId: form.unitId,
       cost: form.cost,
       prices: form.prices,
@@ -390,13 +490,35 @@
       components: form.kind === 'composite' ? form.components : [],
       extras: form.extras,
       requiresBatchLabel: form.requiresBatchLabel || undefined,
-      requiresExpiration: form.requiresExpiration || undefined
+      requiresExpiration: form.requiresExpiration || undefined,
+      productionMode: form.kind === 'composite' ? form.productionMode : undefined,
+      shelfLifeAfterProductionHours:
+        form.kind === 'composite' && form.shelfLifeAfterProductionHours > 0
+          ? form.shelfLifeAfterProductionHours
+          : undefined,
+      markupCostSource: form.markupCostSource === 'manual' ? undefined : form.markupCostSource,
+      bpomNumber: form.bpomNumber.trim() || undefined,
+      halalCertNumber: form.halalCertNumber.trim() || undefined,
+      warrantyMonths: form.warrantyMonths > 0 ? form.warrantyMonths : undefined,
+      metadata: (() => {
+        const obj = form.metadataPairs.reduce<Record<string, string>>((acc, pair) => {
+          const k = pair.key.trim();
+          const v = pair.value.trim();
+          if (k && v) acc[k] = v;
+          return acc;
+        }, {});
+        return Object.keys(obj).length > 0 ? obj : undefined;
+      })()
     };
-    onSubmit(payload);
+    const context = pendingPriceChangeSummary
+      ? { priceChangeSource: 'bulk-adjust' as const, priceChangeNotes: pendingPriceChangeSummary }
+      : undefined;
+    onSubmit(payload, context);
+    pendingPriceChangeSummary = '';
   }
 
   const supplierOptions = $derived([
-    { value: '', label: 'No default supplier' },
+    { value: '', label: 'Tanpa pemasok utama' },
     ...suppliers.active().map((s) => ({ value: s.id, label: s.name }))
   ]);
 
@@ -414,7 +536,7 @@
         .filter((s) => !takenElsewhere.has(s.id))
         .map((s) => ({
           value: s.id,
-          label: s.leadTimeDays > 0 ? `${s.name} (lead ${s.leadTimeDays}h)` : s.name
+          label: s.leadTimeDays > 0 ? `${s.name} (tunggu ${s.leadTimeDays}h)` : s.name
         }))
     ];
   }
@@ -527,6 +649,38 @@
     return units.getById(p.unitId)?.code ?? '';
   }
 
+  // Pilihan satuan untuk komponen — satuan dasar + tiap kemasan produk
+  // komponen. Value encoded sebagai `${unitId}|${factor}` (sama pola dengan
+  // PO line) supaya onchange bisa langsung set kedua field di komponen.
+  function componentUnitOptionsFor(productId: string): { value: string; label: string }[] {
+    const p = products.getById(productId);
+    if (!p) return [];
+    const baseUnit = units.getById(p.unitId);
+    const baseCode = baseUnit?.code ?? '?';
+    const baseName = baseUnit?.name ?? '?';
+    const opts: { value: string; label: string }[] = [
+      { value: `${p.unitId}|1`, label: `${baseName} (${baseCode}) — satuan dasar` }
+    ];
+    for (const pack of p.units) {
+      const u = units.getById(pack.unitId);
+      if (!u) continue;
+      opts.push({
+        value: `${pack.unitId}|${pack.factor}`,
+        label: `${u.name} (${u.code}) — 1 = ${pack.factor} ${baseCode}`
+      });
+    }
+    return opts;
+  }
+
+  function onComponentUnitChange(comp: CompositeComponent, value: string) {
+    const [unitId, factorStr] = value.split('|');
+    const factor = Number(factorStr) || 1;
+    // Simpan sebagai undefined kalau pakai base unit (factor 1) supaya seed
+    // lama yang tidak punya unitId tetap sama signature-nya.
+    comp.unitId = factor === 1 ? undefined : unitId;
+    comp.unitFactor = factor === 1 ? undefined : factor;
+  }
+
   function componentCost(c: CompositeComponent): number {
     const p = products.getById(c.productId);
     if (!p) return 0;
@@ -537,10 +691,79 @@
     return p.cost;
   }
 
-  const effectiveFormCost = $derived(
-    form.components.length === 0
-      ? form.cost
-      : form.components.reduce((sum, c) => sum + c.quantity * componentCost(c), 0)
+  // Recipe-derived cost (composites only). Used as the fallback when
+  // markupCostSource resolves to manual or when no batch exists yet.
+  // Bahan boleh pakai satuan kemasan (unitFactor), jadi qty dikali factor
+  // sebelum dikalikan biaya per-base.
+  const recipeFormCost = $derived(
+    form.components.length > 0
+      ? form.components.reduce(
+          (sum, c) => sum + c.quantity * (c.unitFactor ?? 1) * componentCost(c),
+          0
+        )
+      : 0
+  );
+
+  // Cost basis the form previews against. Routed through costFromSource so
+  // the preview reflects the markupCostSource picked in the form right now —
+  // including unsaved edits. Keeps margins honest when the operator flips
+  // manual → fifo-current and expects batch cost to take over before saving.
+  const effectiveFormCost = $derived.by(() => {
+    const fallback = form.components.length > 0 ? recipeFormCost : form.cost;
+    if (product?.id) {
+      return costFromSource(product.id, undefined, form.markupCostSource, fallback);
+    }
+    return fallback;
+  });
+
+  // True when the displayed cost comes from a batch rather than the manual
+  // / recipe value. Drives the "Biaya saat ini …" preview line and (for
+  // composites) the label switch on the read-only cost box.
+  const costIsFromBatch = $derived(
+    form.markupCostSource !== 'manual' &&
+      !!product?.id &&
+      effectiveFormCost !== (form.components.length > 0 ? recipeFormCost : form.cost)
+  );
+
+  const costSourceLabel = $derived(
+    form.markupCostSource === 'fifo-current'
+      ? 'dari stok yang sedang dijual'
+      : form.markupCostSource === 'batch-avg'
+        ? 'rata-rata semua stok'
+        : ''
+  );
+
+  const costFieldLabel = $derived(
+    form.markupCostSource === 'manual' ? 'Biaya beli' : 'Biaya awal'
+  );
+
+  const costFieldHint = $derived(
+    form.markupCostSource === 'manual'
+      ? `Per 1 ${baseCode}. Markup ikut angka ini — update saat harga beli berubah.`
+      : form.markupCostSource === 'fifo-current'
+        ? `Per 1 ${baseCode}. Cuma dipakai sampai stok pertama masuk; setelah itu sistem ikut harga beli stok yang sedang dijual.`
+        : `Per 1 ${baseCode}. Cuma dipakai sampai stok pertama masuk; setelah itu sistem ikut rata-rata harga beli semua stok.`
+  );
+
+  const hasMarkupPricing = $derived.by(() => {
+    const inEntries = (entries: PricelistEntry[]) =>
+      entries.some(
+        (e) =>
+          e.pricing.kind !== 'fixed' ||
+          e.tiers.some((t) => t.pricing.kind !== 'fixed')
+      );
+    if (inEntries(form.prices)) return true;
+    if (form.units.some((u) => inEntries(u.prices))) return true;
+    if (form.variants.some((v) => inEntries(v.prices))) return true;
+    return false;
+  });
+
+  const costZeroWarning = $derived(hasMarkupPricing && effectiveFormCost === 0);
+
+  const costZeroMessage = $derived(
+    form.markupCostSource === 'manual'
+      ? 'Markup butuh "Biaya beli" lebih dari Rp 0. Harga jual akan Rp 0 sampai diisi.'
+      : 'Biaya masih Rp 0 dan belum ada stok masuk. Harga jual akan Rp 0 sampai biaya awal diisi atau stok pertama tiba.'
   );
 
   const producibleFormStock = $derived.by(() => {
@@ -554,12 +777,82 @@
         : p.variants.length > 0
           ? p.variants.reduce((s, v) => s + stockOf(p.id, v.id), 0)
           : stockOf(c.productId);
-      return Math.floor(avail / c.quantity);
+      const perOutput = c.quantity * (c.unitFactor ?? 1);
+      return Math.floor(avail / perOutput);
     });
     return Math.min(...values);
   });
 
   const showComponents = $derived(form.kind === 'composite' && form.components.length > 0);
+
+  // ─── Bulk price adjustment ──────────────────────────────────────────────
+  let priceAdjustmentOpen = $state(false);
+  // Pass a minimal product snapshot — the modal reads name + id + unitId off it.
+  const priceAdjustmentSnapshot = $derived<Product>({
+    ...(product ?? ({} as Product)),
+    id: product?.id ?? 'new',
+    name: form.name || 'Produk baru',
+    unitId: form.unitId,
+    cost: form.cost,
+    kind: form.kind,
+    categoryId: form.categoryId,
+    sku: form.sku,
+    prices: form.prices,
+    variants: form.variants,
+    units: form.units,
+    components: form.components,
+    extras: form.extras,
+    status: form.status,
+    description: form.description,
+    imageUrl: form.imageUrl,
+    attributes: form.attributes,
+    suppliers: form.suppliers
+  });
+
+  const hasAnyPriceEntries = $derived(
+    form.prices.length > 0 ||
+      form.variants.some((v) => v.prices.length > 0) ||
+      form.units.some((u) => u.prices.length > 0)
+  );
+
+  function openPriceAdjustmentModal() {
+    if (!hasAnyPriceEntries) return;
+    priceAdjustmentOpen = true;
+  }
+
+  // When the bulk-adjust modal applies, we remember the human summary so the
+  // next save can pass it as the `notes` field on the resulting PriceChange
+  // rows. Cleared after submit.
+  let pendingPriceChangeSummary = $state('');
+
+  function applyPricePatches(patches: PriceChangePatch[], summary: string) {
+    for (const patch of patches) {
+      let entries: PricelistEntry[] | undefined;
+      const scope = patch.scope;
+      if (scope.kind === 'product') {
+        entries = form.prices;
+      } else if (scope.kind === 'variant') {
+        const v = form.variants.find((vv) => vv.id === scope.variantId);
+        entries = v?.prices;
+      } else {
+        entries = form.units[scope.packagingIndex]?.prices;
+      }
+      if (!entries) continue;
+      const entry = entries.find((e) => e.pricelistId === patch.pricelistId);
+      if (!entry) continue;
+      if (patch.tierIndex === undefined) {
+        entry.pricing = patch.newStrategy;
+      } else {
+        const tier = entry.tiers[patch.tierIndex];
+        if (tier) tier.pricing = patch.newStrategy;
+      }
+    }
+    if (summary) pendingPriceChangeSummary = summary;
+    toast.success(
+      'Harga diperbarui',
+      `${patches.length} entri harga disesuaikan. Simpan untuk menerapkan.`
+    );
+  }
   const showExtras = $derived(form.extras.length > 0);
 
   function addExtra() {
@@ -619,12 +912,23 @@
   }
 
   function variantEffectiveCost(v: ProductVariant): number {
-    if (v.components.length === 0) return v.cost;
-    return v.components.reduce(
-      (s, c) =>
-        s + c.quantity * componentCost({ ...c, id: c.id } as CompositeComponent),
-      0
-    );
+    const fallback =
+      v.components.length > 0
+        ? v.components.reduce(
+            (s, c) =>
+              s +
+              c.quantity *
+                (c.unitFactor ?? 1) *
+                componentCost({ ...c, id: c.id } as CompositeComponent),
+            0
+          )
+        : v.cost;
+    // For existing products, route through the source picked in the form so
+    // batch-cost previews match what POS will actually charge.
+    if (product?.id) {
+      return costFromSource(product.id, v.id, form.markupCostSource, fallback);
+    }
+    return fallback;
   }
 
   let pendingKind = $state<ProductKind | null>(null);
@@ -656,6 +960,26 @@
     pendingKind = null;
   }
 
+  function addMetadataPair() {
+    form.metadataPairs = [...form.metadataPairs, { key: '', value: '' }];
+  }
+
+  function removeMetadataPair(i: number) {
+    form.metadataPairs = form.metadataPairs.filter((_, idx) => idx !== i);
+  }
+
+  // Auto-open the "Info tambahan" panel when the product already has data in
+  // any of its fields — otherwise hide behind the collapsed toggle. Driven by
+  // the form state (cloned in initial()) so we don't re-read the prop here.
+  let extraInfoOpen = $state(
+    !!(
+      form.bpomNumber.trim() ||
+      form.halalCertNumber.trim() ||
+      form.warrantyMonths > 0 ||
+      form.metadataPairs.length > 0
+    )
+  );
+
   const inheritedTaxRate = $derived.by(() => {
     const cat = categories.getById(form.categoryId);
     if (cat?.taxRateId) return taxRates.getById(cat.taxRateId);
@@ -665,7 +989,7 @@
   const taxRateSelectOptions = $derived([
     {
       value: '',
-      label: `Inherit from category${inheritedTaxRate ? ` (${inheritedTaxRate.name})` : ''}`
+      label: `Ikut tarif kategori${inheritedTaxRate ? ` (${inheritedTaxRate.name})` : ''}`
     },
     ...taxRates.items.map((t) => ({ value: t.id, label: `${t.name} (${t.rate}%)` }))
   ]);
@@ -674,9 +998,14 @@
 <div class="grid grid-cols-1 gap-4 lg:grid-cols-3">
   <div class="space-y-4 lg:col-span-2">
     <!-- BASICS -->
-    <Card title="Dasar" description="Tipe, nama, SKU, gambar, dan deskripsi singkat.">
+    <Card title="Dasar" description="Info utama produk: nama, kode, gambar, dan keterangan singkat.">
       <div class="mb-5">
-        <span class="mb-1.5 block text-sm font-medium text-slate-700">Tipe produk</span>
+        <div class="mb-1.5 flex items-center gap-1.5">
+          <span class="text-sm font-medium text-slate-700">Jenis produk</span>
+          <Tooltip
+            content="Pilih Barang kalau dibeli jadi dari pemasok lalu dijual ulang. Pilih Resep / Paket kalau dibuat dari produk lain — seperti mie ayam yang terdiri dari mie, ayam, dan saus."
+          />
+        </div>
         <div class="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-1">
           {#each productKindOptions as opt}
             <button
@@ -721,10 +1050,22 @@
             error={errors.name}
           />
           <Input
-            label="SKU"
+            label="SKU (kode internal)"
             placeholder="mis. BEV-CKA-330"
             bind:value={form.sku}
+            hint="Kode pendek untuk membedakan produk ini di sistem. Boleh format apa saja, asal unik."
             error={errors.sku}
+          />
+          <Input
+            label="Barcode"
+            placeholder="mis. 8991002301234 (kosongkan jika tidak ada)"
+            bind:value={form.barcode}
+            hint={form.variants.length > 0
+              ? 'Kalau produk ini punya varian, biasanya barcode diisi per varian. Isi di sini hanya kalau pemasok kasih kode utama untuk semua varian.'
+              : form.units.length > 0
+                ? 'Barcode kemasan terkecil (mis. 1 kaleng / 1 botol). Kemasan lain (dus, karton) punya barcode sendiri di kartu Satuan kemasan.'
+                : 'Kode batang di kemasan barang. Discan di kasir supaya produk langsung masuk keranjang.'}
+            error={errors.barcode}
           />
           <Input
             label="URL Gambar"
@@ -742,19 +1083,226 @@
       />
 
       <div class="mt-5 space-y-3 border-t border-slate-100 pt-4">
-        <p class="text-xs font-semibold tracking-wider text-slate-400 uppercase">Pelacakan batch</p>
+        <div class="flex items-center gap-1.5">
+          <p class="text-xs font-semibold tracking-wider text-slate-400 uppercase">
+            Pelacakan stok per pengiriman
+          </p>
+          <Tooltip
+            content="Aktifkan kalau produk ini perlu dipisah per pengiriman (mis. roti yang cepat basi, telur, daging). Sistem mengelompokkan stok per kedatangan supaya yang paling lama bisa dijual lebih dulu."
+            size="sm"
+          />
+        </div>
         <Toggle
           bind:checked={form.requiresBatchLabel}
-          label="Memerlukan label batch"
-          description="Cetak label thermal saat batch baru diterima/dibuat. Berguna untuk barang perishable atau yang perlu lot tracking (roti, telur, daging, susu)."
+          label="Cetak label setiap kali stok masuk"
+          description="Setiap pengiriman baru otomatis dapat label kecil bertuliskan kode pengiriman. Cocok untuk roti, telur, daging — supaya bisa dilacak satu per satu."
         />
         <Toggle
           bind:checked={form.requiresExpiration}
-          label="Memerlukan tanggal kedaluwarsa"
-          description="Wajib mengisi tanggal kedaluwarsa saat menerima PO atau menambah stok. Penjualan FIFO akan memprioritaskan batch yang paling cepat kedaluwarsa."
+          label="Wajib isi tanggal kedaluwarsa"
+          description="Setiap kali stok masuk, harus mencantumkan tanggal expired. Saat penjualan, sistem otomatis menjual yang paling cepat kedaluwarsa dulu."
         />
       </div>
     </Card>
+
+    <!-- PRODUCTION MODE (composite only) -->
+    {#if form.kind === 'composite'}
+      <Card>
+        <div class="mb-3 flex items-center gap-2">
+          <Factory class="h-4 w-4 text-slate-500" />
+          <h3 class="text-sm font-semibold text-slate-900">Cara penyiapan</h3>
+          <Tooltip
+            content="Untuk produk resep/paket: apakah boleh dibuat dadakan saat ada pesanan, atau wajib disiapkan dulu. Fleksibel = boleh keduanya. Wajib disiapkan = harus diproduksi sebelum dijual."
+          />
+        </div>
+        <p class="mb-4 text-xs text-slate-500">
+          Pilih cara produk ini sampai ke pelanggan. Mode <strong>Fleksibel</strong> paling umum —
+          bisa disiapkan duluan ke etalase, atau dibuat saat pesanan datang.
+        </p>
+        <Select
+          label="Cara penyiapan default"
+          bind:value={form.productionMode}
+          options={productionModeOptions.map((o) => ({ value: o.value, label: o.label }))}
+          hint={productionModeOptions.find((o) => o.value === form.productionMode)?.description}
+        />
+
+        <div class="mt-4 grid gap-3 sm:grid-cols-2">
+          <Input
+            label="Tahan berapa jam setelah dibuat?"
+            type="number"
+            min="0"
+            step="1"
+            bind:value={form.shelfLifeAfterProductionHours}
+            hint="Misal ayam goreng 2 jam, gorengan 4 jam. Isi 0 kalau tidak ada batas waktu."
+          />
+        </div>
+
+        {#if form.variants.length > 0}
+          <details class="mt-4 rounded-lg border border-slate-200 bg-slate-50/40 p-3">
+            <summary class="cursor-pointer text-xs font-semibold text-slate-700">
+              Atur per varian (opsional)
+            </summary>
+            <p class="mt-2 mb-3 text-xs text-slate-500">
+              Biarkan kosong agar ikut pengaturan default di atas. Override hanya jika satu varian
+              butuh cara berbeda.
+            </p>
+            <div class="space-y-2">
+              {#each form.variants as variant, vi (variant.id)}
+                <div class="grid items-center gap-2 sm:grid-cols-[1fr_220px]">
+                  <span class="truncate text-sm text-slate-700">{variant.name}</span>
+                  <select
+                    class="rounded-md border border-slate-200 bg-white px-2 py-1.5 text-sm focus:border-brand-500 focus:outline-none"
+                    bind:value={form.variants[vi].productionMode}
+                  >
+                    <option value={undefined}>Ikuti default ({form.productionMode === 'strict' ? 'Wajib disiapkan dulu' : 'Fleksibel'})</option>
+                    {#each productionModeOptions as opt (opt.value)}
+                      <option value={opt.value}>{opt.label}</option>
+                    {/each}
+                  </select>
+                </div>
+              {/each}
+            </div>
+          </details>
+        {/if}
+      </Card>
+    {/if}
+
+    <!-- COMPONENTS (composite only; always rendered so recipe is filled before pricing) -->
+    {#if form.kind === 'composite'}
+      <Card>
+        {#snippet header()}
+          {#if form.components.length > 0}
+            <Button size="sm" variant="outline" onclick={addComponent}>
+              <Plus class="h-4 w-4" />
+              Tambah komponen
+            </Button>
+          {/if}
+        {/snippet}
+        <div class="mb-3 flex items-center gap-2">
+          <Boxes class="h-4 w-4 text-slate-500" />
+          <h3 class="text-sm font-semibold text-slate-900">Bahan / Isi paket</h3>
+          <Badge variant="outline" size="sm">{form.components.length}</Badge>
+          <Tooltip
+            content="Daftar produk lain yang dipakai untuk membuat / menyusun produk ini. Untuk resep: bahan-bahan + jumlahnya. Untuk paket: barang-barang yang dimasukkan. Biaya produk ini = total biaya semua bahan."
+          />
+        </div>
+        {#if form.components.length === 0}
+          <div
+            class="rounded-lg border border-dashed border-slate-300 bg-slate-50/40 px-4 py-6 text-center"
+          >
+            <p class="text-sm font-medium text-slate-600">Belum ada bahan / isi paket</p>
+            <p class="mt-1 text-xs text-slate-500">
+              Tambahkan dulu di sini supaya biaya efektif terhitung otomatis di kartu Harga &amp; Stok di bawah.
+            </p>
+            <Button size="sm" variant="outline" class="mt-3" onclick={addComponent}>
+              <Plus class="h-3.5 w-3.5" />
+              Tambah komponen pertama
+            </Button>
+          </div>
+        {:else}
+          <p class="mb-4 text-xs text-slate-500">
+            Pilih produk lain yang jadi bahan atau isi paket ini, beserta jumlahnya. Stok yang bisa
+            dijual otomatis terbatas oleh bahan yang paling sedikit.
+          </p>
+
+          <div class="space-y-3">
+            {#each form.components as comp, i (comp.id)}
+              {@const compVariantOpts = componentVariantOptionsFor(comp.productId)}
+              {@const compUnitOpts = componentUnitOptionsFor(comp.productId)}
+              {@const compCost = componentCost(comp)}
+              {@const compUnitFactor = comp.unitFactor ?? 1}
+              {@const compBaseQty = comp.quantity * compUnitFactor}
+              {@const compSubtotal = compBaseQty * compCost}
+              {@const compBaseUnit = componentUnitLabel(comp.productId)}
+              {@const compChosenUnit =
+                comp.unitId && comp.unitId !== products.getById(comp.productId)?.unitId
+                  ? units.getById(comp.unitId)?.code ?? compBaseUnit
+                  : compBaseUnit}
+              {@const compProductBaseUnitId = products.getById(comp.productId)?.unitId ?? ''}
+              <div class="rounded-lg border border-slate-200 bg-white p-3">
+                <div class="grid gap-3 md:grid-cols-[2fr_1.5fr_auto] md:items-end">
+                  <Select
+                    label="Produk"
+                    placeholder="Pilih produk"
+                    value={comp.productId}
+                    onchange={(e) => {
+                      comp.productId = (e.currentTarget as HTMLSelectElement).value;
+                      comp.variantId = undefined;
+                      // Reset packaging selector — kemasan beda produk beda
+                      comp.unitId = undefined;
+                      comp.unitFactor = undefined;
+                    }}
+                    options={componentProductOptions}
+                    error={errors[`c_${i}_product`]}
+                  />
+                  {#if compVariantOpts.length > 0}
+                    <Select
+                      label="Varian"
+                      value={comp.variantId ?? ''}
+                      onchange={(e) => {
+                        const v = (e.currentTarget as HTMLSelectElement).value;
+                        comp.variantId = v || undefined;
+                      }}
+                      options={compVariantOpts}
+                      error={errors[`c_${i}_variant`]}
+                    />
+                  {:else}
+                    <div class="hidden md:block"></div>
+                  {/if}
+                  <button
+                    type="button"
+                    class="mb-[2px] inline-flex h-9 items-center justify-center rounded-md px-2 text-slate-400 hover:bg-rose-50 hover:text-rose-600"
+                    aria-label="Hapus komponen"
+                    onclick={() => removeComponent(i)}
+                  >
+                    <Trash2 class="h-4 w-4" />
+                  </button>
+                </div>
+                <div class="mt-3 grid gap-3 md:grid-cols-[0.6fr_1.4fr] md:items-end">
+                  <Input
+                    label="Qty"
+                    type="number"
+                    step="any"
+                    min="0"
+                    bind:value={comp.quantity}
+                    error={errors[`c_${i}_quantity`]}
+                  />
+                  {#if compUnitOpts.length > 1}
+                    <Select
+                      label="Satuan"
+                      tooltip="Pilih satuan untuk bahan ini. Kalau produk komponen punya kemasan lain (mis. ekor untuk ayam, dus untuk Cola), pilih di sini supaya kamu bisa input qty dalam satuan itu. Sistem konversi otomatis ke satuan dasar untuk hitung biaya & potongan stok."
+                      value={`${comp.unitId ?? compProductBaseUnitId}|${compUnitFactor}`}
+                      options={compUnitOpts}
+                      onchange={(e) =>
+                        onComponentUnitChange(comp, (e.currentTarget as HTMLSelectElement).value)}
+                    />
+                  {:else}
+                    <div class="hidden md:block"></div>
+                  {/if}
+                </div>
+                <p class="mt-2 text-xs text-slate-500">
+                  Biaya
+                  <span class="font-medium text-slate-700">{formatRupiah(compCost)}</span>{#if compBaseUnit}<span>/{compBaseUnit}</span>{/if}
+                  {#if compUnitFactor !== 1}
+                    &middot; 1 {compChosenUnit} = {compUnitFactor} {compBaseUnit}
+                  {/if}
+                  &middot; menyumbang
+                  <span class="font-medium text-slate-700">{formatRupiah(compSubtotal)}</span>
+                  ke produk ini
+                </p>
+              </div>
+            {/each}
+          </div>
+
+          <div class="mt-4 flex items-center justify-end gap-3 border-t border-slate-100 pt-3">
+            <span class="text-sm text-slate-500">Biaya efektif</span>
+            <span class="text-lg font-semibold text-slate-900">
+              {formatRupiah(effectiveFormCost)}
+            </span>
+          </div>
+        {/if}
+      </Card>
+    {/if}
 
     <!-- PRICING & INVENTORY -->
     <Card title="Harga & Stok" description="Biaya, harga jual per daftar harga, dan stok.">
@@ -762,29 +1310,65 @@
         <Select
           label="Satuan"
           placeholder="Pilih satuan"
+          tooltip={form.kind === 'composite'
+            ? 'Satuan output produk ini — yaitu 1 unit hasil jadinya (mis. porsi, paket, pcs, potong). Bukan satuan bahan-bahannya; bahan punya satuan sendiri masing-masing.'
+            : 'Satuan dasar untuk jual barang ini — mis. pcs, kg, gram, botol, liter. Kalau jual juga per dus/karton, tambah di Satuan Kemasan.'}
           bind:value={form.unitId}
           options={unitOptions}
           error={errors.unitId}
         />
+        <Select
+          label="Acuan biaya untuk hitung harga jual"
+          tooltip="Hanya berpengaruh kalau harga jual pakai 'Persen untung' atau 'Biaya + nominal'. Pengaturan ini menentukan angka biaya yang dipakai saat hitung. Tidak berlaku untuk harga jual tetap."
+          bind:value={form.markupCostSource}
+          options={markupCostSourceOptions.map((o) => ({ value: o.value, label: o.label }))}
+          hint={markupCostSourceOptions.find((o) => o.value === form.markupCostSource)?.description}
+        />
+      </div>
+
+      <div class="mt-4">
         {#if showComponents}
-          <div>
-            <span class="mb-1.5 block text-sm font-medium text-slate-700">Biaya efektif</span>
-            <div
-              class="flex h-9 items-center rounded-lg border border-slate-200 bg-slate-50 px-3 text-sm"
-            >
-              <span class="font-medium text-slate-900">{formatRupiah(effectiveFormCost)}</span>
-              <span class="ml-1.5 text-xs text-slate-500">
+          <span class="mb-1.5 block text-sm font-medium text-slate-700">
+            {costIsFromBatch ? 'Biaya saat ini' : 'Biaya efektif'}
+          </span>
+          <div
+            class="flex h-9 items-center rounded-lg border border-slate-200 bg-slate-50 px-3 text-sm"
+          >
+            <span class="font-medium text-slate-900">{formatRupiah(effectiveFormCost)}</span>
+            <span class="ml-1.5 text-xs text-slate-500">
+              {#if costIsFromBatch}
+                {costSourceLabel}
+              {:else}
                 dari {form.components.length} komponen
-              </span>
-            </div>
+              {/if}
+            </span>
           </div>
+          {#if costIsFromBatch}
+            <p class="mt-1.5 text-xs text-slate-500">
+              Resep: {formatRupiah(recipeFormCost)}
+            </p>
+          {/if}
         {:else}
           <MoneyInput
-            label="Biaya beli"
+            label={costFieldLabel}
             bind:value={form.cost}
-            hint="Biaya per {baseCode}. Tidak diupdate otomatis oleh PO; biaya aktual dihitung dari batch."
+            hint={costFieldHint}
             error={errors.cost}
           />
+          {#if costIsFromBatch}
+            <p class="mt-1.5 text-xs text-slate-500">
+              Biaya saat ini:
+              <span class="font-medium text-slate-700">{formatRupiah(effectiveFormCost)}</span>
+              <span>{costSourceLabel}</span>
+            </p>
+          {/if}
+        {/if}
+        {#if costZeroWarning}
+          <div
+            class="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800"
+          >
+            {costZeroMessage}
+          </div>
         {/if}
       </div>
 
@@ -792,16 +1376,43 @@
         <div class="mb-1 flex items-center gap-2">
           <BadgePercent class="h-4 w-4 text-slate-500" />
           <h4 class="text-sm font-semibold text-slate-900">Harga jual</h4>
-          <a
-            href="/pricelists"
-            class="ml-auto text-xs font-medium text-brand-600 hover:text-brand-700"
-          >
-            Kelola daftar harga →
-          </a>
+          <Tooltip
+            content="Harga yang dibayar pelanggan. Bisa diatur tetap (mis. Rp 8.000) atau dihitung otomatis dari biaya (biaya + nominal, atau biaya × persen untung). Tambahkan 'Tingkat harga' jika ingin harga berbeda untuk pembelian dalam jumlah banyak."
+          />
+          <div class="ml-auto flex items-center gap-3">
+            <button
+              type="button"
+              class="inline-flex items-center gap-1 text-xs font-medium text-brand-600 hover:text-brand-700 disabled:cursor-not-allowed disabled:text-slate-400"
+              onclick={openPriceAdjustmentModal}
+              disabled={!hasAnyPriceEntries}
+              title={hasAnyPriceEntries
+                ? 'Naikkan/turunkan harga sekaligus di semua daftar harga, varian, dan kemasan'
+                : 'Tambahkan minimal satu harga dulu'}
+            >
+              <Wand2 class="h-3.5 w-3.5" />
+              Sesuaikan harga
+            </button>
+            {#if product?.id}
+              <a
+                href="/riwayat-harga?productId={product.id}"
+                class="inline-flex items-center gap-1 text-xs font-medium text-brand-600 hover:text-brand-700"
+                title="Lihat semua perubahan harga produk ini"
+              >
+                <History class="h-3.5 w-3.5" />
+                Lihat riwayat harga
+              </a>
+            {/if}
+            <a
+              href="/pricelists"
+              class="text-xs font-medium text-brand-600 hover:text-brand-700"
+            >
+              Kelola daftar harga →
+            </a>
+          </div>
         </div>
         <p class="mb-4 text-xs text-slate-500">
-          Tambahkan harga per daftar harga. Klik "Tambah tingkat harga" jika ingin harga berbeda
-          pada kuantitas yang lebih besar.
+          Isi harga jual normal di sini. Klik "Tambah tingkat harga" kalau pelanggan dapat harga
+          beda saat beli banyak (mis. beli 12 botol harga turun).
         </p>
 
         <div class="space-y-3">
@@ -893,12 +1504,12 @@
         {/if}
       </div>
 
-      <!-- Opt-in feature chips -->
+      <!-- Opt-in feature chips. Komponen tidak masuk di sini — kartu Bahan
+           / Isi paket sudah selalu muncul untuk produk komposit di atas. -->
       {@const canAddPackaging = form.kind === 'goods' && !showPackagings}
-      {@const canAddComponent = form.kind === 'composite' && !showComponents}
       {@const canAddVariant = !showVariants}
       {@const canAddExtra = !showExtras}
-      {#if canAddPackaging || canAddComponent || canAddVariant || canAddExtra}
+      {#if canAddPackaging || canAddVariant || canAddExtra}
         <div class="mt-6 border-t border-slate-100 pt-5">
           <p class="mb-2 text-xs font-medium text-slate-500">Tambahkan ke produk ini</p>
           <div class="flex flex-wrap gap-2">
@@ -910,16 +1521,6 @@
               >
                 <Layers class="h-3.5 w-3.5" />
                 Tambah satuan (dos, karton…)
-              </button>
-            {/if}
-            {#if canAddComponent}
-              <button
-                type="button"
-                class="inline-flex items-center gap-1.5 rounded-full border border-dashed border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:border-brand-400 hover:bg-brand-50 hover:text-brand-700"
-                onclick={addComponent}
-              >
-                <Boxes class="h-3.5 w-3.5" />
-                Tambah komponen (resep)
               </button>
             {/if}
             {#if canAddVariant}
@@ -946,97 +1547,6 @@
         </div>
       {/if}
     </Card>
-
-    <!-- COMPONENTS (conditional) -->
-    {#if showComponents}
-      <Card>
-        {#snippet header()}
-          <Button size="sm" variant="outline" onclick={addComponent}>
-            <Plus class="h-4 w-4" />
-            Tambah komponen
-          </Button>
-        {/snippet}
-        <div class="mb-3 flex items-center gap-2">
-          <Boxes class="h-4 w-4 text-slate-500" />
-          <h3 class="text-sm font-semibold text-slate-900">Komponen</h3>
-          <Badge variant="outline" size="sm">{form.components.length}</Badge>
-        </div>
-        <p class="mb-4 text-xs text-slate-500">
-          Produk lain yang membentuk produk ini — sebuah resep atau paket. Biaya efektif adalah
-          jumlah `qty × biaya komponen`. Stok produksi dibatasi oleh komponen yang paling langka.
-        </p>
-
-        <div class="space-y-3">
-          {#each form.components as comp, i (comp.id)}
-            {@const compVariantOpts = componentVariantOptionsFor(comp.productId)}
-            {@const compCost = componentCost(comp)}
-            {@const compSubtotal = comp.quantity * compCost}
-            {@const compUnit = componentUnitLabel(comp.productId)}
-            <div class="rounded-lg border border-slate-200 bg-white p-3">
-              <div class="grid gap-3 md:grid-cols-[2fr_1.5fr_0.7fr_auto] md:items-end">
-                <Select
-                  label="Produk"
-                  placeholder="Pilih produk"
-                  value={comp.productId}
-                  onchange={(e) => {
-                    comp.productId = (e.currentTarget as HTMLSelectElement).value;
-                    comp.variantId = undefined;
-                  }}
-                  options={componentProductOptions}
-                  error={errors[`c_${i}_product`]}
-                />
-                {#if compVariantOpts.length > 0}
-                  <Select
-                    label="Varian"
-                    value={comp.variantId ?? ''}
-                    onchange={(e) => {
-                      const v = (e.currentTarget as HTMLSelectElement).value;
-                      comp.variantId = v || undefined;
-                    }}
-                    options={compVariantOpts}
-                    error={errors[`c_${i}_variant`]}
-                  />
-                {:else}
-                  <div class="hidden md:block"></div>
-                {/if}
-                <Input
-                  label="Qty"
-                  type="number"
-                  step="any"
-                  min="0"
-                  bind:value={comp.quantity}
-                  hint={compUnit ? `dalam ${compUnit}` : undefined}
-                  error={errors[`c_${i}_quantity`]}
-                />
-                <button
-                  type="button"
-                  class="mb-[2px] inline-flex h-9 items-center justify-center rounded-md px-2 text-slate-400 hover:bg-rose-50 hover:text-rose-600"
-                  aria-label="Hapus komponen"
-                  onclick={() => removeComponent(i)}
-                >
-                  <Trash2 class="h-4 w-4" />
-                </button>
-              </div>
-              <p class="mt-2 text-xs text-slate-500">
-                Biaya komponen
-                <span class="font-medium text-slate-700">{formatRupiah(compCost)}</span>
-                {#if compUnit}<span>/{compUnit}</span>{/if}
-                &middot; menyumbang
-                <span class="font-medium text-slate-700">{formatRupiah(compSubtotal)}</span>
-                ke produk ini
-              </p>
-            </div>
-          {/each}
-        </div>
-
-        <div class="mt-4 flex items-center justify-end gap-3 border-t border-slate-100 pt-3">
-          <span class="text-sm text-slate-500">Biaya efektif</span>
-          <span class="text-lg font-semibold text-slate-900">
-            {formatRupiah(effectiveFormCost)}
-          </span>
-        </div>
-      </Card>
-    {/if}
 
     <!-- PACKAGINGS (conditional) -->
     {#if showPackagings}
@@ -1083,6 +1593,7 @@
                   label="Barcode"
                   placeholder="opsional"
                   bind:value={pack.barcode}
+                  error={errors[`u_${i}_barcode`]}
                 />
                 <button
                   type="button"
@@ -1147,12 +1658,15 @@
         {/snippet}
         <div class="mb-3 flex items-center gap-2">
           <Plus class="h-4 w-4 text-slate-500" />
-          <h3 class="text-sm font-semibold text-slate-900">Ekstra</h3>
+          <h3 class="text-sm font-semibold text-slate-900">Ekstra / tambahan opsional</h3>
           <Badge variant="outline" size="sm">{form.extras.length}</Badge>
+          <Tooltip
+            content="Tambahan yang bisa dipilih pelanggan saat pesan, mis. tambah keju, ganti susu almond, atau bungkus kado. Tiap ekstra punya harga tambahan, dan bisa diatur untuk memotong stok bahan tertentu."
+          />
         </div>
         <p class="mb-4 text-xs text-slate-500">
-          Tambahan opsional saat penjualan. Setiap ekstra punya selisih harga dan opsional
-          mengurangi stok bahan saat dipilih.
+          Pilihan tambahan saat pelanggan pesan (mis. tambah keju, ganti susu). Tiap pilihan punya
+          harga tambahan, dan boleh diatur supaya ikut memotong stok bahan.
         </p>
 
         <div class="space-y-3">
@@ -1166,9 +1680,9 @@
                   error={errors[`ex_${i}_name`]}
                 />
                 <MoneyInput
-                  label="Selisih harga"
+                  label="Harga tambahan"
                   bind:value={extra.priceDelta}
-                  hint="Ditambahkan ke harga jual saat dipilih."
+                  hint="Ditambah ke harga utama saat pelanggan pilih ekstra ini."
                   error={errors[`ex_${i}_price`]}
                 />
                 <button
@@ -1182,8 +1696,8 @@
               </div>
               <Collapsible
                 title={extra.components.length > 0
-                  ? `Dampak stok (${extra.components.length} komponen)`
-                  : 'Tambah dampak stok (opsional)'}
+                  ? `Bahan yang dipotong (${extra.components.length})`
+                  : 'Atur bahan yang dipotong (opsional)'}
               >
                 <div class="space-y-2 rounded-lg bg-slate-50/60 p-3">
                   {#if extra.components.length === 0}
@@ -1193,15 +1707,24 @@
                   {/if}
                   {#each extra.components as ec, eci (ec.id)}
                     {@const ecVarOpts = componentVariantOptionsFor(ec.productId)}
-                    {@const ecUnit = componentUnitLabel(ec.productId)}
+                    {@const ecUnitOpts = componentUnitOptionsFor(ec.productId)}
+                    {@const ecBaseUnit = componentUnitLabel(ec.productId)}
+                    {@const ecFactor = ec.unitFactor ?? 1}
+                    {@const ecChosenUnit =
+                      ec.unitId && ec.unitId !== products.getById(ec.productId)?.unitId
+                        ? units.getById(ec.unitId)?.code ?? ecBaseUnit
+                        : ecBaseUnit}
+                    {@const ecBaseUnitId = products.getById(ec.productId)?.unitId ?? ''}
                     <div class="rounded-lg border border-slate-200 bg-white p-2.5">
-                      <div class="grid gap-2 md:grid-cols-[2fr_1.5fr_0.7fr_auto] md:items-end">
+                      <div class="grid gap-2 md:grid-cols-[2fr_1.5fr_auto] md:items-end">
                         <Select
                           label="Produk"
                           value={ec.productId}
                           onchange={(e) => {
                             ec.productId = (e.currentTarget as HTMLSelectElement).value;
                             ec.variantId = undefined;
+                            ec.unitId = undefined;
+                            ec.unitFactor = undefined;
                           }}
                           options={componentProductOptions}
                           error={errors[`ex_${i}_c${eci}_product`]}
@@ -1219,15 +1742,6 @@
                         {:else}
                           <div class="hidden md:block"></div>
                         {/if}
-                        <Input
-                          label="Qty"
-                          type="number"
-                          step="any"
-                          min="0"
-                          bind:value={ec.quantity}
-                          hint={ecUnit ? `dalam ${ecUnit}` : undefined}
-                          error={errors[`ex_${i}_c${eci}_quantity`]}
-                        />
                         <button
                           type="button"
                           class="mb-[2px] inline-flex h-9 items-center justify-center rounded-md px-2 text-slate-400 hover:bg-rose-50 hover:text-rose-600"
@@ -1237,6 +1751,35 @@
                           <Trash2 class="h-4 w-4" />
                         </button>
                       </div>
+                      <div class="mt-2 grid gap-2 md:grid-cols-[0.6fr_1.4fr] md:items-end">
+                        <Input
+                          label="Qty"
+                          type="number"
+                          step="any"
+                          min="0"
+                          bind:value={ec.quantity}
+                          error={errors[`ex_${i}_c${eci}_quantity`]}
+                        />
+                        {#if ecUnitOpts.length > 1}
+                          <Select
+                            label="Satuan"
+                            value={`${ec.unitId ?? ecBaseUnitId}|${ecFactor}`}
+                            options={ecUnitOpts}
+                            onchange={(e) =>
+                              onComponentUnitChange(
+                                ec,
+                                (e.currentTarget as HTMLSelectElement).value
+                              )}
+                          />
+                        {:else}
+                          <div class="hidden md:block"></div>
+                        {/if}
+                      </div>
+                      {#if ecFactor !== 1}
+                        <p class="mt-1.5 text-xs text-slate-500">
+                          1 {ecChosenUnit} = {ecFactor} {ecBaseUnit}
+                        </p>
+                      {/if}
                     </div>
                   {/each}
                   <Button size="sm" variant="outline" onclick={() => addExtraComponent(extra)}>
@@ -1264,22 +1807,65 @@
           <Shapes class="h-4 w-4 text-slate-500" />
           <h3 class="text-sm font-semibold text-slate-900">Varian</h3>
           <Badge variant="outline" size="sm">{form.variants.length}</Badge>
+          <Tooltip
+            content="Varian = versi berbeda dari produk yang sama. Mis. Kaos punya varian warna (Merah, Biru) dan ukuran (S, M, L). Tiap varian punya stok dan barcode sendiri."
+          />
         </div>
-        <p class="mb-4 text-xs text-slate-500">
-          Variasi seperti ukuran atau warna. Tentukan atribut untuk menghasilkan satu varian
-          per kombinasi otomatis.
+        <p class="mb-3 text-xs text-slate-500">
+          Versi berbeda dari produk yang sama (mis. warna, ukuran). Tentukan pilihan-pilihannya
+          di bawah, lalu sistem otomatis membuat varian per kombinasi.
         </p>
+
+        <details class="mb-4 rounded-lg border border-slate-200 bg-blue-50/40 px-3 py-2 text-xs">
+          <summary class="cursor-pointer font-medium text-slate-700">
+            💡 Kapan pakai varian vs pisah jadi produk baru?
+          </summary>
+          <div class="mt-2 space-y-2 text-slate-600">
+            <p class="font-semibold text-slate-700">Pakai varian kalau:</p>
+            <ul class="ml-4 list-disc space-y-1">
+              <li>Versi yang sama produk — beda warna, ukuran, atau edisi (Kaos Merah/Biru, Sepatu 39/40/41).</li>
+              <li>Customer mikirnya "produk yang sama, tinggal pilih varian".</li>
+              <li>Laporan & analisis lebih masuk akal kalau digabung (mis. total penjualan Kaos Polos lintas warna).</li>
+              <li>Stok dipisah per varian, tapi katalog tampil satu kartu produk.</li>
+            </ul>
+
+            <p class="mt-3 font-semibold text-slate-700">Pisah jadi produk baru kalau:</p>
+            <ul class="ml-4 list-disc space-y-1">
+              <li>Spec teknis beda penting — Aqua 600mL vs 1.5L (isi beda, supplier mungkin beda, harga ratusan persen beda).</li>
+              <li>Beda kategori atau brand di laporan keuangan.</li>
+              <li>Customer cari di katalog dengan nama yang beda banget (nasi goreng vs nasi uduk — bukan "nasi" dengan varian).</li>
+              <li>Butuh kemasan kemasan jualnya benar-benar beda — mis. satu pakai dus 24, satu pakai dus 12.</li>
+            </ul>
+
+            <p class="mt-3 font-semibold text-slate-700">Cukup kemasan (satuan tambahan) saja kalau:</p>
+            <ul class="ml-4 list-disc space-y-1">
+              <li>Produknya sama persis, cuma cara jualnya beda (Cola kaleng dijual ecer / 6-pack / dus 24).</li>
+              <li>Tidak ada perbedaan warna/ukuran/edisi.</li>
+            </ul>
+
+            <p class="mt-3 text-slate-500">
+              <strong>Catatan keterbatasan saat ini</strong>: kalau pakai varian <em>plus</em> kemasan
+              (mis. Kaos × ukuran lusin), kemasan & harga lusinannya
+              <strong>sama untuk semua varian</strong>. Tidak bisa beda harga atau barcode lusinan
+              per warna. Kalau butuh itu, pisahkan jadi produk berbeda atau jadikan kemasan
+              sebagai varian (mis. atribut "Kemasan: Ecer / Lusinan").
+            </p>
+          </div>
+        </details>
 
         <!-- Attribute editor -->
         <div class="mb-4 rounded-lg border border-slate-200 bg-slate-50/50 p-4">
           <div class="mb-2 flex items-center gap-2">
             <Tags class="h-4 w-4 text-slate-500" />
-            <h5 class="text-sm font-semibold text-slate-900">Atribut varian</h5>
+            <h5 class="text-sm font-semibold text-slate-900">Pilihan variasi</h5>
             <Badge variant="outline" size="sm">{form.attributes.length}</Badge>
+            <Tooltip
+              content="Tambahkan jenis variasi (mis. Warna) lalu isi nilainya (Merah, Biru, Hijau). Klik 'Hasilkan varian' untuk membuat satu varian per kombinasi otomatis."
+            />
           </div>
           <p class="mb-3 text-xs text-slate-500">
-            Tentukan opsi yang bervariasi (mis. Warna, Ukuran), tambahkan nilai-nilai, lalu
-            hasilkan satu varian per kombinasi.
+            Isi jenis variasi (mis. Warna, Ukuran) beserta nilai-nilainya, lalu klik "Hasilkan
+            varian" untuk membuat satu varian per kombinasi.
           </p>
 
           {#if form.attributes.length === 0}
@@ -1380,6 +1966,7 @@
                     label="Barcode"
                     placeholder="opsional"
                     bind:value={variant.barcode}
+                    error={errors[`v_${i}_barcode`]}
                   />
                   <button
                     type="button"
@@ -1415,15 +2002,24 @@
                       {/if}
                       {#each variant.components as vcomp, vci (vcomp.id)}
                         {@const compVarOpts = componentVariantOptionsFor(vcomp.productId)}
-                        {@const vcompUnit = componentUnitLabel(vcomp.productId)}
+                        {@const vcompUnitOpts = componentUnitOptionsFor(vcomp.productId)}
+                        {@const vcompBaseUnit = componentUnitLabel(vcomp.productId)}
+                        {@const vcompFactor = vcomp.unitFactor ?? 1}
+                        {@const vcompChosenUnit =
+                          vcomp.unitId && vcomp.unitId !== products.getById(vcomp.productId)?.unitId
+                            ? units.getById(vcomp.unitId)?.code ?? vcompBaseUnit
+                            : vcompBaseUnit}
+                        {@const vcompBaseUnitId = products.getById(vcomp.productId)?.unitId ?? ''}
                         <div class="rounded-lg border border-slate-200 bg-white p-2.5">
-                          <div class="grid gap-2 md:grid-cols-[2fr_1.5fr_0.7fr_auto] md:items-end">
+                          <div class="grid gap-2 md:grid-cols-[2fr_1.5fr_auto] md:items-end">
                             <Select
                               label="Produk"
                               value={vcomp.productId}
                               onchange={(e) => {
                                 vcomp.productId = (e.currentTarget as HTMLSelectElement).value;
                                 vcomp.variantId = undefined;
+                                vcomp.unitId = undefined;
+                                vcomp.unitFactor = undefined;
                               }}
                               options={componentProductOptions}
                               error={errors[`v_${i}_c${vci}_product`]}
@@ -1441,15 +2037,6 @@
                             {:else}
                               <div class="hidden md:block"></div>
                             {/if}
-                            <Input
-                              label="Qty"
-                              type="number"
-                              step="any"
-                              min="0"
-                              bind:value={vcomp.quantity}
-                              hint={vcompUnit ? `dalam ${vcompUnit}` : undefined}
-                              error={errors[`v_${i}_c${vci}_quantity`]}
-                            />
                             <button
                               type="button"
                               class="mb-[2px] inline-flex h-9 items-center justify-center rounded-md px-2 text-slate-400 hover:bg-rose-50 hover:text-rose-600"
@@ -1459,6 +2046,35 @@
                               <Trash2 class="h-4 w-4" />
                             </button>
                           </div>
+                          <div class="mt-2 grid gap-2 md:grid-cols-[0.6fr_1.4fr] md:items-end">
+                            <Input
+                              label="Qty"
+                              type="number"
+                              step="any"
+                              min="0"
+                              bind:value={vcomp.quantity}
+                              error={errors[`v_${i}_c${vci}_quantity`]}
+                            />
+                            {#if vcompUnitOpts.length > 1}
+                              <Select
+                                label="Satuan"
+                                value={`${vcomp.unitId ?? vcompBaseUnitId}|${vcompFactor}`}
+                                options={vcompUnitOpts}
+                                onchange={(e) =>
+                                  onComponentUnitChange(
+                                    vcomp,
+                                    (e.currentTarget as HTMLSelectElement).value
+                                  )}
+                              />
+                            {:else}
+                              <div class="hidden md:block"></div>
+                            {/if}
+                          </div>
+                          {#if vcompFactor !== 1}
+                            <p class="mt-1.5 text-xs text-slate-500">
+                              1 {vcompChosenUnit} = {vcompFactor} {vcompBaseUnit}
+                            </p>
+                          {/if}
                         </div>
                       {/each}
                       <Button size="sm" variant="outline" onclick={() => addVariantComponent(variant)}>
@@ -1515,33 +2131,55 @@
 
   <!-- SIDEBAR -->
   <div class="space-y-4">
-    <Card title="Organisasi" description="Dimana produk ini muncul di katalog Anda.">
+    <Card title="Pengelompokan" description="Letak produk ini di katalog dan pengaturan pajaknya.">
       <div class="space-y-4">
         <Select
           label="Kategori"
           placeholder="Pilih kategori"
+          tooltip="Pengelompokan produk untuk laporan & filter. Mis. Minuman, Makanan, Merchandise."
           bind:value={form.categoryId}
           options={categoryOptions}
           error={errors.categoryId}
         />
         <Select
-          label="Tarif pajak"
+          label="Brand"
+          tooltip="Merek pabrik / produsen produk. Berguna untuk filter dan grouping di laporan. Kosongkan kalau tidak relevan."
+          bind:value={form.brandId}
+          options={brandOptions}
+        />
+        <div>
+          <div class="mb-1.5 flex items-center gap-1.5">
+            <span class="text-sm font-medium text-slate-700">Tag</span>
+            <Tooltip
+              content="Label fleksibel di luar kategori — mis. 'Baru', 'Best Seller', 'Halal', 'Promo'. Ketik untuk cari & pilih, atau tambah baru. Atur warna & visibilitas di halaman Tag."
+            />
+          </div>
+          <ChipInput
+            bind:values={form.tags}
+            suggestions={tags.items.map((t) => t.name)}
+            placeholder="Ketik untuk cari atau tambah tag…"
+          />
+        </div>
+        <Select
+          label="Pajak"
+          tooltip="Tarif PPN untuk produk ini. Biarkan 'Ikut tarif kategori' kalau pajaknya sama dengan kategori."
           bind:value={form.taxRateId}
           options={taxRateSelectOptions}
-          hint="Override default kategori jika produk ini memiliki tarif berbeda."
+          hint="Pilih tarif khusus hanya kalau produk ini punya pajak beda dari kategorinya."
         />
         <Select
           label="Status"
+          tooltip="Produk Aktif muncul di Kasir. Diarsipkan = disembunyikan dari penjualan tapi tetap ada di sistem untuk laporan history."
           bind:value={form.status}
           options={statusOptions}
-          hint="Produk yang diarsipkan tidak ditampilkan di terminal Kasir."
+          hint="Produk yang diarsipkan tidak muncul di Kasir."
         />
       </div>
     </Card>
 
     <Card
       title="Pemasok"
-      description="Bisa lebih dari satu — klik baris untuk edit detail. Tandai satu sebagai utama (★)."
+      description="Boleh isi lebih dari satu pemasok. Klik baris untuk lihat detail. Tandai bintang (★) untuk pemasok utama."
     >
       {#if form.suppliers.length === 0}
         <div class="rounded-lg border border-dashed border-slate-300 bg-slate-50/40 px-3 py-5 text-center">
@@ -1666,9 +2304,22 @@
                     placeholder="Kode katalog pemasok"
                     bind:value={ps.supplierSku}
                   />
+                  <Input
+                    label="Min order"
+                    tooltip="Jumlah minimum pesanan yang diterima pemasok ini, dalam satuan dasar produk. Kosongkan kalau tidak ada batasan. Akan jadi peringatan di form PO kalau dipesan kurang."
+                    type="number"
+                    min="0"
+                    value={ps.minOrderQty ?? ''}
+                    oninput={(e) => {
+                      const v = (e.currentTarget as HTMLInputElement).value;
+                      ps.minOrderQty = v === '' ? undefined : Number(v);
+                    }}
+                    placeholder="opsional"
+                    hint="Mis. 12 = minimal pesan 12 pcs."
+                  />
                   <Textarea
                     label="Catatan"
-                    placeholder="Termin pembayaran, MOQ, dll."
+                    placeholder="Termin pembayaran, syarat khusus, dll."
                     bind:value={ps.notes}
                   />
                 </div>
@@ -1682,6 +2333,82 @@
           </Button>
         </div>
       {/if}
+    </Card>
+
+    <Card>
+      <div class="mb-3 flex items-center gap-2">
+        <h3 class="text-sm font-semibold text-slate-900">Info tambahan</h3>
+        <Tooltip
+          content="Field opsional untuk produk regulated (BPOM, Halal) atau elektronik (garansi). Plus catatan bebas key-value untuk apa pun yang tidak masuk struktur di atas — mis. kandungan, ukuran, dll."
+        />
+      </div>
+      <Collapsible
+        bind:open={extraInfoOpen}
+        title={form.bpomNumber || form.halalCertNumber || form.warrantyMonths > 0 || form.metadataPairs.length > 0
+          ? 'Buka untuk ubah'
+          : 'Isi kalau perlu'}
+      >
+        <div class="space-y-3">
+          <Input
+            label="Nomor BPOM"
+            tooltip="Nomor izin edar BPOM untuk kosmetik, makanan, atau obat. Tercetak di kemasan produk regulated."
+            placeholder="mis. POM NA 18101200123"
+            bind:value={form.bpomNumber}
+          />
+          <Input
+            label="Nomor sertifikat Halal"
+            tooltip="Nomor sertifikat MUI Halal. Tercetak di kemasan dengan logo halal."
+            placeholder="mis. 00150003420220"
+            bind:value={form.halalCertNumber}
+          />
+          <Input
+            label="Garansi (bulan)"
+            tooltip="Masa garansi untuk barang elektronik / peralatan. Kosongkan atau isi 0 kalau tidak ada garansi."
+            type="number"
+            min="0"
+            step="1"
+            bind:value={form.warrantyMonths}
+            hint="Mis. 12 untuk garansi 1 tahun. 0 = tanpa garansi."
+          />
+
+          <div class="rounded-lg border border-slate-200 bg-slate-50/40 p-3">
+            <div class="mb-2 flex items-center gap-1.5">
+              <span class="text-xs font-semibold tracking-wider text-slate-400 uppercase">
+                Catatan lain
+              </span>
+              <Tooltip
+                content="Catatan key-value bebas. Mis. 'Kandungan: 100% katun', 'Ukuran botol: 600mL', 'Produsen: PT XYZ'."
+                size="sm"
+              />
+            </div>
+            {#if form.metadataPairs.length === 0}
+              <p class="text-center text-xs text-slate-400">
+                Belum ada catatan tambahan.
+              </p>
+            {/if}
+            <div class="space-y-2">
+              {#each form.metadataPairs as pair, i (i)}
+                <div class="grid gap-2 md:grid-cols-[1fr_1.5fr_auto] md:items-center">
+                  <Input placeholder="Nama info" bind:value={pair.key} />
+                  <Input placeholder="Isi info" bind:value={pair.value} />
+                  <button
+                    type="button"
+                    class="inline-flex h-9 w-9 items-center justify-center rounded-md text-slate-400 hover:bg-rose-50 hover:text-rose-600"
+                    aria-label="Hapus catatan"
+                    onclick={() => removeMetadataPair(i)}
+                  >
+                    <Trash2 class="h-4 w-4" />
+                  </button>
+                </div>
+              {/each}
+            </div>
+            <Button size="sm" variant="outline" class="mt-2" onclick={addMetadataPair}>
+              <Plus class="h-3.5 w-3.5" />
+              Tambah catatan
+            </Button>
+          </div>
+        </div>
+      </Collapsible>
     </Card>
 
     {#if showPackagings || showVariants || form.prices.length > 1}
@@ -1748,3 +2475,17 @@
   onConfirm={confirmKindSwitch}
   onCancel={() => (pendingKind = null)}
 />
+
+{#if priceAdjustmentOpen}
+  <PriceAdjustmentModal
+    bind:open={priceAdjustmentOpen}
+    product={priceAdjustmentSnapshot}
+    productPrices={form.prices}
+    variants={form.variants}
+    packagings={form.units}
+    baseCost={effectiveFormCost}
+    markupCostSource={form.markupCostSource}
+    onApply={applyPricePatches}
+    onClose={() => (priceAdjustmentOpen = false)}
+  />
+{/if}

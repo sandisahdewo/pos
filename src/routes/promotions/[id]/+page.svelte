@@ -6,6 +6,7 @@
     Calendar,
     Percent,
     Plus,
+    Printer,
     Trash2,
     Save,
     Tag,
@@ -517,6 +518,12 @@
         <ArrowLeft class="h-4 w-4" />
         Batal
       </Button>
+      {#if !isNew && editing}
+        <Button variant="outline" href="/promotions/{editing.id}/label">
+          <Printer class="h-4 w-4" />
+          Cetak label
+        </Button>
+      {/if}
       <Button onclick={save}>
         <Save class="h-4 w-4" />
         Simpan

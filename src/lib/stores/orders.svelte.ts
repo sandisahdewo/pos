@@ -1,4 +1,9 @@
-import { products, type CompositeComponent } from './products.svelte';
+import {
+  products,
+  productionModeOf,
+  recipeOf,
+  type CompositeComponent
+} from './products.svelte';
 import { batches, type BatchAllocation } from './batches.svelte';
 import { stockMovements, type StockMovementReference } from './stockMovements.svelte';
 
@@ -1016,11 +1021,57 @@ function deductComponents(
 ): BatchAllocation[] {
   const allocations: BatchAllocation[] = [];
   for (const c of comps) {
+    // Component qty may be expressed in a packaging unit (mis. 1 ekor = 8 pcs);
+    // convert to base via unitFactor before charging stock.
+    const baseQty = c.quantity * (c.unitFactor ?? 1) * multiplier;
     allocations.push(
-      ...deductBatchesFIFO(c.productId, c.variantId, c.quantity * multiplier, context)
+      ...deductCompositeOrGoods(c.productId, c.variantId, baseQty, context)
     );
   }
   return allocations;
+}
+
+// Mode-aware deduction for one (product, variant?, qty) tuple. Used by the
+// composite-sale branch below and by deductComponents for nested composites.
+//
+//   • Goods → straight FIFO from batches.
+//   • Composite with produced stock → straight FIFO from those batches
+//     (treat the composite like any goods product once it's been produced).
+//   • Composite without produced stock:
+//       - mode 'flexible' → recurse into the recipe (cafe / fried-chicken
+//         fallback). Variant override on the recipe is honored via recipeOf.
+//       - mode 'strict'   → no fallback; allocation list comes back short
+//         and the caller logs an out-of-stock at that line.
+function deductCompositeOrGoods(
+  productId: string,
+  variantId: string | undefined,
+  qty: number,
+  context?: { reference?: StockMovementReference; notes?: string }
+): BatchAllocation[] {
+  if (qty <= 0) return [];
+  const product = products.getById(productId);
+  if (!product || product.kind !== 'composite') {
+    return deductBatchesFIFO(productId, variantId, qty, context);
+  }
+  // Composite. First try its own produced batches.
+  const fromOwn = deductBatchesFIFO(productId, variantId, qty, context);
+  const taken = fromOwn.reduce((s, a) => s + a.qtyTaken, 0);
+  const shortfall = qty - taken;
+  if (shortfall <= 0) return fromOwn;
+  // Composite ran short — mode decides what happens.
+  const mode = productionModeOf(product, variantId);
+  if (mode === 'strict') {
+    // No fallback. We may have taken some real composite batches above; that
+    // stays consumed. The remaining shortfall just isn't fulfilled — this is
+    // an inventory underrun, not a normal happy path. Operators see it as
+    // qtyAfter going to 0 with no further allocations.
+    return fromOwn;
+  }
+  // Flexible: recurse into the recipe. Multiplier is `shortfall` because the
+  // recipe quantities are per-unit of the composite.
+  const recipe = recipeOf(product, variantId);
+  if (recipe.length === 0) return fromOwn;
+  return [...fromOwn, ...deductComponents(recipe, shortfall, context)];
 }
 
 /**
@@ -1040,17 +1091,13 @@ export function applyOrderToStock(order: Order): void {
     const baseQty = line.quantity * (line.unitFactor || 1);
     const allocations: BatchAllocation[] = [];
 
-    if (product.kind === 'composite') {
-      const variant = line.variantId
-        ? product.variants.find((v) => v.id === line.variantId)
-        : undefined;
-      const recipe = variant && variant.components.length > 0
-        ? variant.components
-        : product.components;
-      allocations.push(...deductComponents(recipe, baseQty, context));
-    } else {
-      allocations.push(...deductBatchesFIFO(product.id, line.variantId, baseQty, context));
-    }
+    // Both branches share the same mode-aware deductor — composites that have
+    // produced batches behave just like goods at the till; only when they run
+    // out does the mode decide whether to fall back to components (flexible)
+    // or stop (strict).
+    allocations.push(
+      ...deductCompositeOrGoods(product.id, line.variantId, baseQty, context)
+    );
 
     for (const ex of line.extras) {
       const extraDef = product.extras.find((e) => e.id === ex.extraId);

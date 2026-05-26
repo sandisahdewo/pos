@@ -16,7 +16,9 @@
     AlertCircle,
     BadgePercent,
     RotateCcw,
-    Sparkles
+    Sparkles,
+    ChevronDown,
+    ExternalLink
   } from 'lucide-svelte';
   import {
     Badge,
@@ -24,6 +26,8 @@
     Card,
     Collapsible,
     ConfirmDialog,
+    Dropdown,
+    DropdownItem,
     Input,
     Modal,
     MoneyInput,
@@ -220,7 +224,7 @@
       cost = line.unitFactor * effectiveCost(product);
     } else if (variant) {
       entry = effectiveEntry(variant.prices, activePricelistId, pricelists.defaultId());
-      cost = effectiveVariantCost(variant);
+      cost = effectiveVariantCost(variant, product);
     } else {
       entry = effectiveEntry(product.prices, activePricelistId, pricelists.defaultId());
       cost = effectiveCost(product);
@@ -344,7 +348,7 @@
       ? effectiveEntry(variant.prices, activePricelistId, pricelists.defaultId())
       : effectiveEntry(p.prices, activePricelistId, pricelists.defaultId());
     if (!entry) return 0;
-    const cost = variant ? effectiveVariantCost(variant) : effectiveCost(p);
+    const cost = variant ? effectiveVariantCost(variant, p) : effectiveCost(p);
     return computeSalePrice(cost, entry.pricing);
   }
 
@@ -524,15 +528,64 @@
     return units.getById(unitId)?.name ?? units.getById(unitId)?.code ?? '';
   }
 
-  // Resolve a scanned/typed token to a product + (optional) variant.
-  // Priority: product SKU → variant SKU → batch code. Returns null if no exact match.
+  // Resolve a scanned/typed token to a product + (optional) variant + (optional) packaging unit.
+  // Priority — most specific first:
+  //   1. variant.barcode    → exact variant
+  //   2. packaging.barcode  → product + specific packaging (unit + factor)
+  //   3. product.barcode    → product base unit (auto-picks first variant if product has variants)
+  //   4. product.sku        → existing fallback
+  //   5. variant.sku        → existing fallback
+  //   6. batch.code         → existing fallback (BATCH-YYYY-NNN)
+  // Returns null if no exact match.
   function resolveScanToken(
     raw: string
-  ): { product: Product; variantId?: string; source: 'sku' | 'variantSku' | 'batchCode' } | null {
+  ): {
+    product: Product;
+    variantId?: string;
+    unitId?: string;
+    unitFactor?: number;
+    source:
+      | 'productBarcode'
+      | 'variantBarcode'
+      | 'packagingBarcode'
+      | 'sku'
+      | 'variantSku'
+      | 'batchCode';
+  } | null {
     const token = raw.trim();
     if (!token) return null;
-    const lower = token.toLowerCase();
 
+    // 1. Variant barcode
+    for (const p of products.items) {
+      if (p.status !== 'active') continue;
+      const v = p.variants.find((vv) => vv.barcode && vv.barcode === token);
+      if (v) return { product: p, variantId: v.id, source: 'variantBarcode' };
+    }
+
+    // 2. Packaging barcode
+    for (const p of products.items) {
+      if (p.status !== 'active') continue;
+      const pack = p.units.find((u) => u.barcode && u.barcode === token);
+      if (pack) {
+        return {
+          product: p,
+          unitId: pack.unitId,
+          unitFactor: pack.factor,
+          source: 'packagingBarcode'
+        };
+      }
+    }
+
+    // 3. Product barcode (base unit)
+    for (const p of products.items) {
+      if (p.status !== 'active') continue;
+      if (p.barcode && p.barcode === token) {
+        return { product: p, source: 'productBarcode' };
+      }
+    }
+
+    // 4–5. SKU fallbacks (case-insensitive)
+    const lower = token.toLowerCase();
     const byProductSku = products.items.find(
       (p) => p.status === 'active' && p.sku.toLowerCase() === lower
     );
@@ -544,6 +597,7 @@
       if (v) return { product: p, variantId: v.id, source: 'variantSku' };
     }
 
+    // 6. Batch code
     const batch = batches.getByCode(token);
     if (batch) {
       const p = products.getById(batch.productId);
@@ -560,16 +614,25 @@
     const match = resolveScanToken(searchQuery);
     if (!match) return; // fall through — text remains as a filter
     e.preventDefault();
-    addToCart(match.product, match.variantId);
+    addToCart(match.product, match.variantId, match.unitId, match.unitFactor);
     const variantName = match.variantId
       ? match.product.variants.find((v) => v.id === match.variantId)?.name
       : '';
-    const label = variantName
+    const packagingUnit =
+      match.unitId && match.unitId !== match.product.unitId
+        ? units.getById(match.unitId)
+        : undefined;
+    const packagingLabel = packagingUnit
+      ? `${packagingUnit.name} · isi ${match.unitFactor}`
+      : '';
+    const detail = variantName
       ? `${match.product.name} — ${variantName}`
-      : match.product.name;
+      : packagingLabel
+        ? `${match.product.name} (${packagingLabel})`
+        : match.product.name;
     toast.success(
       match.source === 'batchCode' ? 'Ditambahkan dari batch' : 'Ditambahkan ke keranjang',
-      match.source === 'batchCode' ? `${label} · ${searchQuery.trim()}` : label
+      match.source === 'batchCode' ? `${detail} · ${searchQuery.trim()}` : detail
     );
     searchQuery = '';
   }
@@ -877,73 +940,94 @@
 
 <PageHeader title="Kasir" description="Catat transaksi penjualan. Gunakan tab untuk menahan beberapa pelanggan sekaligus.">
   {#snippet actions()}
+    {#if shiftsOn}
+      {#if activeShift}
+        {@const summary = salesSummary(activeShift)}
+        <Dropdown align="right">
+          {#snippet trigger({ toggle, open })}
+            <button
+              type="button"
+              onclick={toggle}
+              aria-haspopup="menu"
+              aria-expanded={open}
+              class="inline-flex h-9 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 shadow-soft hover:bg-slate-50"
+            >
+              <span class="relative flex h-2 w-2 shrink-0">
+                <span
+                  class="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60"
+                ></span>
+                <span class="relative inline-flex h-2 w-2 rounded-full bg-emerald-500"></span>
+              </span>
+              <span>{activeShiftTemplate?.name ?? 'Shift bebas'}</span>
+              <span class="hidden text-xs font-normal text-slate-500 sm:inline">
+                · {formatRupiah(summary.byMethod.cash)}
+              </span>
+              <ChevronDown
+                class="h-4 w-4 text-slate-400 transition-transform {open ? 'rotate-180' : ''}"
+              />
+            </button>
+          {/snippet}
+          {#snippet children({ close })}
+            <div class="border-b border-slate-100 px-4 py-3">
+              <div class="text-[11px] font-semibold tracking-wider text-emerald-600 uppercase">
+                Shift aktif
+              </div>
+              <div class="mt-0.5 text-sm font-semibold text-slate-900">
+                {activeShiftTemplate?.name ?? 'Shift bebas'}
+              </div>
+              <div class="mt-1 grid grid-cols-2 gap-x-3 gap-y-0.5 text-xs text-slate-500">
+                <span>Kode</span>
+                <span class="text-right font-medium text-slate-700">{activeShift.code}</span>
+                <span>Mulai</span>
+                <span class="text-right font-medium text-slate-700">
+                  {fmtShiftStart(activeShift.openedAt)}
+                </span>
+                <span>Pesanan</span>
+                <span class="text-right font-medium text-slate-700">{summary.orderCount}</span>
+                <span>Tunai masuk</span>
+                <span class="text-right font-medium text-slate-700">
+                  {formatRupiah(summary.byMethod.cash)}
+                </span>
+              </div>
+            </div>
+            <DropdownItem
+              onclick={() => {
+                close();
+                cashEntryModalOpen = true;
+              }}
+            >
+              <Wallet class="h-4 w-4 text-slate-400" />
+              Tambah kas
+            </DropdownItem>
+            <DropdownItem href="/shifts/{activeShift.id}">
+              <ExternalLink class="h-4 w-4 text-slate-400" />
+              Lihat detail shift
+            </DropdownItem>
+            <DropdownItem
+              danger
+              onclick={() => {
+                close();
+                closeShiftModalOpen = true;
+              }}
+            >
+              <LogOut class="h-4 w-4" />
+              Tutup shift
+            </DropdownItem>
+          {/snippet}
+        </Dropdown>
+      {:else}
+        <Button size="sm" variant="outline" onclick={() => (openShiftModalOpen = true)}>
+          <Clock class="h-4 w-4" />
+          Buka shift
+        </Button>
+      {/if}
+    {/if}
     <Button variant="outline" href="/orders">
       <History class="h-4 w-4" />
       Riwayat transaksi
     </Button>
   {/snippet}
 </PageHeader>
-
-{#if shiftsOn}
-  {#if activeShift}
-    {@const summary = salesSummary(activeShift)}
-    <div class="mb-4 rounded-card border-2 border-emerald-200 bg-emerald-50 px-4 py-3">
-      <div class="flex flex-wrap items-center gap-3">
-        <div
-          class="flex h-10 w-10 items-center justify-center rounded-full bg-emerald-100 text-emerald-700"
-        >
-          <Clock class="h-5 w-5" />
-        </div>
-        <div class="flex-1 min-w-0">
-          <div class="flex items-center gap-2">
-            <span class="font-semibold text-slate-900">
-              {activeShiftEmployee?.name ?? 'Kasir'}
-            </span>
-            <Badge variant="success" size="sm" dot>Shift terbuka</Badge>
-          </div>
-          <div class="mt-0.5 truncate text-xs text-slate-600">
-            {activeShift.code} ·
-            {activeShiftTemplate?.name ?? 'Bebas'} ·
-            mulai {fmtShiftStart(activeShift.openedAt)} ·
-            {summary.orderCount} pesanan · tunai {formatRupiah(summary.byMethod.cash)}
-          </div>
-        </div>
-        <div class="flex flex-wrap gap-2">
-          <Button size="sm" variant="outline" onclick={() => (cashEntryModalOpen = true)}>
-            <Wallet class="h-4 w-4" />
-            Tambah kas
-          </Button>
-          <Button size="sm" variant="outline" href="/shifts/{activeShift.id}">Detail</Button>
-          <Button size="sm" onclick={() => (closeShiftModalOpen = true)}>
-            <LogOut class="h-4 w-4" />
-            Tutup shift
-          </Button>
-        </div>
-      </div>
-    </div>
-  {:else}
-    <div class="mb-4 rounded-card border-2 border-amber-200 bg-amber-50 px-4 py-3">
-      <div class="flex flex-wrap items-center gap-3">
-        <div
-          class="flex h-10 w-10 items-center justify-center rounded-full bg-amber-100 text-amber-700"
-        >
-          <AlertCircle class="h-5 w-5" />
-        </div>
-        <div class="flex-1 min-w-0">
-          <div class="font-semibold text-slate-900">Belum ada shift terbuka</div>
-          <p class="mt-0.5 text-xs text-slate-600">
-            Penjualan tetap bisa dicatat, tapi tidak akan terhubung ke shift tertentu.
-            Buka shift untuk rekap kas & pegawai yang lebih akurat.
-          </p>
-        </div>
-        <Button size="sm" onclick={() => (openShiftModalOpen = true)}>
-          <Clock class="h-4 w-4" />
-          Buka shift
-        </Button>
-      </div>
-    </div>
-  {/if}
-{/if}
 
 <div class="grid grid-cols-1 gap-4 lg:grid-cols-[1fr_420px]">
   <!-- PRODUCT BROWSER -->

@@ -34,7 +34,7 @@
     formatDuration,
     cashEntryCategoryLabels
   } from '$lib/stores/shifts.svelte';
-  import { employees, roleLabels } from '$lib/stores/employees.svelte';
+  import { employees, roleLabelFor } from '$lib/stores/employees.svelte';
   import {
     shiftTemplates,
     plannedDurationHours
@@ -173,7 +173,7 @@
         <div class="flex items-center gap-2">
           <h2 class="text-lg font-semibold text-slate-900">{employee?.name ?? '—'}</h2>
           <Badge variant="outline" size="sm">
-            {employee ? roleLabels[employee.role] : '—'}
+            {employee ? roleLabelFor(employee) : '—'}
           </Badge>
           <Badge variant={shiftStatusVariant[shift.status]} size="sm" dot>
             {shiftStatusLabels[shift.status]}

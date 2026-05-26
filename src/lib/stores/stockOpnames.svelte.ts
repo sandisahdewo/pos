@@ -463,7 +463,7 @@ class StockOpnamesStore {
       startedAt: new Date().toISOString(),
       status: 'draft',
       lines,
-      performedBy: user.current.name ?? 'System',
+      performedBy: user.current?.name ?? 'System',
       notes: args.notes ?? ''
     };
     this.items.push(opname);

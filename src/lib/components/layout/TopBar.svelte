@@ -1,5 +1,6 @@
 <script lang="ts">
   import { Menu, Search, Bell, User, Settings, LogOut, ChevronDown } from 'lucide-svelte';
+  import { goto } from '$app/navigation';
   import { sidebar } from '$lib/stores/sidebar.svelte';
   import { user } from '$lib/stores/user.svelte';
   import { toast } from '$lib/stores/toast.svelte';
@@ -9,8 +10,10 @@
   let dropdownOpen = $state(false);
   let notifOpen = $state(false);
 
+  const displayName = $derived(user.current?.name ?? 'Tamu');
+  const displayEmail = $derived(user.current?.email ?? '');
   const initials = $derived(
-    user.current.name
+    displayName
       .split(' ')
       .map((part) => part[0])
       .slice(0, 2)
@@ -18,9 +21,11 @@
       .toUpperCase()
   );
 
-  function handleLogout() {
+  async function handleLogout() {
     dropdownOpen = false;
+    user.logout();
     toast.success('Berhasil keluar', 'Anda telah keluar dari sistem.');
+    await goto('/login');
   }
 </script>
 
@@ -116,8 +121,8 @@
           {initials}
         </span>
         <div class="hidden text-left sm:block">
-          <div class="text-sm font-medium text-slate-900">{user.current.name}</div>
-          <div class="text-[11px] text-slate-500">{user.current.role}</div>
+          <div class="text-sm font-medium text-slate-900">{displayName}</div>
+          <div class="text-[11px] text-slate-500">{user.roleLabel}</div>
         </div>
         <ChevronDown class="hidden h-4 w-4 text-slate-400 sm:block" />
       </button>
@@ -129,8 +134,8 @@
           class="absolute right-0 mt-2 w-60 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg"
         >
           <div class="border-b border-slate-100 px-4 py-3">
-            <div class="text-sm font-semibold text-slate-900">{user.current.name}</div>
-            <div class="truncate text-xs text-slate-500">{user.current.email}</div>
+            <div class="text-sm font-semibold text-slate-900">{displayName}</div>
+            <div class="truncate text-xs text-slate-500">{displayEmail || user.roleLabel}</div>
           </div>
           <ul class="py-1">
             <li>

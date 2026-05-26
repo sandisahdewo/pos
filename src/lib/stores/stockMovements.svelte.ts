@@ -10,7 +10,9 @@ export type StockMovementKind =
   | 'move-out'
   | 'move-in'
   | 'move-relocate'
-  | 'return-consignor';
+  | 'return-consignor'
+  | 'production-in'   // composite batch created by a production run
+  | 'production-out'; // component batch consumed by a production run
 
 export type StockMovementReferenceKind =
   | 'po'
@@ -18,7 +20,8 @@ export type StockMovementReferenceKind =
   | 'opname'
   | 'manual'
   | 'transfer'
-  | 'return';
+  | 'return'
+  | 'production';
 
 export type StockMovementReference = {
   kind: StockMovementReferenceKind;
@@ -534,7 +537,7 @@ class StockMovementsStore {
   log(input: StockMovementInput): StockMovement | undefined {
     if (!settings.value.inventory.auditTrailEnabled) return undefined;
     const at = input.at ?? new Date().toISOString();
-    const performedBy = input.performedBy ?? user.current.name ?? 'System';
+    const performedBy = input.performedBy ?? user.current?.name ?? 'System';
     const movement: StockMovement = {
       id: `mov_${this.nextId++}`,
       code: this.generateCode(at),
@@ -614,7 +617,9 @@ export const movementKindLabels: Record<StockMovementKind, string> = {
   'move-out': 'Pindah keluar',
   'move-in': 'Pindah masuk',
   'move-relocate': 'Relokasi',
-  'return-consignor': 'Retur konsinyasi'
+  'return-consignor': 'Retur konsinyasi',
+  'production-in': 'Produksi · hasil',
+  'production-out': 'Produksi · konsumsi'
 };
 
 export const movementKindOptions: { value: StockMovementKind; label: string }[] =

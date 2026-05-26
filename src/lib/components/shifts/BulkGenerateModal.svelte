@@ -18,7 +18,7 @@
     type WeekdayPattern
   } from '$lib/stores/shiftSchedule.svelte';
   import { shiftTemplates } from '$lib/stores/shiftTemplates.svelte';
-  import { employees, roleLabels } from '$lib/stores/employees.svelte';
+  import { employees, roleLabelFor } from '$lib/stores/employees.svelte';
   import { toast } from '$lib/stores/toast.svelte';
 
   type Props = {
@@ -72,7 +72,7 @@
     { value: '', label: 'Pilih pegawai…' },
     ...employees
       .active()
-      .map((e) => ({ value: e.id, label: `${e.name} (${roleLabels[e.role]})` }))
+      .map((e) => ({ value: e.id, label: `${e.name} (${roleLabelFor(e)})` }))
   ]);
 
   // Days of week ordered Senin → Minggu (matching Indonesian week start).

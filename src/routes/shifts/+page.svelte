@@ -12,6 +12,7 @@
     XCircle,
     ExternalLink
   } from 'lucide-svelte';
+  import ShiftHubTabs from '$lib/components/shifts/ShiftHubTabs.svelte';
   import {
     Badge,
     Button,
@@ -32,10 +33,12 @@
     type ShiftSession,
     type ShiftStatus
   } from '$lib/stores/shifts.svelte';
-  import { employees, roleLabels } from '$lib/stores/employees.svelte';
+  import { employees, roleLabelFor } from '$lib/stores/employees.svelte';
   import { shiftTemplates } from '$lib/stores/shiftTemplates.svelte';
   import { shiftSchedule, toISODate } from '$lib/stores/shiftSchedule.svelte';
   import OpenShiftModal from '$lib/components/shifts/OpenShiftModal.svelte';
+  import MyScheduleModal from '$lib/components/shifts/MyScheduleModal.svelte';
+  import { CalendarSearch } from 'lucide-svelte';
   import { formatRupiah } from '$lib/utils/currency';
 
   let search = $state('');
@@ -45,6 +48,7 @@
   let end = $state('');
 
   let openModalOpen = $state(false);
+  let scheduleModalOpen = $state(false);
 
   const empName = (id: string) => employees.getById(id)?.name ?? '—';
   const tplName = (id?: string) => (id ? shiftTemplates.getById(id)?.name ?? '—' : 'Bebas');
@@ -107,7 +111,7 @@
     { value: '', label: 'Semua pegawai' },
     ...employees
       .active()
-      .map((e) => ({ value: e.id, label: `${e.name} · ${roleLabels[e.role]}` }))
+      .map((e) => ({ value: e.id, label: `${e.name} · ${roleLabelFor(e)}` }))
   ]);
 
   const statusOptions = [
@@ -144,12 +148,12 @@
 <PageHeader
   title="Shift Kasir"
   description="Catat shift kasir, kas masuk/keluar, dan rekap penjualan per shift."
-  breadcrumb={[{ label: 'Operasional' }, { label: 'Shift Kasir' }]}
+  breadcrumb={[{ label: 'Operasional' }, { label: 'Shift Kasir' }, { label: 'Sesi' }]}
 >
   {#snippet actions()}
-    <Button variant="outline" href="/shifts/schedule">
-      <CalendarDays class="h-4 w-4" />
-      Jadwal
+    <Button variant="outline" onclick={() => (scheduleModalOpen = true)}>
+      <CalendarSearch class="h-4 w-4" />
+      Jadwal Saya
     </Button>
     {#if active}
       <Button href="/shifts/{active.id}" variant="outline">
@@ -164,6 +168,8 @@
     {/if}
   {/snippet}
 </PageHeader>
+
+<ShiftHubTabs />
 
 {#if !active && todayPlanned.length > 0}
   <div class="mb-4 rounded-card border-2 border-sky-200 bg-sky-50 px-4 py-3">
@@ -344,3 +350,4 @@
 </Card>
 
 <OpenShiftModal bind:open={openModalOpen} />
+<MyScheduleModal bind:open={scheduleModalOpen} />

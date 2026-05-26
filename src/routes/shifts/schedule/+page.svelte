@@ -1,6 +1,7 @@
 <script lang="ts">
-  import { ChevronLeft, ChevronRight, Wand2, CalendarDays, ArrowLeft } from 'lucide-svelte';
+  import { ChevronLeft, ChevronRight, Wand2, CalendarDays } from 'lucide-svelte';
   import { Badge, Button, Card, PageHeader } from '$lib/components/ui';
+  import ShiftHubTabs from '$lib/components/shifts/ShiftHubTabs.svelte';
   import {
     shiftSchedule,
     parseISODate,
@@ -137,7 +138,7 @@
 </svelte:head>
 
 <PageHeader
-  title="Jadwal Shift"
+  title="Shift Kasir"
   description="Atur siapa shift kapan untuk satu minggu, sebulan, atau lebih."
   breadcrumb={[
     { label: 'Operasional' },
@@ -146,16 +147,14 @@
   ]}
 >
   {#snippet actions()}
-    <Button variant="outline" href="/shifts">
-      <ArrowLeft class="h-4 w-4" />
-      Sesi
-    </Button>
     <Button onclick={() => (bulkModalOpen = true)}>
       <Wand2 class="h-4 w-4" />
       Generate massal
     </Button>
   {/snippet}
 </PageHeader>
+
+<ShiftHubTabs />
 
 <Card padded={false} class="overflow-hidden">
   <div class="flex flex-wrap items-center gap-2 border-b border-slate-100 px-4 py-3">

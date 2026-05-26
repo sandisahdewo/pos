@@ -2,6 +2,7 @@
   import { page } from '$app/state';
   import { sidebar } from '$lib/stores/sidebar.svelte';
   import { settings } from '$lib/stores/settings.svelte';
+  import { user } from '$lib/stores/user.svelte';
   import {
     Home,
     ScanLine,
@@ -17,6 +18,8 @@
     UserCog,
     Tags,
     Ruler,
+    Bookmark,
+    Sparkles,
     BadgePercent,
     Percent,
     Truck,
@@ -28,7 +31,11 @@
     HandCoins,
     Wallet,
     TrendingDown,
-    CalendarClock
+    CalendarClock,
+    Factory,
+    Calculator,
+    Coins,
+    ShieldCheck
   } from 'lucide-svelte';
 
   type NavItem = {
@@ -36,6 +43,7 @@
     href: string;
     icon: typeof Home;
     badge?: string;
+    permission?: string;
   };
 
   type NavGroup = {
@@ -43,80 +51,164 @@
     items: NavItem[];
   };
 
-  const groups = $derived<NavGroup[]>([
+  const allGroups = $derived<NavGroup[]>([
     {
       items: [
-        { label: 'Beranda', href: '/', icon: Home },
-        { label: 'Kasir', href: '/pos', icon: ScanLine, badge: 'Baru' },
-        { label: 'Pesanan', href: '/orders', icon: Receipt },
-        { label: 'Diskon & Promo', href: '/promotions', icon: BadgePercent }
+        { label: 'Beranda', href: '/', icon: Home, permission: 'menu.dashboard' },
+        { label: 'Kasir', href: '/pos', icon: ScanLine, badge: 'Baru', permission: 'menu.pos' },
+        { label: 'Pesanan', href: '/orders', icon: Receipt, permission: 'menu.orders' },
+        {
+          label: 'Diskon & Promo',
+          href: '/promotions',
+          icon: BadgePercent,
+          permission: 'menu.promotions'
+        }
       ]
     },
     {
       title: 'Data Master',
       items: [
-        { label: 'Pegawai', href: '/employees', icon: UserCog },
-        { label: 'Pemasok', href: '/suppliers', icon: Truck },
-        { label: 'Kategori', href: '/categories', icon: Tags },
-        { label: 'Satuan', href: '/units', icon: Ruler },
-        { label: 'Daftar Harga', href: '/pricelists', icon: BadgePercent },
-        { label: 'Tarif Pajak', href: '/taxes', icon: Percent },
+        { label: 'Pegawai', href: '/employees', icon: UserCog, permission: 'menu.employees' },
+        { label: 'Peran & Akses', href: '/roles', icon: ShieldCheck, permission: 'menu.roles' },
+        { label: 'Pemasok', href: '/suppliers', icon: Truck, permission: 'menu.suppliers' },
+        { label: 'Kategori', href: '/categories', icon: Tags, permission: 'menu.categories' },
+        { label: 'Brand', href: '/brands', icon: Bookmark, permission: 'menu.brands' },
+        { label: 'Tag', href: '/tags', icon: Sparkles, permission: 'menu.tags' },
+        { label: 'Satuan', href: '/units', icon: Ruler, permission: 'menu.units' },
+        {
+          label: 'Daftar Harga',
+          href: '/pricelists',
+          icon: BadgePercent,
+          permission: 'menu.pricelists'
+        },
+        {
+          label: 'Pengaturan Harga',
+          href: '/pengaturan-harga',
+          icon: Calculator,
+          permission: 'menu.pricing'
+        },
+        { label: 'Tarif Pajak', href: '/taxes', icon: Percent, permission: 'menu.taxes' },
         ...(settings.value.inventory.locationsEnabled
-          ? [{ label: 'Lokasi', href: '/locations', icon: Warehouse }]
+          ? [
+              {
+                label: 'Lokasi',
+                href: '/locations',
+                icon: Warehouse,
+                permission: 'menu.locations'
+              }
+            ]
           : []),
-        { label: 'Produk', href: '/products', icon: Package }
+        { label: 'Produk', href: '/products', icon: Package, permission: 'menu.products' }
       ]
     },
     {
       title: 'Pengadaan',
       items: [
-        { label: 'Order Pembelian', href: '/purchase-orders', icon: ClipboardList },
-        { label: 'Pembayaran Konsinyasi', href: '/payouts', icon: Banknote }
+        {
+          label: 'Order Pembelian',
+          href: '/purchase-orders',
+          icon: ClipboardList,
+          permission: 'menu.purchase-orders'
+        },
+        {
+          label: 'Pembayaran Konsinyasi',
+          href: '/payouts',
+          icon: Banknote,
+          permission: 'menu.payouts'
+        }
       ]
     },
     {
       title: 'Keuangan',
       items: [
-        { label: 'Utang Pembelian', href: '/utang', icon: Wallet },
-        { label: 'Piutang Pelanggan', href: '/piutang', icon: HandCoins }
+        { label: 'Utang Pembelian', href: '/utang', icon: Wallet, permission: 'menu.utang' },
+        { label: 'Piutang Pelanggan', href: '/piutang', icon: HandCoins, permission: 'menu.piutang' }
       ]
     },
     ...(settings.value.operations.shiftsEnabled
       ? [
           {
             title: 'Operasional',
-            items: [{ label: 'Shift Kasir', href: '/shifts', icon: CalendarClock }]
+            items: [
+              {
+                label: 'Shift Kasir',
+                href: '/shifts',
+                icon: CalendarClock,
+                permission: 'menu.shifts'
+              }
+            ]
           }
         ]
       : []),
     {
       title: 'Katalog',
       items: [
-        { label: 'Inventaris', href: '/inventory', icon: Boxes },
+        { label: 'Inventaris', href: '/inventory', icon: Boxes, permission: 'menu.inventory' },
+        { label: 'Produksi', href: '/production', icon: Factory, permission: 'menu.production' },
         ...(settings.value.inventory.auditTrailEnabled
-          ? [{ label: 'Opname Stok', href: '/stock-opname', icon: ClipboardCheck }]
+          ? [
+              {
+                label: 'Opname Stok',
+                href: '/stock-opname',
+                icon: ClipboardCheck,
+                permission: 'menu.stock-opname'
+              }
+            ]
           : []),
-        { label: 'Pelanggan', href: '/customers', icon: Users }
+        { label: 'Pelanggan', href: '/customers', icon: Users, permission: 'menu.customers' }
       ]
     },
     {
       title: 'Wawasan',
       items: [
-        { label: 'Laporan', href: '/reports', icon: BarChart3 },
-        { label: 'Prediksi Stok', href: '/forecast', icon: TrendingDown },
+        { label: 'Laporan', href: '/reports', icon: BarChart3, permission: 'menu.reports' },
+        {
+          label: 'Laba Rugi',
+          href: '/reports/laba',
+          icon: Coins,
+          permission: 'menu.reports.laba'
+        },
+        {
+          label: 'Prediksi Stok',
+          href: '/forecast',
+          icon: TrendingDown,
+          permission: 'menu.forecast'
+        },
+        {
+          label: 'Riwayat Harga',
+          href: '/riwayat-harga',
+          icon: History,
+          permission: 'menu.price-history'
+        },
         ...(settings.value.inventory.auditTrailEnabled
-          ? [{ label: 'Riwayat Stok', href: '/stock-movements', icon: History }]
+          ? [
+              {
+                label: 'Riwayat Stok',
+                href: '/stock-movements',
+                icon: History,
+                permission: 'menu.stock-movements'
+              }
+            ]
           : [])
       ]
     },
     {
       title: 'Sistem',
       items: [
-        { label: 'Komponen', href: '/components', icon: Palette },
-        { label: 'Pengaturan', href: '/settings', icon: Settings }
+        { label: 'Komponen', href: '/components', icon: Palette, permission: 'menu.components' },
+        { label: 'Pengaturan', href: '/settings', icon: Settings, permission: 'menu.settings' }
       ]
     }
   ]);
+
+  const groups = $derived(
+    allGroups
+      .map((g) => ({
+        ...g,
+        items: g.items.filter((item) => !item.permission || user.can(item.permission))
+      }))
+      .filter((g) => g.items.length > 0)
+  );
 
   function isActive(href: string) {
     if (href === '/') return page.url.pathname === '/';

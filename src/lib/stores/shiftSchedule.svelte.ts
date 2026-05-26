@@ -1,5 +1,8 @@
-import { shiftTemplates } from './shiftTemplates.svelte';
+import { shiftTemplates, type ShiftTemplate } from './shiftTemplates.svelte';
 import { employees } from './employees.svelte';
+
+/** Minutes a kasir is allowed to open their shift before its scheduled start time. */
+export const SHIFT_OPEN_GRACE_BEFORE_MIN = 30;
 
 export type AssignmentStatus = 'planned' | 'completed' | 'absent' | 'replaced';
 
@@ -211,3 +214,97 @@ class ShiftScheduleStore {
 export const shiftSchedule = new ShiftScheduleStore();
 
 export { toISODate, parseISODate, addDays };
+
+function timeToMin(hhmm: string): number {
+  const [h, m] = hhmm.split(':').map(Number);
+  return (h || 0) * 60 + (m || 0);
+}
+
+export type ShiftOpenValidation =
+  | {
+      ok: true;
+      /** Today's planned assignment whose window contains `now`, if any. */
+      matchedAssignment?: ShiftAssignment;
+      matchedTemplate?: ShiftTemplate;
+      /** All of today's planned assignments for this employee (may be empty). */
+      todayAssignments: Array<{ assignment: ShiftAssignment; template: ShiftTemplate | undefined }>;
+    }
+  | {
+      ok: false;
+      reason: string;
+      /** Closest planned assignment that explains the rejection. */
+      nextAssignment?: ShiftAssignment;
+      nextTemplate?: ShiftTemplate;
+      todayAssignments: Array<{ assignment: ShiftAssignment; template: ShiftTemplate | undefined }>;
+    };
+
+/**
+ * Decide whether the given employee is allowed to open a shift right now.
+ *
+ * Rules:
+ * - No planned assignment today → allowed (ad-hoc open).
+ * - Planned assignment(s) today → must be within window [start − grace, end]; cross-midnight
+ *   templates accept any time at-or-after start − grace on the schedule date.
+ * - Otherwise rejected with a reason that names the next/last scheduled shift.
+ */
+export function validateShiftOpenForEmployee(
+  employeeId: string,
+  now: Date = new Date()
+): ShiftOpenValidation {
+  const today = toISODate(now);
+  const planned = shiftSchedule.items.filter(
+    (a) => a.employeeId === employeeId && a.date === today && a.status === 'planned'
+  );
+  const todayAssignments = planned.map((a) => ({
+    assignment: a,
+    template: shiftTemplates.getById(a.templateId)
+  }));
+
+  if (planned.length === 0) {
+    return { ok: true, todayAssignments };
+  }
+
+  const nowMin = now.getHours() * 60 + now.getMinutes();
+
+  for (const { assignment, template } of todayAssignments) {
+    if (!template) continue;
+    const startMin = timeToMin(template.startTime);
+    const endMin = timeToMin(template.endTime);
+    const crossesMidnight = endMin <= startMin;
+
+    if (crossesMidnight) {
+      if (nowMin >= startMin - SHIFT_OPEN_GRACE_BEFORE_MIN) {
+        return { ok: true, matchedAssignment: assignment, matchedTemplate: template, todayAssignments };
+      }
+    } else if (nowMin >= startMin - SHIFT_OPEN_GRACE_BEFORE_MIN && nowMin <= endMin) {
+      return { ok: true, matchedAssignment: assignment, matchedTemplate: template, todayAssignments };
+    }
+  }
+
+  // Outside every window — find the next/last assignment to explain why.
+  const sorted = todayAssignments
+    .filter((x) => x.template)
+    .map((x) => ({ ...x, startMin: timeToMin(x.template!.startTime) }))
+    .sort((a, b) => a.startMin - b.startMin);
+
+  const upcoming = sorted.find((u) => u.startMin > nowMin);
+  if (upcoming) {
+    return {
+      ok: false,
+      reason: `Anda dijadwalkan shift ${upcoming.template!.name} pukul ${upcoming.template!.startTime}–${upcoming.template!.endTime} hari ini. Buka shift bisa dilakukan paling cepat ${SHIFT_OPEN_GRACE_BEFORE_MIN} menit sebelum jam mulai.`,
+      nextAssignment: upcoming.assignment,
+      nextTemplate: upcoming.template,
+      todayAssignments
+    };
+  }
+
+  const last = sorted[sorted.length - 1];
+  return {
+    ok: false,
+    reason: `Jadwal shift Anda hari ini (${last?.template?.name}, ${last?.template?.startTime}–${last?.template?.endTime}) sudah lewat. Hubungi admin jika perlu pengecualian.`,
+    nextAssignment: last?.assignment,
+    nextTemplate: last?.template,
+    todayAssignments
+  };
+}
+

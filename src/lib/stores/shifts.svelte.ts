@@ -179,6 +179,18 @@ class ShiftsStore {
     return this.items.find((s) => s.id === id);
   }
 
+  /** Most recently closed shift for an employee (excludes cancelled). */
+  lastClosedFor(employeeId: string): ShiftSession | undefined {
+    let best: ShiftSession | undefined;
+    for (const s of this.items) {
+      if (s.employeeId !== employeeId) continue;
+      if (s.status !== 'closed') continue;
+      if (!s.closedAt) continue;
+      if (!best || s.closedAt > (best.closedAt ?? '')) best = s;
+    }
+    return best;
+  }
+
   open(args: {
     employeeId: string;
     templateId?: string;

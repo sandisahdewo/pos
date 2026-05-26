@@ -9,6 +9,7 @@
     type CashCount,
     type ShiftSession
   } from '$lib/stores/shifts.svelte';
+  import { settings } from '$lib/stores/settings.svelte';
   import { toast } from '$lib/stores/toast.svelte';
   import { formatRupiah } from '$lib/utils/currency';
 
@@ -27,6 +28,10 @@
   const expected = $derived(shift ? expectedClosingCash(shift) : 0);
   const variance = $derived(closingCash.total - expected);
   const summary = $derived(shift ? salesSummary(shift) : undefined);
+  const warnThreshold = $derived(settings.value.operations.shiftRules.varianceWarnThreshold);
+  const exceedsThreshold = $derived(
+    warnThreshold > 0 && Math.abs(variance) > warnThreshold
+  );
 
   $effect(() => {
     if (open && shift) {
@@ -150,6 +155,12 @@
             {:else}
               Kas di laci kurang dari yang seharusnya. Periksa pengeluaran yang belum tercatat atau kemungkinan selisih.
             {/if}
+          </p>
+        {/if}
+        {#if exceedsThreshold}
+          <p class="mt-1.5 text-xs font-semibold text-rose-700">
+            Selisih melebihi ambang wajar ({formatRupiah(warnThreshold)}). Mohon periksa ulang
+            sebelum menutup shift.
           </p>
         {/if}
       </div>

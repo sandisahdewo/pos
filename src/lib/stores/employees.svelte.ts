@@ -1,4 +1,5 @@
-export type EmployeeRole = 'admin' | 'manager' | 'cashier' | 'staff';
+import { roles } from './roles.svelte';
+
 export type EmployeeStatus = 'active' | 'inactive';
 
 export type Employee = {
@@ -6,7 +7,9 @@ export type Employee = {
   name: string;
   email: string;
   phone: string;
-  role: EmployeeRole;
+  username: string;
+  password: string;
+  roleIds: string[];
   status: EmployeeStatus;
   joinedAt: string;
   pin: string;
@@ -20,7 +23,9 @@ const seed: Employee[] = [
     name: 'Sari Wahyuni',
     email: 'sari@warmindo.test',
     phone: '+62 812-3456-7890',
-    role: 'admin',
+    username: 'admin',
+    password: 'admin123',
+    roleIds: ['role_admin'],
     status: 'active',
     joinedAt: '2023-01-10',
     pin: '1234'
@@ -30,7 +35,9 @@ const seed: Employee[] = [
     name: 'Joko Susilo',
     email: 'joko@warmindo.test',
     phone: '+62 813-9876-5432',
-    role: 'manager',
+    username: 'joko',
+    password: 'joko123',
+    roleIds: ['role_manajer'],
     status: 'active',
     joinedAt: '2023-06-20',
     pin: '2580'
@@ -40,7 +47,9 @@ const seed: Employee[] = [
     name: 'Rina Marlina',
     email: 'rina@warmindo.test',
     phone: '+62 821-1122-3344',
-    role: 'cashier',
+    username: 'kasir',
+    password: 'kasir123',
+    roleIds: ['role_kasir'],
     status: 'active',
     joinedAt: '2024-02-15',
     pin: '4321'
@@ -50,7 +59,9 @@ const seed: Employee[] = [
     name: 'Andi Pratama',
     email: 'andi@warmindo.test',
     phone: '+62 822-5566-7788',
-    role: 'cashier',
+    username: 'andi',
+    password: 'andi123',
+    roleIds: ['role_kasir', 'role_gudang'],
     status: 'active',
     joinedAt: '2024-09-01',
     pin: '1357'
@@ -60,7 +71,9 @@ const seed: Employee[] = [
     name: 'Dimas Saputra',
     email: 'dimas@warmindo.test',
     phone: '+62 823-4455-6677',
-    role: 'staff',
+    username: 'dimas',
+    password: 'dimas123',
+    roleIds: ['role_staf'],
     status: 'inactive',
     joinedAt: '2025-03-05',
     pin: '8642'
@@ -68,7 +81,7 @@ const seed: Employee[] = [
 ];
 
 class EmployeesStore {
-  items = $state<Employee[]>([...seed]);
+  items = $state<Employee[]>(structuredClone(seed));
   private nextId = seed.length + 1;
 
   add(input: EmployeeInput): Employee {
@@ -92,6 +105,11 @@ class EmployeesStore {
     return this.items.find((e) => e.id === id);
   }
 
+  getByUsername(username: string): Employee | undefined {
+    const u = username.trim().toLowerCase();
+    return this.items.find((e) => e.username.toLowerCase() === u);
+  }
+
   verifyPin(employeeId: string, pin: string): boolean {
     const emp = this.getById(employeeId);
     if (!emp) return false;
@@ -101,13 +119,16 @@ class EmployeesStore {
   active(): Employee[] {
     return this.items.filter((e) => e.status === 'active');
   }
+
+  /** Count of employees currently assigned to a given role. */
+  countByRole(roleId: string): number {
+    return this.items.reduce((n, e) => n + (e.roleIds.includes(roleId) ? 1 : 0), 0);
+  }
 }
 
 export const employees = new EmployeesStore();
 
-export const roleLabels: Record<EmployeeRole, string> = {
-  admin: 'Admin',
-  manager: 'Manajer',
-  cashier: 'Kasir',
-  staff: 'Staf'
-};
+/** Human-readable label for an employee's role membership. */
+export function roleLabelFor(employee: { roleIds: string[] }, separator = ' · '): string {
+  return roles.labelFor(employee.roleIds, separator);
+}

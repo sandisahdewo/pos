@@ -52,6 +52,7 @@ const seed: Role[] = [
       'menu.reports.laba',
       'menu.forecast',
       'menu.price-history',
+      'menu.supplier-prices',
       'menu.stock-movements'
     ]
   },
@@ -91,6 +92,7 @@ const seed: Role[] = [
       'menu.reports',
       'menu.reports.laba',
       'menu.price-history',
+      'menu.supplier-prices',
       'menu.taxes'
     ]
   },

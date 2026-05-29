@@ -375,6 +375,15 @@ class PurchaseOrdersStore {
       receivedDate?: string;
       receiveQty?: Record<string, number>;
       expiresAt?: Record<string, string>;
+      // Harga sebenarnya dari nota supplier — per line, dalam satuan yang
+      // sama dengan line.unitPrice (per unit yang dipilih, mis. per gross).
+      // Kalau diisi, override line.unitPrice untuk menghitung Batch.unitCost.
+      // Kalau tidak diisi, fallback ke line.unitPrice (estimasi PO).
+      actualPrices?: Record<string, number>;
+      // Per line: kalau true, update ProductSupplier.unitCost di master
+      // dengan harga aktual per base unit. Berguna supaya PO berikutnya
+      // ke supplier yang sama autofill dengan harga terbaru.
+      updateSupplierCost?: Record<string, boolean>;
     }
   ): { ok: boolean; reason?: string } {
     const po = this.getById(id);
@@ -403,7 +412,9 @@ class PurchaseOrdersStore {
 
       const factor = line.unitFactor > 0 ? line.unitFactor : 1;
       const baseQty = qtyToReceive * factor;
-      const perBaseUnitCost = line.unitPrice / factor;
+      // Actual price wins atas estimasi PO. Operator isi dari invoice supplier.
+      const effectiveUnitPrice = opts?.actualPrices?.[line.id] ?? line.unitPrice;
+      const perBaseUnitCost = effectiveUnitPrice / factor;
 
       const newBatch = batches.add({
         productId: line.productId,
@@ -433,6 +444,22 @@ class PurchaseOrdersStore {
         reference: { kind: 'po', id: po.id, code: po.code },
         notes: po.type === 'consignment' ? 'Penerimaan konsinyasi' : 'Penerimaan PO'
       });
+
+      // Opsi: simpan harga aktual sebagai ProductSupplier.unitCost di master
+      // produk supaya PO berikutnya pakai harga terbaru sebagai default.
+      if (opts?.updateSupplierCost?.[line.id] && po.type !== 'consignment') {
+        const existing = product.suppliers ?? [];
+        const idx = existing.findIndex((s) => s.supplierId === po.supplierId);
+        if (idx >= 0) {
+          const updated = existing.map((s, i) =>
+            i === idx ? { ...s, unitCost: perBaseUnitCost } : s
+          );
+          products.update(line.productId, { suppliers: updated });
+        }
+        // Kalau supplier ini belum punya entry di Product.suppliers, skip —
+        // jangan tambah entry baru otomatis (operator yang harus mendaftarkan
+        // pemasok di master produk dulu sebelum tracked secara struktural).
+      }
 
       touched++;
       return { ...line, receivedQty: line.receivedQty + qtyToReceive };

@@ -35,6 +35,7 @@
     Factory,
     Calculator,
     Coins,
+    LineChart,
     ShieldCheck
   } from 'lucide-svelte';
 
@@ -179,6 +180,12 @@
           href: '/riwayat-harga',
           icon: History,
           permission: 'menu.price-history'
+        },
+        {
+          label: 'Harga Pemasok',
+          href: '/harga-pemasok',
+          icon: LineChart,
+          permission: 'menu.supplier-prices'
         },
         ...(settings.value.inventory.auditTrailEnabled
           ? [

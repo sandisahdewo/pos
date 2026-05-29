@@ -1,9 +1,10 @@
 <script lang="ts">
-  import { Plus, Trash2, Receipt, AlertTriangle, TrendingUp } from 'lucide-svelte';
+  import { Plus, Trash2, Receipt, AlertTriangle, TrendingUp, History } from 'lucide-svelte';
   import {
     Badge,
     Button,
     Card,
+    ConfirmDialog,
     Input,
     MoneyInput,
     Select,
@@ -20,6 +21,8 @@
   import { pricelists } from '$lib/stores/pricelists.svelte';
   import { units } from '$lib/stores/units.svelte';
   import { formatRupiah } from '$lib/utils/currency';
+  import { latestSupplierPrice } from '$lib/utils/supplierAnalytics';
+  import { toast } from '$lib/stores/toast.svelte';
   import {
     lineBaseQuantity,
     lineBaseUnitCost,
@@ -95,6 +98,13 @@
   let form = $state<FormState>(initial());
   let errors = $state<Record<string, string>>({});
 
+  // Pending state untuk konfirmasi ganti supplier. Saat operator ganti
+  // supplier di header dan ada line yang produknya tidak terdaftar di
+  // supplier baru, kita tahan perubahan + buka dialog konfirmasi sebelum
+  // reset. Operator bisa cancel dan supplier kembali ke nilai semula.
+  let pendingSupplierId = $state('');
+  let confirmSupplierChangeOpen = $state(false);
+
   const typeOptions: { value: PurchaseOrderType; label: string }[] = [
     { value: 'standard', label: purchaseOrderTypeLabels.standard },
     { value: 'consignment', label: purchaseOrderTypeLabels.consignment }
@@ -104,11 +114,25 @@
     suppliers.active().map((s) => ({ value: s.id, label: s.name }))
   );
 
+  // Filter produk berdasarkan pemasok yang dipilih di header. Operator
+  // hanya bisa pilih produk yang punya entry di `Product.suppliers[]` untuk
+  // pemasok ini — supaya master data tetap konsisten dengan pemasok yang
+  // benar-benar bekerja sama. Kalau supplier belum dipilih, kosongkan dulu
+  // (memaksa pilih supplier dulu).
   const productOptions = $derived(
-    products.items
-      .filter((p) => p.status === 'active')
-      .map((p) => ({ value: p.id, label: `${p.name} (${p.sku})` }))
+    !form.supplierId
+      ? []
+      : products.items
+          .filter((p) => p.status === 'active')
+          .filter((p) => (p.suppliers ?? []).some((s) => s.supplierId === form.supplierId))
+          .map((p) => ({ value: p.id, label: `${p.name} (${p.sku})` }))
   );
+
+  const productOptionsEmptyReason = $derived.by(() => {
+    if (!form.supplierId) return 'pilih-supplier';
+    if (productOptions.length === 0) return 'no-products-for-supplier';
+    return 'has-products';
+  });
 
   function variantOptionsFor(productId: string): { value: string; label: string }[] {
     const product = products.getById(productId);
@@ -139,12 +163,21 @@
     return opts;
   }
 
+  // Rantai prioritas untuk auto-suggest harga PO:
+  //   1. variant.cost (paling spesifik kalau line pilih varian)
+  //   2. ProductSupplier.unitCost untuk supplier yang dipilih di header
+  //   3. product.cost (fallback master)
+  // Operator tetap bebas override unitPrice di line.
   function productBaseCost(line: PurchaseOrderLine): number {
     const product = products.getById(line.productId);
     if (!product) return 0;
     if (line.variantId) {
       const v = product.variants.find((vv) => vv.id === line.variantId);
-      if (v) return v.cost;
+      if (v && v.cost > 0) return v.cost;
+    }
+    if (form.supplierId) {
+      const ps = (product.suppliers ?? []).find((s) => s.supplierId === form.supplierId);
+      if (ps && ps.unitCost > 0) return ps.unitCost;
     }
     return product.cost;
   }
@@ -152,6 +185,104 @@
   function defaultUnitPrice(line: PurchaseOrderLine): number {
     const factor = line.unitFactor > 0 ? line.unitFactor : 1;
     return productBaseCost(line) * factor;
+  }
+
+  // Hitung berapa line yang akan direset kalau supplier diganti ke `newId`.
+  // "Reset" terjadi pada line yang sudah punya productId tapi produk itu
+  // tidak terdaftar di pemasok baru.
+  function countLinesToReset(newId: string): number {
+    if (!newId) return 0;
+    let count = 0;
+    for (const line of form.lines) {
+      if (!line.productId) continue;
+      const product = products.getById(line.productId);
+      const hasSupplier =
+        product?.suppliers?.some((s) => s.supplierId === newId) ?? false;
+      if (!hasSupplier) count++;
+    }
+    return count;
+  }
+
+  // Operator pilih supplier baru di Select. Cek apakah perubahan akan
+  // mereset line; kalau iya, buka konfirmasi dulu. Kalau tidak ada line
+  // yang terdampak (atau cuma reset 0 line), terapkan langsung.
+  function requestSupplierChange(newId: string, selectEl: HTMLSelectElement) {
+    if (newId === form.supplierId) return;
+    const willReset = countLinesToReset(newId);
+    if (willReset === 0) {
+      form.supplierId = newId;
+      applySupplierChange();
+      return;
+    }
+    // Tahan dulu — buka dialog konfirmasi
+    pendingSupplierId = newId;
+    confirmSupplierChangeOpen = true;
+    // Revert DOM select kembali ke supplier lama karena form.supplierId
+    // belum berubah. Saat user konfirmasi, form.supplierId yang akan
+    // di-update jadi pending value.
+    selectEl.value = form.supplierId;
+  }
+
+  // Apply side effects setelah supplier benar-benar berganti:
+  //   1. Line yang produknya valid → re-suggest unitPrice
+  //   2. Line yang produknya tidak terdaftar → reset productId/variantId/
+  //      unitId/factor/price. Qty + notes dipertahankan supaya operator
+  //      bisa pick produk lain tanpa kehilangan plan.
+  function applySupplierChange() {
+    let resetCount = 0;
+    for (const line of form.lines) {
+      if (!line.productId) continue;
+      const product = products.getById(line.productId);
+      const hasSupplier =
+        product?.suppliers?.some((s) => s.supplierId === form.supplierId) ?? false;
+      if (!hasSupplier) {
+        line.productId = '';
+        line.variantId = undefined;
+        line.unitId = '';
+        line.unitFactor = 1;
+        line.unitPrice = 0;
+        resetCount++;
+      } else {
+        line.unitPrice = defaultUnitPrice(line);
+      }
+    }
+    if (resetCount > 0) {
+      toast.info(
+        `${resetCount} baris direset`,
+        'Pilih produk lagi di baris yang kosong. Qty & catatan kamu tetap utuh.'
+      );
+    }
+  }
+
+  function confirmSupplierChange() {
+    form.supplierId = pendingSupplierId;
+    applySupplierChange();
+    pendingSupplierId = '';
+    confirmSupplierChangeOpen = false;
+  }
+
+  function cancelSupplierChange() {
+    pendingSupplierId = '';
+    confirmSupplierChangeOpen = false;
+    // DOM Select sudah kita revert sebelumnya di requestSupplierChange();
+    // form.supplierId tidak pernah berubah, jadi nothing else to do.
+  }
+
+  // Konversi jumlah hari → label Indonesia yang natural.
+  function daysAgoLabel(days: number): string {
+    if (days <= 0) return 'hari ini';
+    if (days === 1) return 'kemarin';
+    if (days < 7) return `${days} hari lalu`;
+    if (days < 30) {
+      const weeks = Math.floor(days / 7);
+      return `${weeks} minggu lalu`;
+    }
+    if (days < 365) {
+      const months = Math.floor(days / 30);
+      return `${months} bulan lalu`;
+    }
+    const years = Math.floor(days / 365);
+    return `${years} tahun lalu`;
   }
 
   function addLine() {
@@ -254,7 +385,11 @@
         <Select
           label="Pemasok"
           placeholder="Pilih pemasok"
-          bind:value={form.supplierId}
+          value={form.supplierId}
+          onchange={(e) => {
+            const target = e.currentTarget as HTMLSelectElement;
+            requestSupplierChange(target.value, target);
+          }}
           options={supplierOptions}
           error={errors.supplierId}
         />
@@ -281,7 +416,12 @@
 
     <Card>
       {#snippet header()}
-        <Button size="sm" variant="outline" onclick={addLine}>
+        <Button
+          size="sm"
+          variant="outline"
+          onclick={addLine}
+          disabled={productOptions.length === 0}
+        >
           <Plus class="h-4 w-4" />
           Tambah item
         </Button>
@@ -289,7 +429,8 @@
       <div class="flex flex-col gap-1">
         <h3 class="text-sm font-semibold text-slate-900">Item</h3>
         <p class="text-xs text-slate-500">
-          Produk yang akan diorder dari pemasok. Harga satuan otomatis terisi dari biaya produk saat ini.
+          Produk yang akan diorder dari pemasok. Harga estimasi otomatis terisi dari harga supplier
+          atau biaya produk saat ini — harga sebenarnya bisa direvisi saat penerimaan barang.
         </p>
       </div>
 
@@ -297,7 +438,28 @@
         <p class="mt-3 text-xs text-rose-600">{errors.lines}</p>
       {/if}
 
-      {#if form.lines.length === 0}
+      {#if productOptionsEmptyReason === 'pilih-supplier'}
+        <div
+          class="mt-4 rounded-lg border border-dashed border-slate-200 bg-slate-50/60 px-4 py-6 text-center"
+        >
+          <p class="text-sm font-medium text-slate-600">Pilih pemasok dulu</p>
+          <p class="mt-1 text-xs text-slate-500">
+            Daftar produk akan disesuaikan dengan pemasok yang dipilih di atas — hanya produk
+            yang terdaftar di pemasok itu yang bisa di-PO.
+          </p>
+        </div>
+      {:else if productOptionsEmptyReason === 'no-products-for-supplier'}
+        <div
+          class="mt-4 rounded-lg border border-dashed border-amber-200 bg-amber-50/60 px-4 py-6 text-center"
+        >
+          <p class="text-sm font-medium text-amber-800">Belum ada produk untuk pemasok ini</p>
+          <p class="mt-1 text-xs text-amber-700">
+            Tambahkan pemasok ini ke master produk dulu. Buka
+            <a href="/products" class="font-medium underline hover:text-amber-900">Master Produk</a>
+            → pilih produk → kartu Pemasok → tambah pemasok.
+          </p>
+        </div>
+      {:else if form.lines.length === 0}
         <div
           class="mt-4 rounded-lg border border-dashed border-slate-200 bg-slate-50/60 py-6 text-center text-xs text-slate-500"
         >
@@ -331,6 +493,13 @@
               return ps?.minOrderQty ?? 0;
             })()}
             {@const moqShortfall = supplierMOQ > 0 && baseQty > 0 && baseQty < supplierMOQ}
+            {@const lastFromSupplier =
+              !isConsignment && line.productId && form.supplierId
+                ? latestSupplierPrice(line.productId, line.variantId, form.supplierId)
+                : null}
+            {@const lastInLineUnit = lastFromSupplier
+              ? lastFromSupplier.unitCost * (line.unitFactor || 1)
+              : 0}
             <div class="rounded-lg border border-slate-200 bg-white p-3">
               <div class="grid gap-3 md:grid-cols-[2fr_1.5fr_auto] md:items-end">
                 <Select
@@ -385,13 +554,18 @@
                     onLineUnitChange(line, (e.currentTarget as HTMLSelectElement).value)}
                 />
                 <MoneyInput
-                  label={isConsignment ? 'Setoran' : 'Harga satuan'}
+                  label={isConsignment ? 'Setoran' : 'Harga estimasi'}
+                  tooltip={isConsignment
+                    ? 'Nilai setoran ke consignor — biasanya sudah disepakati di awal.'
+                    : 'Estimasi harga yang dibayar ke pemasok. Sementara — bisa direvisi saat penerimaan kalau invoice supplier ternyata beda. Sumber autofill: harga supplier (kalau ada) → biaya varian → biaya master.'}
                   bind:value={line.unitPrice}
                   error={errors[`l${i}_unitPrice`]}
                 />
                 <Input label="Catatan item" placeholder="opsional" bind:value={line.notes} />
                 <div class="text-right">
-                  <span class="block text-xs font-medium text-slate-500">Subtotal</span>
+                  <span class="block text-xs font-medium text-slate-500">
+                    {isConsignment ? 'Subtotal' : 'Estimasi subtotal'}
+                  </span>
                   <span class="text-sm font-semibold text-slate-900">
                     {formatRupiah(subtotal)}
                   </span>
@@ -415,6 +589,38 @@
                     <span class="font-semibold">{supplierMOQ} {baseUnit.code}</span>
                     per pesanan. Saat ini cuma {baseQty} {baseUnit.code}.
                   </span>
+                </div>
+              {/if}
+              {#if lastFromSupplier && baseUnit}
+                {@const unitLabel = line.unitFactor > 1 ? line.unitId : baseUnit.id}
+                {@const lineUnitObj = units.getById(unitLabel)}
+                {@const lineUnitCode = lineUnitObj?.code ?? baseUnit.code}
+                <div
+                  class="mt-2 flex items-start gap-2 rounded-md border border-sky-200 bg-sky-50 px-2.5 py-1.5 text-xs text-sky-900"
+                >
+                  <History class="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                  <div class="flex-1 flex-wrap">
+                    <span>
+                      Harga terakhir dari pemasok ini:
+                      <span class="font-semibold">{formatRupiah(lastInLineUnit)}</span> / {lineUnitCode}
+                      <span class="text-sky-700">· {daysAgoLabel(lastFromSupplier.daysAgo)}</span>
+                    </span>
+                    {#if lastFromSupplier.previousCost !== undefined && Math.abs(lastFromSupplier.deltaPct) > 0.5}
+                      <span class="ml-2">
+                        <Badge
+                          variant={lastFromSupplier.deltaPct > 0 ? 'danger' : 'success'}
+                          size="sm"
+                        >
+                          {lastFromSupplier.deltaPct > 0 ? '+' : ''}{lastFromSupplier.deltaPct.toFixed(1)}% dari sebelumnya
+                        </Badge>
+                      </span>
+                    {/if}
+                    {#if lastFromSupplier.totalReceipts > 1}
+                      <span class="text-sky-700">
+                        · sudah {lastFromSupplier.totalReceipts}× diterima
+                      </span>
+                    {/if}
+                  </div>
                 </div>
               {/if}
               {#if isConsignment && line.productId}
@@ -463,9 +669,16 @@
 
       {#if form.lines.length > 0}
         <div class="mt-4 flex items-center justify-end gap-3 border-t border-slate-100 pt-3">
-          <span class="text-sm text-slate-500">Total</span>
+          <span class="text-sm text-slate-500">
+            {form.type === 'consignment' ? 'Total' : 'Estimasi total'}
+          </span>
           <span class="text-lg font-semibold text-slate-900">{formatRupiah(total)}</span>
         </div>
+        {#if form.type !== 'consignment'}
+          <p class="mt-1 text-right text-xs text-slate-500">
+            Harga sebenarnya diisi saat penerimaan barang.
+          </p>
+        {/if}
       {/if}
     </Card>
   </div>
@@ -498,7 +711,9 @@
           <dd class="font-medium text-slate-900">{form.lines.length}</dd>
         </div>
         <div class="flex justify-between border-t border-slate-100 pt-2">
-          <dt class="text-slate-500">Total</dt>
+          <dt class="text-slate-500">
+            {form.type === 'consignment' ? 'Total' : 'Estimasi total'}
+          </dt>
           <dd class="font-semibold text-slate-900">{formatRupiah(total)}</dd>
         </div>
       </dl>
@@ -523,3 +738,19 @@
   <Button variant="outline" onclick={onCancel}>Batal</Button>
   <Button onclick={submit}>{submitLabel}</Button>
 </div>
+
+<ConfirmDialog
+  bind:open={confirmSupplierChangeOpen}
+  title="Ganti pemasok?"
+  message={(() => {
+    const newName = suppliers.getById(pendingSupplierId)?.name ?? 'pemasok baru';
+    const oldName = suppliers.getById(form.supplierId)?.name ?? 'pemasok lama';
+    const resetCount = countLinesToReset(pendingSupplierId);
+    return `Ganti dari "${oldName}" ke "${newName}"? ${resetCount} baris akan kehilangan pilihan produk karena produknya tidak terdaftar di "${newName}". Qty & catatan kamu tetap utuh — kamu cukup pilih produk lagi.`;
+  })()}
+  confirmLabel="Lanjut ganti pemasok"
+  cancelLabel="Batalkan"
+  variant="primary"
+  onConfirm={confirmSupplierChange}
+  onCancel={cancelSupplierChange}
+/>

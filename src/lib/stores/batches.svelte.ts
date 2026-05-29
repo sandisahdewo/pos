@@ -274,6 +274,137 @@ const seed: Batch[] = [
     receivedAt: '2026-05-18',
     locationId: 'loc_gudang',
     notes: 'Initial seed — Latte stok lanjutan harga lebih tinggi.'
+  },
+  // === Overlap batches untuk demo Perbandingan A vs B di /harga-pemasok ===
+  // sup_4 (Toko Grosir Aneka) kirim produk yang juga di-supply oleh sup_1
+  // (Kopi Nusantara) dan sup_2 (Roti Sejahtera) — supaya operator bisa
+  // bandingkan: mana lebih murah, mana lebih sering naik, dll.
+  //
+  // Espresso: sup_1 (primary 5.000) vs sup_4 (alt, 2× kirim trendnya naik)
+  {
+    id: 'batch_17',
+    code: 'BATCH-2026-017',
+    productId: 'prd_1',
+    ownership: 'owned',
+    supplierId: 'sup_4',
+    unitCost: 5300,
+    qtyReceived: 60,
+    qtyRemaining: 60,
+    receivedAt: '2026-04-10',
+    locationId: 'loc_gudang',
+    notes: 'Demo: Espresso dari sup_4 (cadangan saat sup_1 overdue).'
+  },
+  {
+    id: 'batch_18',
+    code: 'BATCH-2026-018',
+    productId: 'prd_1',
+    ownership: 'owned',
+    supplierId: 'sup_4',
+    unitCost: 5500,
+    qtyReceived: 50,
+    qtyRemaining: 50,
+    receivedAt: '2026-05-15',
+    locationId: 'loc_gudang',
+    notes: 'Demo: Espresso dari sup_4 — harga naik 3.8% dari batch sebelumnya.'
+  },
+  // Espresso sup_1 — tambah batch kedua untuk trend (sebelumnya cuma 1)
+  {
+    id: 'batch_19',
+    code: 'BATCH-2026-019',
+    productId: 'prd_1',
+    ownership: 'owned',
+    supplierId: 'sup_1',
+    unitCost: 5200,
+    qtyReceived: 100,
+    qtyRemaining: 100,
+    receivedAt: '2026-05-20',
+    locationId: 'loc_gudang',
+    notes: 'Demo: Espresso sup_1 batch ke-2 — naik 4% dari batch_1.'
+  },
+  // Croissant: sup_2 (primary, fresh harian) vs sup_4 (frozen darurat)
+  {
+    id: 'batch_20',
+    code: 'BATCH-2026-020',
+    productId: 'prd_3',
+    ownership: 'owned',
+    supplierId: 'sup_4',
+    unitCost: 9200,
+    qtyReceived: 20,
+    qtyRemaining: 0,
+    receivedAt: '2026-05-05',
+    expiresAt: '2026-05-08',
+    locationId: 'loc_gudang',
+    notes: 'Demo: Croissant sup_4 (frozen) — habis. Harga 15% lebih mahal dari sup_2.'
+  },
+  {
+    id: 'batch_21',
+    code: 'BATCH-2026-021',
+    productId: 'prd_3',
+    ownership: 'owned',
+    supplierId: 'sup_2',
+    unitCost: 8000,
+    qtyReceived: 24,
+    qtyRemaining: 0,
+    receivedAt: '2026-05-08',
+    expiresAt: '2026-05-11',
+    locationId: 'loc_gudang',
+    notes: 'Demo: Croissant sup_2 batch tambahan — harga stabil.'
+  },
+  // Telur: sup_2 (primary 2.500) vs sup_4 (cadangan, dua kirim)
+  {
+    id: 'batch_22',
+    code: 'BATCH-2026-022',
+    productId: 'prd_8',
+    ownership: 'owned',
+    supplierId: 'sup_4',
+    unitCost: 2700,
+    qtyReceived: 60,
+    qtyRemaining: 30,
+    receivedAt: '2026-05-04',
+    expiresAt: '2026-05-12',
+    locationId: 'loc_gudang',
+    notes: 'Demo: Telur sup_4 cadangan saat sup_2 overdue.'
+  },
+  {
+    id: 'batch_23',
+    code: 'BATCH-2026-023',
+    productId: 'prd_8',
+    ownership: 'owned',
+    supplierId: 'sup_4',
+    unitCost: 2900,
+    qtyReceived: 60,
+    qtyRemaining: 60,
+    receivedAt: '2026-05-22',
+    expiresAt: '2026-05-30',
+    locationId: 'loc_gudang',
+    notes: 'Demo: Telur sup_4 batch ke-2 — naik 7.4% dari yang sebelumnya.'
+  },
+  // Latte: sup_1 (sudah 2 batch) vs sup_4 (kompetitor baru)
+  {
+    id: 'batch_24',
+    code: 'BATCH-2026-024',
+    productId: 'prd_2',
+    ownership: 'owned',
+    supplierId: 'sup_4',
+    unitCost: 12800,
+    qtyReceived: 30,
+    qtyRemaining: 30,
+    receivedAt: '2026-04-25',
+    locationId: 'loc_gudang',
+    notes: 'Demo: Latte sup_4 sebagai alternatif sup_1.'
+  },
+  {
+    id: 'batch_25',
+    code: 'BATCH-2026-025',
+    productId: 'prd_2',
+    ownership: 'owned',
+    supplierId: 'sup_4',
+    unitCost: 13500,
+    qtyReceived: 25,
+    qtyRemaining: 25,
+    receivedAt: '2026-05-23',
+    locationId: 'loc_gudang',
+    notes: 'Demo: Latte sup_4 batch ke-2 — naik 5.5%.'
   }
 ];
 

@@ -3,7 +3,7 @@
 This document captures the design decisions, data model, and conventions for the **product master** in this POS scaffold. The goal is to give a future maintainer — human or AI agent — enough context to extend the system without re-deriving the rationale.
 
 > **Status:** scaffold, frontend-only. No backend yet; all data is in-memory `$state` and resets on reload.
-> **Terakhir diupdate:** 2026-05-27 (sesi lanjutan: **Reorder kartu untuk komposit** — Bahan / Isi paket sekarang muncul sebelum Harga & Stok supaya biaya efektif sudah terhitung dari bahan saat operator atur harga; kartu Bahan selalu render untuk komposit (bukan cuma saat ada bahan) dengan empty state "Tambah komponen pertama"; chip "Tambah komponen (resep)" dihapus dari opt-in chips Harga & Stok karena kartu Bahan sudah jadi entry point natural. **`CompositeComponent` dapat `unitId?` + `unitFactor?`** — bahan boleh dispesifikasi dalam satuan kemasan produk komponen (mis. "1 ekor ayam" alih-alih "8 pcs"). Helper `componentBaseQty(c)` exported, dipakai di semua callsite: `componentsCost` & `componentsProducible` di store; `deductComponents` di `orders.svelte.ts`; `productionRuns` planner (perOutput + required + bottleneck); `recipeFormCost` & `variantEffectiveCost` & `producibleFormStock` di ProductForm; component cost approximation di `PriceAdjustmentModal`. **UI Satuan picker** ditambah di tiga tempat: kartu Bahan level-produk, sub-section "Resep" per-varian (kartu Varian), dan sub-section "Bahan yang dipotong" di kartu Ekstra — Select muncul cuma kalau produk komponen punya minimal 1 kemasan tambahan; hint konversi "1 ekor = 8 pcs" muncul saat factor ≠ 1; reset `unitId`+`unitFactor` saat ganti produk komponen. Helper baru di form: `componentUnitOptionsFor(productId)` + `onComponentUnitChange(comp, value)` dengan encoding `${unitId}|${factor}` mirror PO line. **Tooltip kontekstual field "Satuan"** di kartu Harga & Stok — switch berdasarkan `form.kind`: untuk goods jelaskan satuan dasar jual + arah ke Satuan Kemasan; untuk composite jelaskan satuan output (porsi, paket, pcs, potong) dan bedanya dari satuan bahan. **Tips inline `<details>` di kartu Varian** — collapsible biru muda "💡 Kapan pakai varian vs pisah jadi produk baru?" dengan tiga blok kriteria + contoh + catatan keterbatasan varian × kemasan (kemasan & harga lusinannya shared lintas varian; workaround: jadikan varian atau pisah produk). Sebelumnya hari ini: Komponen `Tooltip` baru + prop `tooltip?: string` di `Input`, `Select`, dan `MoneyInput` — ikon `?` muncul di samping label dengan popup penjelasan; banyak label/hint di `ProductForm` direvisi jadi bahasa sehari-hari (Jenis produk, Cara penyiapan, Acuan biaya untuk hitung harga jual, Bahan / Isi paket, Pilihan variasi, Ekstra / tambahan opsional, Harga tambahan, Pengelompokan, dll.); opsi `pricingKindOptions` diterjemahkan ke Indonesia (`Harga tetap` / `Biaya + nominal` / `Persen untung`); opsi `productKindOptions`, `markupCostSourceOptions`, dan `productionModeOptions` ditulis ulang pakai contoh konkret tanpa jargon (FIFO, composite, fallback) — `Komposit` di-display sebagai `Resep / Paket`, `Saya atur sendiri` ↔ `Harga beli stok yang sedang dijual` ↔ `Rata-rata harga beli semua stok`, `Hanya dari produksi` jadi `Wajib disiapkan dulu`; status produk dan beberapa opsi sundry (`Active`/`Archived`/`No default supplier`/`lead Nh`) ikut diterjemahkan. **Entitas Brand baru** (`src/lib/stores/brands.svelte.ts` + route `/brands` CRUD modal + ikon `Bookmark` di sidebar + permission `menu.brands`) — `Product.brandId?: string` opsional, ada filter & display brand di `/products` list. **Sistem Tag** (`src/lib/stores/tags.svelte.ts` + route `/tags` + ikon `Sparkles` + permission `menu.tags`) — `Product.tags?: string[]` (simpan nama, lookup warna lewat `tags.getByName()`); `ChipInput` di-extend dengan prop `suggestions: string[]` yang menampilkan dropdown autocomplete saat input fokus, filter case-insensitive, exclude yang sudah dipilih, dengan toleransi enter free-form (auto-create); badge tag tampil di `/products` name column. **Prebuilt custom fields** di `Product` — `bpomNumber?`, `halalCertNumber?`, `warrantyMonths?`, plus `metadata?: Record<string, string>` bebas key-value; semua disurface di kartu "Info tambahan" sidebar form (Collapsible, auto-buka kalau ada data). **Kategori hierarkis** — `Category.parentId?: string` + helper `path(id)` / `descendantsOf(id)` / `isAncestorOf(ancestorId, descendantId)`; `taxRateFor()` di-update untuk walk parent chain ASC sampai root (sub-kategori bisa inherit pajak dari induk); category form punya Select "Kategori induk" yang otomatis exclude self + descendants untuk cegah siklus; filter kategori di `/products` include semua descendants; **tree view di `/categories`** — Table di-render dalam DFS dengan indent per-depth + chevron expand/collapse, mode search otomatis flatten + tampilkan breadcrumb subtitle, kolom Produk menunjukkan jumlah deep (termasuk sub-kategori) plus selisih "(N langsung)" kalau beda. **MOQ supplier-side** — `ProductSupplier.minOrderQty?: number` (opsional, satuan dasar produk) + input di kartu pemasok form produk + warning amber di line PO kalau qty < MOQ. Lihat section **Fitur baru (dibangun 2026-05-27)** di Part I. Sebelumnya 2026-05-26: source-aware cost preview di ProductForm (`effectiveFormCost` / `variantEffectiveCost` rute lewat `costFromSource(form.markupCostSource, …)`), `costFromSource` di-export + pakai `manualFallback` konsisten untuk semua source termasuk `batch-avg`; UI Harga & Stok dirapikan (Sumber biaya di atas Biaya beli, label kontekstual Biaya beli ↔ Biaya awal, preview "Biaya saat ini" saat batch override, banner amber saat cost=0 dengan markup pricing); helper `pricingMode(p)` + badge `Statis`/`Markup manual`/`Ikut PO`/`Campur` di `/products`; `Product.barcode?: string` untuk barcode base unit; `resolveScanToken` priority chain 6-langkah (variant.barcode → packaging.barcode → product.barcode → SKU → variant.sku → batch.code) yang nge-set unitId+factor di cart line saat packaging match; helper `findBarcodeOwner()` + `validateBarcodes` untuk uniqueness lintas katalog; keputusan: packaging **tetap tanpa SKU**. Sebelumnya 2026-05-22: shelf label + production model + `markupCostSource` + bulk price adjustment + `/pengaturan-harga` Pantauan Margin. Sebelumnya 2026-05-15: Tax rates, Suppliers, Product images, Purchase Orders, Composite products, batch-based stock, Payouts, Locations, StockMovement + StockOpname.
+> **Terakhir diupdate:** 2026-05-28 (Fokus pindah ke procurement / PO setelah master product selesai. **Seed produk baru** untuk demo varian × kemasan: `prd_13 Kaos Polos Distro` (3 warna × Lusin/Kodi/Gross) dan `prd_14 Sabun Mandi Aroma` (3 aroma × Pak 4/6 / Dus 24); tiga unit master baru `unit_7 Lusin`, `unit_8 Kodi`, `unit_9 Gross`. **PO autofill prioritas** — `productBaseCost` di PO form ambil rantai `variant.cost` → `ProductSupplier.unitCost` → `product.cost` (sebelumnya supplier-specific cost diabaikan); `onSupplierChange()` re-trigger `unitPrice` untuk semua line saat ganti supplier di header. **UI estimasi di PO form** — label "Harga satuan" → "Harga estimasi", "Total" → "Estimasi total" (non-konsinyasi), tooltip + caption jelaskan harga sebenarnya diisi di receive. **Receive flow harga aktual** — `purchaseOrders.receive(id, opts)` dapat dua opts baru: `actualPrices?: Record<lineId, number>` (override `line.unitPrice` untuk batch.unitCost) dan `updateSupplierCost?: Record<lineId, boolean>` (opt-in update `ProductSupplier.unitCost` di master kalau supplier sudah terdaftar). Modal receive di `/purchase-orders/[id]` dapat `MoneyInput` "Harga aktual / [unit]" per line (prefill = estimasi), badge delta %, hint selisih, plus checkbox "Simpan harga ini sebagai harga pemasok" yang muncul cuma kalau aktual ≠ estimasi. **Selisih estimasi vs aktual di PO detail** — kolom harga jadi dual-row (Estimasi atas + Aktual bawah per batch dengan delta %); footer total: Estimasi total + Aktual diterima + Selisih (nominal + %); helper `batchesForLine(lineId)` mengelompokkan batches dari satu line untuk display partial receive dengan harga beda. **Supplier price analytics** — file baru `src/lib/utils/supplierAnalytics.ts` dengan 4 helper murni-derivasi dari `batches.items`: `priceHistoryFor(productId, variantId?, supplierId)`, `supplierComparison(productId, variantId?)` (default aggregate lintas varian), `supplierPriceTrend(supplierId)`, `latestSupplierPrice(productId, variantId, supplierId)`. **Panel kontekstual** di PO line: box sky ("Harga terakhir dari pemasok ini: Rp X / [unit] · N minggu lalu · ±X% dari sebelumnya · sudah N× diterima") muncul saat produk + supplier dipilih, pakai helper `daysAgoLabel(days)` untuk format Indonesia natural. **Panel perbandingan supplier** di sidebar ProductForm (setelah Pemasok card, render kalau ada batch dari supplier): card per supplier dengan auto-tag **Termurah** (hijau) / **Termahal** (merah) / **Sering naik harga** (kuning) / **Paling sering** (biru) + harga terakhir + weighted avg + rentang min-max + frekuensi naik/turun. **Tips tambahan di kartu Varian** — block amber baru di `<details>` "Kapan pakai varian": jelaskan workaround harga jual per (varian, kemasan) yang harus beda — selisih kecil ambil rata-rata, selisih besar jadikan kemasan sebagai atribut varian (kehilangan konversi otomatis), spec teknis beda pisah produk; plus catatan eksplisit bahwa di PO tiap line bebas atur harga (bukan limitasi PO). Sebelumnya 2026-05-27: sesi lanjutan: **Reorder kartu untuk komposit** — Bahan / Isi paket sekarang muncul sebelum Harga & Stok supaya biaya efektif sudah terhitung dari bahan saat operator atur harga; kartu Bahan selalu render untuk komposit (bukan cuma saat ada bahan) dengan empty state "Tambah komponen pertama"; chip "Tambah komponen (resep)" dihapus dari opt-in chips Harga & Stok karena kartu Bahan sudah jadi entry point natural. **`CompositeComponent` dapat `unitId?` + `unitFactor?`** — bahan boleh dispesifikasi dalam satuan kemasan produk komponen (mis. "1 ekor ayam" alih-alih "8 pcs"). Helper `componentBaseQty(c)` exported, dipakai di semua callsite: `componentsCost` & `componentsProducible` di store; `deductComponents` di `orders.svelte.ts`; `productionRuns` planner (perOutput + required + bottleneck); `recipeFormCost` & `variantEffectiveCost` & `producibleFormStock` di ProductForm; component cost approximation di `PriceAdjustmentModal`. **UI Satuan picker** ditambah di tiga tempat: kartu Bahan level-produk, sub-section "Resep" per-varian (kartu Varian), dan sub-section "Bahan yang dipotong" di kartu Ekstra — Select muncul cuma kalau produk komponen punya minimal 1 kemasan tambahan; hint konversi "1 ekor = 8 pcs" muncul saat factor ≠ 1; reset `unitId`+`unitFactor` saat ganti produk komponen. Helper baru di form: `componentUnitOptionsFor(productId)` + `onComponentUnitChange(comp, value)` dengan encoding `${unitId}|${factor}` mirror PO line. **Tooltip kontekstual field "Satuan"** di kartu Harga & Stok — switch berdasarkan `form.kind`: untuk goods jelaskan satuan dasar jual + arah ke Satuan Kemasan; untuk composite jelaskan satuan output (porsi, paket, pcs, potong) dan bedanya dari satuan bahan. **Tips inline `<details>` di kartu Varian** — collapsible biru muda "💡 Kapan pakai varian vs pisah jadi produk baru?" dengan tiga blok kriteria + contoh + catatan keterbatasan varian × kemasan (kemasan & harga lusinannya shared lintas varian; workaround: jadikan varian atau pisah produk). Sebelumnya hari ini: Komponen `Tooltip` baru + prop `tooltip?: string` di `Input`, `Select`, dan `MoneyInput` — ikon `?` muncul di samping label dengan popup penjelasan; banyak label/hint di `ProductForm` direvisi jadi bahasa sehari-hari (Jenis produk, Cara penyiapan, Acuan biaya untuk hitung harga jual, Bahan / Isi paket, Pilihan variasi, Ekstra / tambahan opsional, Harga tambahan, Pengelompokan, dll.); opsi `pricingKindOptions` diterjemahkan ke Indonesia (`Harga tetap` / `Biaya + nominal` / `Persen untung`); opsi `productKindOptions`, `markupCostSourceOptions`, dan `productionModeOptions` ditulis ulang pakai contoh konkret tanpa jargon (FIFO, composite, fallback) — `Komposit` di-display sebagai `Resep / Paket`, `Saya atur sendiri` ↔ `Harga beli stok yang sedang dijual` ↔ `Rata-rata harga beli semua stok`, `Hanya dari produksi` jadi `Wajib disiapkan dulu`; status produk dan beberapa opsi sundry (`Active`/`Archived`/`No default supplier`/`lead Nh`) ikut diterjemahkan. **Entitas Brand baru** (`src/lib/stores/brands.svelte.ts` + route `/brands` CRUD modal + ikon `Bookmark` di sidebar + permission `menu.brands`) — `Product.brandId?: string` opsional, ada filter & display brand di `/products` list. **Sistem Tag** (`src/lib/stores/tags.svelte.ts` + route `/tags` + ikon `Sparkles` + permission `menu.tags`) — `Product.tags?: string[]` (simpan nama, lookup warna lewat `tags.getByName()`); `ChipInput` di-extend dengan prop `suggestions: string[]` yang menampilkan dropdown autocomplete saat input fokus, filter case-insensitive, exclude yang sudah dipilih, dengan toleransi enter free-form (auto-create); badge tag tampil di `/products` name column. **Prebuilt custom fields** di `Product` — `bpomNumber?`, `halalCertNumber?`, `warrantyMonths?`, plus `metadata?: Record<string, string>` bebas key-value; semua disurface di kartu "Info tambahan" sidebar form (Collapsible, auto-buka kalau ada data). **Kategori hierarkis** — `Category.parentId?: string` + helper `path(id)` / `descendantsOf(id)` / `isAncestorOf(ancestorId, descendantId)`; `taxRateFor()` di-update untuk walk parent chain ASC sampai root (sub-kategori bisa inherit pajak dari induk); category form punya Select "Kategori induk" yang otomatis exclude self + descendants untuk cegah siklus; filter kategori di `/products` include semua descendants; **tree view di `/categories`** — Table di-render dalam DFS dengan indent per-depth + chevron expand/collapse, mode search otomatis flatten + tampilkan breadcrumb subtitle, kolom Produk menunjukkan jumlah deep (termasuk sub-kategori) plus selisih "(N langsung)" kalau beda. **MOQ supplier-side** — `ProductSupplier.minOrderQty?: number` (opsional, satuan dasar produk) + input di kartu pemasok form produk + warning amber di line PO kalau qty < MOQ. Lihat section **Fitur baru (dibangun 2026-05-27)** di Part I. Sebelumnya 2026-05-26: source-aware cost preview di ProductForm (`effectiveFormCost` / `variantEffectiveCost` rute lewat `costFromSource(form.markupCostSource, …)`), `costFromSource` di-export + pakai `manualFallback` konsisten untuk semua source termasuk `batch-avg`; UI Harga & Stok dirapikan (Sumber biaya di atas Biaya beli, label kontekstual Biaya beli ↔ Biaya awal, preview "Biaya saat ini" saat batch override, banner amber saat cost=0 dengan markup pricing); helper `pricingMode(p)` + badge `Statis`/`Markup manual`/`Ikut PO`/`Campur` di `/products`; `Product.barcode?: string` untuk barcode base unit; `resolveScanToken` priority chain 6-langkah (variant.barcode → packaging.barcode → product.barcode → SKU → variant.sku → batch.code) yang nge-set unitId+factor di cart line saat packaging match; helper `findBarcodeOwner()` + `validateBarcodes` untuk uniqueness lintas katalog; keputusan: packaging **tetap tanpa SKU**. Sebelumnya 2026-05-22: shelf label + production model + `markupCostSource` + bulk price adjustment + `/pengaturan-harga` Pantauan Margin. Sebelumnya 2026-05-15: Tax rates, Suppliers, Product images, Purchase Orders, Composite products, batch-based stock, Payouts, Locations, StockMovement + StockOpname.
 
 ## Table of contents
 
@@ -3762,6 +3762,244 @@ Default collapsed supaya tidak overload form, terbuka saat operator butuh.
 16. **Tips kapan pakai varian vs produk baru** — operator minta panduan tertulis di form. Ditambah `<details>` collapsible di kartu Varian dengan 3 blok kriteria + contoh + catatan keterbatasan.
 17. **Per-variant components + extras components UI** — sebelumnya cuma Bahan level-produk yang dapat Satuan picker. Operator minta konsisten — UI Satuan picker ditambah di dua tempat lain (resep per-varian, bahan ekstra) dengan pola identik.
 18. **Field "Satuan" di Harga & Stok ambiguous untuk komposit** — operator review tooltip sebelumnya minim konteks. Tooltip sekarang switch per `form.kind` supaya jelas: goods = satuan jual, composite = satuan output.
+
+---
+
+## Fitur baru (dibangun 2026-05-28)
+
+Setelah master product diselesaikan, fokus pindah ke **procurement / Purchase Order** dan **supplier analytics**. Diskusi dimulai dari pertanyaan operator "kalau saya order varian merah 1 gross, harganya dari mana?" — yang membuka tiga gap praktis di PO:
+1. Autofill di PO form mengabaikan `ProductSupplier.unitCost` (komentar di type mengatakan dipakai, tapi implementasinya tidak)
+2. Label "Harga satuan" ambigu — saat PO masih draft, itu **estimasi**, bukan final
+3. Tidak ada cara input harga sebenarnya dari invoice supplier saat penerimaan barang — `line.unitPrice` dipakai apa adanya untuk `Batch.unitCost`
+
+Plus permintaan lanjutan: analitik harga supplier ("supplier mana paling murah, sering naik harga, dst").
+
+### Seed produk: Kaos & Sabun untuk demo varian × kemasan
+
+Dua produk goods dengan dua dimensi (varian + kemasan) — dipakai untuk demonstrasi diskusi keterbatasan pricing per-(varian, kemasan):
+
+```ts
+prd_13 Kaos Polos Distro       // 3 warna (Hitam, Putih, Abu-abu)
+  units: [Lusin (12), Kodi (20), Gross (144)]
+  Harga ecer Rp 50.000 / pcs · Lusin Rp 540.000 · Kodi Rp 850.000 · Gross Rp 5.400.000
+
+prd_14 Sabun Mandi Aroma       // 3 aroma (Floral, Citrus, Mint)
+  units: [Pak 4 (factor 4), Pak 6 (factor 6), Dus 24 (factor 24)]
+  Harga ecer Rp 7.500 / pcs · Pak 4 Rp 28.000 · Pak 6 Rp 40.500 · Dus Rp 156.000
+```
+
+Tiga unit master baru di `units.svelte.ts`: `unit_7 Lusin`, `unit_8 Kodi`, `unit_9 Gross` — istilah tradisional Indonesia tekstil/garmen. Sabun pakai `unit_2 Box` dengan factor beda (4/6/24).
+
+Variant + kemasan coexist untuk goods (dibahas detail di tips Varian); harga kemasan & barcode tetap shared lintas varian. Keterbatasan diketahui — tidak refactor sekarang, ada workaround di tips.
+
+### PO autofill prioritas — `productBaseCost` chain
+
+Sebelumnya `productBaseCost(line)` di `PurchaseOrderForm` cuma ambil `variant.cost` atau `product.cost`. `ProductSupplier.unitCost` ditambahkan ke model lama (komentar bilang "overrides product.cost for PO autofill") tapi tidak pernah dipakai.
+
+Sekarang rantainya eksplisit:
+
+```ts
+function productBaseCost(line: PurchaseOrderLine): number {
+  const product = products.getById(line.productId);
+  if (!product) return 0;
+  // 1. Variant cost (paling spesifik kalau line pilih varian)
+  if (line.variantId) {
+    const v = product.variants.find((vv) => vv.id === line.variantId);
+    if (v && v.cost > 0) return v.cost;
+  }
+  // 2. ProductSupplier.unitCost (kalau supplier terpilih punya entry)
+  if (form.supplierId) {
+    const ps = (product.suppliers ?? []).find((s) => s.supplierId === form.supplierId);
+    if (ps && ps.unitCost > 0) return ps.unitCost;
+  }
+  // 3. product.cost (fallback master)
+  return product.cost;
+}
+```
+
+Saat operator ganti supplier di header PO, `onSupplierChange()` re-trigger `unitPrice = defaultUnitPrice(line)` untuk semua line. Trade-off yang diterima: kalau operator sudah override unitPrice manual lalu ganti supplier, edit ditimpa — workflow tipikal adalah "pilih supplier dulu, isi line baru" jadi risiko kecil.
+
+### UI estimasi: jelaskan apa yang BENERAN PO simpan
+
+Label di PO line:
+- `"Harga satuan"` → **`"Harga estimasi"`** (untuk standard PO; consignment tetap `"Setoran"` karena angka itu memang fixed di awal)
+- Tooltip: *"Estimasi harga yang dibayar ke pemasok. Sementara — bisa direvisi saat penerimaan kalau invoice supplier ternyata beda. Sumber autofill: harga supplier (kalau ada) → biaya varian → biaya master."*
+- Subtotal label: **`"Estimasi subtotal"`** (non-consignment)
+
+Summary di sidebar dan footer:
+- `"Total"` → **`"Estimasi total"`** (non-consignment)
+- Caption tambahan di bawah footer: *"Harga sebenarnya diisi saat penerimaan barang."*
+
+Description di kartu Item: *"Produk yang akan diorder dari pemasok. Harga estimasi otomatis terisi dari harga supplier atau biaya produk saat ini — harga sebenarnya bisa direvisi saat penerimaan barang."*
+
+### Receive form: input harga aktual + opt-in update
+
+`purchaseOrders.receive(id, opts)` di-extend dengan dua opts baru:
+
+```ts
+opts.actualPrices?: Record<lineId, number>
+// Harga sebenarnya dari nota supplier — per line, dalam satuan yang sama
+// dengan line.unitPrice (per unit yang dipilih). Kalau diisi, override
+// line.unitPrice untuk menghitung Batch.unitCost. Kalau tidak diisi,
+// fallback ke line.unitPrice (estimasi PO).
+
+opts.updateSupplierCost?: Record<lineId, boolean>
+// Per line: kalau true, update ProductSupplier.unitCost di master dengan
+// harga aktual per base unit. PO berikutnya ke supplier yang sama
+// autofill dengan harga terbaru. Hanya update kalau entry sudah ada
+// (tidak otomatis menambah supplier baru — operator harus daftar dulu
+// di kartu Pemasok master).
+```
+
+Di dalam `receive()`:
+
+```ts
+const effectiveUnitPrice = opts?.actualPrices?.[line.id] ?? line.unitPrice;
+const perBaseUnitCost = effectiveUnitPrice / factor;
+batches.add({ ..., unitCost: perBaseUnitCost });
+
+if (opts?.updateSupplierCost?.[line.id] && po.type !== 'consignment') {
+  // update ProductSupplier.unitCost via products.update()
+}
+```
+
+`line.unitPrice` **tidak dimutasi** — tetap historis sebagai estimasi awal. `Batch.unitCost` yang menyimpan harga aktual. Itu jadi source of truth untuk FIFO/markup pricing/laporan.
+
+UI di modal receive (`/purchase-orders/[id]/+page.svelte`):
+
+- State baru: `receiveActualPriceMap: Record<lineId, number>` (prefill = line.unitPrice di `openReceive()`) dan `receiveUpdateSupplierCostMap: Record<lineId, boolean>` (prefill = false)
+- `MoneyInput` "Harga aktual / [lineUnit]" per line dengan tooltip jelas
+- Badge inline di kanan: hijau (`-X.X%`) kalau aktual lebih murah dari estimasi, merah (`+X.X%`) kalau lebih mahal, neutral `cocok` kalau persis sama
+- Hint di bawah: `"Selisih +Rp Y dari estimasi"` atau `"Sama dengan estimasi PO"`
+- `Checkbox` "Simpan harga ini sebagai harga pemasok" muncul **cuma kalau aktual ≠ estimasi** — kalau sama, opt-in tidak perlu (tidak ada perubahan)
+
+### Selisih estimasi vs aktual di PO detail
+
+`/purchase-orders/[id]/+page.svelte` halaman detail. Setelah receive (status `partial` atau `received`), kolom harga di tabel item jadi dual-row dengan delta visualization:
+
+```
+Harga (estimasi & aktual)
+  ESTIMASI
+  Rp 4.320.000
+  Rp 30.000/pcs
+
+  AKTUAL (2×)
+  Rp 4.500.000  [+4.2%]
+  Rp 4.520.000  [+4.6%]
+```
+
+Implementasi via helper `batchesForLine(lineId)` yang filter `batches.items` by `sourcePurchaseOrderLineId === lineId`, sorted by `receivedAt`. Multiple batches per line muncul saat partial receive dengan harga berbeda — masing-masing punya unitCost sendiri, jadi audit lengkap.
+
+Footer total juga dual:
+
+```
+Estimasi total: Rp 25.000.000
+Aktual diterima: Rp 26.300.000
+Selisih: [+Rp 1.300.000 (+5.2%)]
+```
+
+Badge merah kalau aktual lebih mahal, hijau kalau lebih murah. Sinyal yang berguna untuk procurement review bulanan.
+
+### Supplier price analytics
+
+File baru: `src/lib/utils/supplierAnalytics.ts`. Semua derivasi murni dari `batches.items` — tidak ada entity baru. Empat helper:
+
+```ts
+priceHistoryFor(productId, variantId?, supplierId): PriceHistoryPoint[]
+// List harga sorted ascending by receivedAt. Kunci utama panel
+// kontekstual "harga terakhir dari supplier ini".
+
+supplierComparison(productId, variantId?): SupplierComparison[]
+// Bandingkan semua supplier yang pernah kirim produk ini. variantId
+// undefined = aggregate lintas varian (untuk overview per-produk).
+// Per supplier: avgCost, weightedAvgCost (by qty), latestCost,
+// previousCost, minCost, maxCost, batchCount, totalQtyReceived,
+// lastReceivedAt, priceIncreaseCount, priceDecreaseCount.
+// Sorted by latestCost ASC (termurah dulu).
+
+supplierPriceTrend(supplierId): SupplierProductTrend[]
+// Per supplier, list semua produk yang dia kirim. Per produk: latestCost,
+// previousCost, deltaPct, totalReceipts, totalQtyReceived. Sorted by
+// |deltaPct| DESC (produk dengan perubahan terbesar dulu).
+
+latestSupplierPrice(productId, variantId, supplierId)
+// Convenience untuk panel kontekstual PO line: unitCost, receivedAt,
+// daysAgo, previousCost, deltaPct, totalReceipts.
+```
+
+#### Panel kontekstual di PO line
+
+Box sky muncul di bawah line PO saat operator pilih produk + supplier (header):
+
+```
+📜 Harga terakhir dari pemasok ini: Rp 4.320.000 / gross · 2 minggu lalu
+   [+4.2% dari sebelumnya] · sudah 3× diterima
+```
+
+`daysAgoLabel(days)` helper di PO form untuk format Indonesia natural:
+- 0 → "hari ini"
+- 1 → "kemarin"
+- 2–6 → "N hari lalu"
+- 7–29 → "N minggu lalu"
+- 30–364 → "N bulan lalu"
+- 365+ → "N tahun lalu"
+
+Tidak tampil untuk consignment (harga setoran biasanya negosiasi awal, tidak perlu compare).
+
+#### Panel perbandingan supplier di ProductForm
+
+Card baru di sidebar (setelah Pemasok card), render hanya kalau `product?.id` exists DAN ada batch dengan supplier untuk produk ini. Format card-per-supplier dengan auto-tag:
+
+- 🟢 **Termurah** — supplier dengan `latestCost` terendah (hanya muncul kalau ada > 1 supplier)
+- 🔴 **Termahal** — supplier dengan `latestCost` tertinggi
+- 🟡 **Sering naik harga** — supplier dengan `priceIncreaseCount` terbanyak (kalau > 0)
+- 🔵 **Paling sering** — supplier dengan `batchCount` terbanyak (kalau > 1)
+
+Tiap card tampilkan dalam grid 2-kolom:
+- Harga terakhir + badge delta % dari previous
+- Rata-rata tertimbang (weighted by qty)
+- Rentang min – max
+- Frekuensi (`5× · naik 2, turun 1`)
+
+Border + background tinted hijau (termurah) atau merah (termahal) untuk pemindaian cepat.
+
+### Tips tambahan di kartu Varian: harga jual per (varian, kemasan) yang harus beda
+
+Block amber baru di dalam `<details>` "💡 Kapan pakai varian vs pisah jadi produk baru?" — diskusinya tentang kasus user nyata ("kalau varian merah 1 gross = 5jt, hijau 1 gross = 5,5jt, gimana?"). Penekanan eksplisit:
+
+> Catatan: ini hanya soal **harga jual**. Di PO, tiap line bisa punya harga beli sendiri (mis. Hijau Rp 5jt/gross, Merah Rp 5,5jt/gross) — itu bebas diatur saat input PO.
+
+Lalu tiga opsi untuk harga jual yang beda:
+- **Selisih kecil (<10%)** → ambil rata-rata, terima saja
+- **Selisih besar** → jadikan kemasan sebagai varian (pakai 2 atribut Warna + Kemasan, 9 varian eksplisit; trade-off: kehilangan konversi otomatis)
+- **Spec teknis berbeda** → pisah jadi produk berbeda per warna
+
+### Workflow yang sekarang didukung
+
+Procurement end-to-end:
+
+1. **Draft PO** — operator pilih supplier, autofill harga estimasi dari supplier-specific cost atau master
+2. **Sent** — PO dikirim ke supplier (form lock kecuali untuk receive)
+3. **Receive** (modal) — operator buka modal, edit "Harga aktual" sesuai invoice supplier, opsi tick "Simpan harga ini sebagai harga pemasok" untuk update master
+4. **Batch lahir** dengan `unitCost = actualPrice / factor` — itu yang dipakai sebagai cost basis untuk FIFO, markup, laporan
+5. **Detail PO** menampilkan selisih estimasi vs aktual per batch + footer total — sinyal untuk procurement audit
+6. **Riwayat tersimpan** secara emergent di batches — analytics di PO form (panel kontekstual) dan ProductForm (panel perbandingan)
+
+Tidak ada AP/utang yang dibuat otomatis (modul akuntansi belum dibangun). Saat itu dibangun nanti, dia ambil dari `actualTotal` (sum batch.unitCost × qtyReceived) — bukan dari `poTotal(po)` (estimasi).
+
+### Conversation thread
+
+Sembilan keputusan worth dilacak:
+
+1. **Pertanyaan pemicu** — "kalau saya order varian merah 1 gross, harganya dari mana?". Diskusi membuka 3 gap di PO: ProductSupplier.unitCost diabaikan; "Harga satuan" ambigu (estimasi vs final); tidak ada cara input harga aktual saat receive.
+2. **PO ≠ Penjualan** — clarified bahwa packaging.prices adalah HARGA JUAL (shared lintas varian, limitasi yang ada), sementara PO bebas (tiap line punya harga sendiri). Sering bingung di awal.
+3. **Estimasi vs final: 1 field atau 2?** — pilih tetap 1 field (`line.unitPrice` = estimasi historis), batches yang menyimpan aktual. Trade-off: tidak ada audit per-line "selisih estimasi vs aktual" via single query — harus join ke batches. Akseptabel: detail PO sudah menampilkan ini visually.
+4. **Receive: form lock di status non-draft, gimana operator update harga?** — solusinya bukan unlock form, tapi modal receive menampilkan input "Harga aktual" sebelum batch lahir. `line.unitPrice` tetap freeze sebagai estimasi.
+5. **Update ProductSupplier.unitCost otomatis atau opt-in?** — pilih opt-in via checkbox per-line di receive modal. Operator decide: kalau ini harga sekali-sekali (diskon temporer), skip; kalau ini harga baru "normal", tick. Checkbox cuma muncul saat aktual ≠ estimasi.
+6. **Supplier price history: model baru atau derive?** — pilih derive dari batches.items. Tiap Batch sudah carry `supplierId`, `unitCost`, `receivedAt` — jadi historynya emergent tanpa entity baru. Simpler, no migration risk.
+7. **Tag analitik supplier** — pilih `Termurah` (hijau) + `Termahal` (merah) + `Sering naik harga` (kuning) + `Paling sering` (biru). Visualisasi simple yang langsung action-able.
+8. **Panel di PO line: variant-specific atau aggregate?** — variant-specific. Operator yang lagi pesan "Kaos Merah" mau lihat history "Kaos Merah dari supplier X", bukan rata-rata semua varian Kaos. Pakai `latestSupplierPrice(productId, variantId, supplierId)`.
+9. **Comparison di ProductForm: variant-specific atau aggregate?** — aggregate lintas varian (variantId undefined). Per-produk overview, bukan per-varian. Operator yang scroll ProductForm sidebar mau lihat "supplier mana yang biasa kirim produk ini", bukan filter per warna. Variant-specific bisa ditambah belakangan kalau perlu (signature helper sudah support).
 
 ---
 

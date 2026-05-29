@@ -90,6 +90,7 @@ export const PERMISSION_CATALOG: PermissionGroup[] = [
       { key: 'menu.reports.laba', label: 'Lihat Laba Rugi' },
       { key: 'menu.forecast', label: 'Prediksi Stok' },
       { key: 'menu.price-history', label: 'Riwayat Harga' },
+      { key: 'menu.supplier-prices', label: 'Harga Pemasok' },
       { key: 'menu.stock-movements', label: 'Riwayat Stok' }
     ]
   },
@@ -150,6 +151,7 @@ export const ROUTE_PERMISSIONS: Array<{ path: string; permission: string }> = [
   { path: '/customers', permission: 'menu.customers' },
   { path: '/forecast', permission: 'menu.forecast' },
   { path: '/riwayat-harga', permission: 'menu.price-history' },
+  { path: '/harga-pemasok', permission: 'menu.supplier-prices' },
   { path: '/components', permission: 'menu.components' },
   { path: '/settings', permission: 'menu.settings' }
 ];

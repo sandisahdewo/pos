@@ -717,6 +717,14 @@ const seed: Product[] = [
         unitCost: 12000,
         supplierSku: 'KN-LAT-2026',
         notes: ''
+      },
+      {
+        supplierId: 'sup_4',
+        isPrimary: false,
+        unitCost: 12800,
+        leadTimeDays: 3,
+        supplierSku: '',
+        notes: 'Cadangan kalau Kopi Nusantara overdue. Harga sedikit lebih mahal.'
       }
     ],
     imageUrl: 'https://picsum.photos/seed/pos-latte/240/240',
@@ -1197,6 +1205,160 @@ const seed: Product[] = [
     ],
     extras: [],
     productionMode: 'strict'
+  },
+  // === prd_13: Kaos Polos Distro (3 varian × 3 kemasan) ===
+  // Contoh produk garmen dengan dua dimensi: 3 varian warna + 3 kemasan
+  // tradisional (lusin, kodi, gross). Harga kemasan shared lintas varian —
+  // keterbatasan model saat ini (lihat tips inline di kartu Varian).
+  {
+    id: 'prd_13',
+    kind: 'goods',
+    sku: 'MER-KS-001',
+    name: 'Kaos Polos Distro',
+    categoryId: 'cat_3',
+    unitId: 'unit_1',
+    cost: 30000,
+    prices: [retail({ kind: 'fixed', value: 50000 })],
+    status: 'active',
+    description: 'Kaos polos cotton combed 30s. Dijual ecer, lusinan, atau borongan.',
+    suppliers: [],
+    imageUrl: 'https://picsum.photos/seed/pos-kaos/240/240',
+    units: [
+      {
+        unitId: 'unit_7',
+        factor: 12,
+        prices: [retail({ kind: 'fixed', value: 540000 })],
+        barcode: ''
+      },
+      {
+        unitId: 'unit_8',
+        factor: 20,
+        prices: [retail({ kind: 'fixed', value: 850000 })],
+        barcode: ''
+      },
+      {
+        unitId: 'unit_9',
+        factor: 144,
+        prices: [retail({ kind: 'fixed', value: 5400000 })],
+        barcode: ''
+      }
+    ],
+    attributes: [
+      { id: 'attr_ks_warna', name: 'Warna', values: ['Hitam', 'Putih', 'Abu-abu'] }
+    ],
+    variants: [
+      {
+        id: 'v_ks_hitam',
+        name: 'Hitam',
+        sku: 'MER-KS-001-BLK',
+        cost: 30000,
+        prices: [retail({ kind: 'fixed', value: 50000 })],
+        barcode: '8991005100013',
+        values: { Warna: 'Hitam' },
+        imageUrl: 'https://picsum.photos/seed/pos-kaos-hitam/240/240',
+        components: []
+      },
+      {
+        id: 'v_ks_putih',
+        name: 'Putih',
+        sku: 'MER-KS-001-WHT',
+        cost: 30000,
+        prices: [retail({ kind: 'fixed', value: 50000 })],
+        barcode: '8991005100020',
+        values: { Warna: 'Putih' },
+        imageUrl: 'https://picsum.photos/seed/pos-kaos-putih/240/240',
+        components: []
+      },
+      {
+        id: 'v_ks_abu',
+        name: 'Abu-abu',
+        sku: 'MER-KS-001-GRY',
+        cost: 30000,
+        prices: [retail({ kind: 'fixed', value: 50000 })],
+        barcode: '8991005100037',
+        values: { Warna: 'Abu-abu' },
+        imageUrl: 'https://picsum.photos/seed/pos-kaos-abu/240/240',
+        components: []
+      }
+    ],
+    components: [],
+    extras: []
+  },
+  // === prd_14: Sabun Mandi Aroma (3 varian × 3 kemasan) ===
+  // Kategori berbeda untuk variasi seed — 3 aroma × 3 ukuran pak/dus.
+  {
+    id: 'prd_14',
+    kind: 'goods',
+    sku: 'PRL-SBN-001',
+    name: 'Sabun Mandi Aroma',
+    categoryId: 'cat_4',
+    unitId: 'unit_1',
+    cost: 4500,
+    prices: [retail({ kind: 'fixed', value: 7500 })],
+    status: 'active',
+    description: 'Sabun mandi batang 75 gram. Pilih aroma, beli per pak atau dus.',
+    suppliers: [],
+    imageUrl: 'https://picsum.photos/seed/pos-sabun/240/240',
+    units: [
+      {
+        unitId: 'unit_2',
+        factor: 4,
+        prices: [retail({ kind: 'fixed', value: 28000 })],
+        barcode: ''
+      },
+      {
+        unitId: 'unit_2',
+        factor: 6,
+        prices: [retail({ kind: 'fixed', value: 40500 })],
+        barcode: ''
+      },
+      {
+        unitId: 'unit_2',
+        factor: 24,
+        prices: [retail({ kind: 'fixed', value: 156000 })],
+        barcode: ''
+      }
+    ],
+    attributes: [
+      { id: 'attr_sbn_aroma', name: 'Aroma', values: ['Floral', 'Citrus', 'Mint'] }
+    ],
+    variants: [
+      {
+        id: 'v_sbn_floral',
+        name: 'Floral',
+        sku: 'PRL-SBN-001-FLR',
+        cost: 4500,
+        prices: [retail({ kind: 'fixed', value: 7500 })],
+        barcode: '8991006200017',
+        values: { Aroma: 'Floral' },
+        imageUrl: 'https://picsum.photos/seed/pos-sabun-floral/240/240',
+        components: []
+      },
+      {
+        id: 'v_sbn_citrus',
+        name: 'Citrus',
+        sku: 'PRL-SBN-001-CTR',
+        cost: 4500,
+        prices: [retail({ kind: 'fixed', value: 7500 })],
+        barcode: '8991006200024',
+        values: { Aroma: 'Citrus' },
+        imageUrl: 'https://picsum.photos/seed/pos-sabun-citrus/240/240',
+        components: []
+      },
+      {
+        id: 'v_sbn_mint',
+        name: 'Mint',
+        sku: 'PRL-SBN-001-MNT',
+        cost: 4500,
+        prices: [retail({ kind: 'fixed', value: 7500 })],
+        barcode: '8991006200031',
+        values: { Aroma: 'Mint' },
+        imageUrl: 'https://picsum.photos/seed/pos-sabun-mint/240/240',
+        components: []
+      }
+    ],
+    components: [],
+    extras: []
   }
 ];
 

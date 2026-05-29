@@ -13,7 +13,10 @@ const seed: Unit[] = [
   { id: 'unit_3', name: 'Kilogram', code: 'kg', description: '1.000 gram berdasarkan berat.' },
   { id: 'unit_4', name: 'Gram', code: 'g', description: 'Satu gram berdasarkan berat.' },
   { id: 'unit_5', name: 'Liter', code: 'L', description: '1.000 mililiter berdasarkan volume.' },
-  { id: 'unit_6', name: 'Mililiter', code: 'mL', description: 'Seperseribu liter.' }
+  { id: 'unit_6', name: 'Mililiter', code: 'mL', description: 'Seperseribu liter.' },
+  { id: 'unit_7', name: 'Lusin', code: 'lusin', description: 'Satuan tradisional 12 pcs (tekstil/garmen).' },
+  { id: 'unit_8', name: 'Kodi', code: 'kodi', description: 'Satuan tradisional 20 pcs (tekstil/garmen).' },
+  { id: 'unit_9', name: 'Gross', code: 'gross', description: 'Satuan tradisional 144 pcs (12 lusin).' }
 ];
 
 class UnitsStore {

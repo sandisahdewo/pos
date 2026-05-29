@@ -10,7 +10,8 @@
     XCircle,
     CircleDashed,
     Send,
-    Eye
+    Eye,
+    ShoppingCart
   } from 'lucide-svelte';
   import {
     Badge,
@@ -131,9 +132,13 @@
   breadcrumb={[{ label: 'Pengadaan' }, { label: 'Order Pembelian' }]}
 >
   {#snippet actions()}
+    <Button variant="outline" href="/purchase-orders/baru-per-produk">
+      <ShoppingCart class="h-4 w-4" />
+      Buat per produk
+    </Button>
     <Button href="/purchase-orders/new">
       <Plus class="h-4 w-4" />
-      Order pembelian baru
+      Buat per pemasok
     </Button>
   {/snippet}
 </PageHeader>

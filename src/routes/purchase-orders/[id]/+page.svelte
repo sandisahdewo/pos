@@ -17,9 +17,11 @@
     Badge,
     Button,
     Card,
+    Checkbox,
     ConfirmDialog,
     Input,
     Modal,
+    MoneyInput,
     PageHeader,
     Table
   } from '$lib/components/ui';
@@ -49,6 +51,10 @@
   let receiveOpen = $state(false);
   let receiveQtyMap = $state<Record<string, number>>({});
   let receiveExpiresAtMap = $state<Record<string, string>>({});
+  // Harga aktual per line (dari nota supplier). Default = line.unitPrice (estimasi).
+  let receiveActualPriceMap = $state<Record<string, number>>({});
+  // Opt-in per line: simpan harga aktual sebagai ProductSupplier.unitCost.
+  let receiveUpdateSupplierCostMap = $state<Record<string, boolean>>({});
   let confirmCancelOpen = $state(false);
   let confirmSendOpen = $state(false);
 
@@ -113,9 +119,17 @@
   const lineColumns = [
     { key: 'productId' as const, label: 'Produk' },
     { key: 'quantity' as const, label: 'Qty', align: 'right' as const, width: '120px' },
-    { key: 'unitPrice' as const, label: 'Harga satuan', align: 'right' as const, width: '150px' },
-    { key: 'id' as const, label: 'Subtotal', align: 'right' as const, width: '150px' }
+    { key: 'unitPrice' as const, label: 'Harga (estimasi & aktual)', align: 'right' as const, width: '200px' },
+    { key: 'id' as const, label: 'Subtotal', align: 'right' as const, width: '180px' }
   ];
+
+  // Batches yang lahir dari satu line PO — sumber actual cost per receive
+  // event. Multiple kalau line di-receive partial dengan harga berbeda.
+  function batchesForLine(lineId: string) {
+    return batches.items
+      .filter((b) => b.sourcePurchaseOrderLineId === lineId)
+      .sort((a, b) => a.receivedAt.localeCompare(b.receivedAt));
+  }
 
   function doSend() {
     if (!po) return;
@@ -128,13 +142,21 @@
     if (!po) return;
     const qty: Record<string, number> = {};
     const exp: Record<string, string> = {};
+    const actualPrice: Record<string, number> = {};
+    const updateSupplier: Record<string, boolean> = {};
     for (const line of po.lines) {
       const remaining = line.quantity - line.receivedQty;
       qty[line.id] = remaining > 0 ? remaining : 0;
       exp[line.id] = '';
+      // Default harga aktual = harga estimasi PO. Operator edit kalau invoice
+      // dari supplier beda.
+      actualPrice[line.id] = line.unitPrice;
+      updateSupplier[line.id] = false;
     }
     receiveQtyMap = qty;
     receiveExpiresAtMap = exp;
+    receiveActualPriceMap = actualPrice;
+    receiveUpdateSupplierCostMap = updateSupplier;
     receiveOpen = true;
   }
 
@@ -163,7 +185,9 @@
     }
     const r = purchaseOrders.receive(po.id, {
       receiveQty: receiveQtyMap,
-      expiresAt: receiveExpiresAtMap
+      expiresAt: receiveExpiresAtMap,
+      actualPrices: receiveActualPriceMap,
+      updateSupplierCost: receiveUpdateSupplierCostMap
     });
     if (r.ok) {
       const reloaded = purchaseOrders.getById(po.id);
@@ -325,16 +349,64 @@
                 {/if}
               </div>
             {:else if column.key === 'unitPrice'}
-              <div>
-                <span class="text-slate-700">{formatRupiah(row.unitPrice)}</span>
-                {#if isPackagingLine(row)}
-                  <div class="text-xs text-slate-500">
-                    {formatRupiah(lineBaseUnitCost(row))}/{unitCode(row.productId)}
+              {@const lineBatches = batchesForLine(row.id)}
+              {@const factor = row.unitFactor > 0 ? row.unitFactor : 1}
+              {@const isConsign = po?.type === 'consignment'}
+              <div class="space-y-1.5">
+                <div>
+                  {#if !isConsign && lineBatches.length > 0}
+                    <div class="text-[10px] uppercase tracking-wider text-slate-400">Estimasi</div>
+                  {/if}
+                  <span class="text-slate-700">{formatRupiah(row.unitPrice)}</span>
+                  {#if isPackagingLine(row)}
+                    <div class="text-xs text-slate-500">
+                      {formatRupiah(lineBaseUnitCost(row))}/{unitCode(row.productId)}
+                    </div>
+                  {/if}
+                </div>
+                {#if !isConsign && lineBatches.length > 0}
+                  <div class="border-t border-slate-100 pt-1.5">
+                    <div class="text-[10px] uppercase tracking-wider text-slate-400">
+                      Aktual{lineBatches.length > 1 ? ` (${lineBatches.length}×)` : ''}
+                    </div>
+                    {#each lineBatches as b (b.id)}
+                      {@const actualInLineUnit = b.unitCost * factor}
+                      {@const delta = actualInLineUnit - row.unitPrice}
+                      {@const deltaPct = row.unitPrice > 0 ? (delta / row.unitPrice) * 100 : 0}
+                      <div class="flex items-baseline justify-end gap-1.5">
+                        <span class="text-slate-700">{formatRupiah(actualInLineUnit)}</span>
+                        {#if Math.abs(delta) > 0.5}
+                          <Badge variant={delta > 0 ? 'danger' : 'success'} size="sm">
+                            {delta > 0 ? '+' : ''}{deltaPct.toFixed(1)}%
+                          </Badge>
+                        {/if}
+                      </div>
+                    {/each}
                   </div>
                 {/if}
               </div>
             {:else if column.key === 'id'}
-              <span class="font-semibold text-slate-900">{formatRupiah(lineSubtotal(row))}</span>
+              {@const lineBatches = batchesForLine(row.id)}
+              {@const factor = row.unitFactor > 0 ? row.unitFactor : 1}
+              {@const actualSubtotal = lineBatches.reduce(
+                (s, b) => s + b.unitCost * b.qtyReceived,
+                0
+              )}
+              {@const showActual = po?.type !== 'consignment' && lineBatches.length > 0}
+              <div class="space-y-1.5">
+                <div>
+                  {#if showActual}
+                    <div class="text-[10px] uppercase tracking-wider text-slate-400">Estimasi</div>
+                  {/if}
+                  <span class="font-semibold text-slate-900">{formatRupiah(lineSubtotal(row))}</span>
+                </div>
+                {#if showActual}
+                  <div class="border-t border-slate-100 pt-1.5">
+                    <div class="text-[10px] uppercase tracking-wider text-slate-400">Aktual</div>
+                    <span class="font-semibold text-slate-900">{formatRupiah(actualSubtotal)}</span>
+                  </div>
+                {/if}
+              </div>
             {/if}
           {/snippet}
 
@@ -342,11 +414,40 @@
             <div class="py-6 text-center text-xs text-slate-400">Tidak ada item pada PO ini.</div>
           {/snippet}
         </Table>
-        <div
-          class="flex items-center justify-end gap-3 border-t border-slate-100 px-5 py-3"
-        >
-          <span class="text-sm text-slate-500">Total</span>
-          <span class="text-lg font-semibold text-slate-900">{formatRupiah(poTotal(po))}</span>
+        {@const poBatches = batches.forSourcePO(po.id)}
+        {@const actualTotal = poBatches.reduce(
+          (s, b) => s + b.unitCost * b.qtyReceived,
+          0
+        )}
+        {@const isConsign = po.type === 'consignment'}
+        {@const hasAnyActual = !isConsign && poBatches.length > 0}
+        <div class="space-y-1 border-t border-slate-100 px-5 py-3">
+          <div class="flex items-center justify-end gap-3">
+            <span class="text-sm text-slate-500">
+              {hasAnyActual ? 'Estimasi total' : 'Total'}
+            </span>
+            <span
+              class="text-lg font-semibold {hasAnyActual ? 'text-slate-500' : 'text-slate-900'}"
+            >
+              {formatRupiah(poTotal(po))}
+            </span>
+          </div>
+          {#if hasAnyActual}
+            <div class="flex items-center justify-end gap-3">
+              <span class="text-sm font-medium text-slate-700">Aktual diterima</span>
+              <span class="text-lg font-semibold text-slate-900">{formatRupiah(actualTotal)}</span>
+            </div>
+            {#if Math.abs(actualTotal - poTotal(po)) > 0.5 && poTotal(po) > 0}
+              {@const totalDelta = actualTotal - poTotal(po)}
+              {@const totalDeltaPct = (totalDelta / poTotal(po)) * 100}
+              <div class="flex items-center justify-end gap-3">
+                <span class="text-xs text-slate-500">Selisih</span>
+                <Badge variant={totalDelta > 0 ? 'danger' : 'success'} size="sm">
+                  {totalDelta > 0 ? '+' : ''}{formatRupiah(totalDelta)} ({totalDelta > 0 ? '+' : ''}{totalDeltaPct.toFixed(1)}%)
+                </Badge>
+              </div>
+            {/if}
+          {/if}
         </div>
       </Card>
     </div>
@@ -401,14 +502,19 @@
   bind:open={receiveOpen}
   size="lg"
   title="Terima order pembelian{po ? ` · ${po.code}` : ''}"
-  description="Atur kuantitas yang diterima per item. Default = sisa belum diterima. Set ke 0 untuk melewati baris ini sementara."
+  description="Cek kuantitas dan harga sebenarnya dari nota supplier. Default qty = sisa belum diterima; default harga = estimasi PO."
 >
   {#if po}
+    {@const isConsignment = po.type === 'consignment'}
     <div class="space-y-2">
       {#each po.lines as line (line.id)}
         {@const remaining = line.quantity - line.receivedQty}
         {@const lineUnit = lineUnitCode(line)}
         {@const needsExp = lineRequiresExpiration(line.productId)}
+        {@const willReceive = (receiveQtyMap[line.id] ?? 0) > 0 && remaining > 0}
+        {@const actualPrice = receiveActualPriceMap[line.id] ?? line.unitPrice}
+        {@const priceDelta = actualPrice - line.unitPrice}
+        {@const priceDeltaPct = line.unitPrice > 0 ? (priceDelta / line.unitPrice) * 100 : 0}
         <div class="rounded-lg border border-slate-200 p-3">
           <div class="flex items-start justify-between gap-3">
             <div class="min-w-0">
@@ -424,6 +530,15 @@
                   · Sisa <span class="font-medium text-slate-700">{remaining}</span> {lineUnit}
                 {/if}
               </div>
+              {#if !isConsignment}
+                <div class="mt-1 text-xs text-slate-500">
+                  Estimasi PO:
+                  <span class="font-medium text-slate-700">
+                    {formatRupiah(line.unitPrice)}
+                  </span>
+                  / {lineUnit}
+                </div>
+              {/if}
             </div>
             <div class="w-32 shrink-0">
               <Input
@@ -437,7 +552,39 @@
               />
             </div>
           </div>
-          {#if needsExp && remaining > 0 && (receiveQtyMap[line.id] ?? 0) > 0}
+
+          {#if !isConsignment && willReceive}
+            <div class="mt-3 grid items-end gap-3 sm:grid-cols-[1fr_auto]">
+              <MoneyInput
+                label="Harga aktual / {lineUnit}"
+                tooltip="Sesuai nota supplier untuk penerimaan ini. Default = estimasi PO. Inilah angka yang dipakai sebagai biaya sebenarnya di batch yang lahir."
+                bind:value={receiveActualPriceMap[line.id]}
+                hint={priceDelta === 0
+                  ? 'Sama dengan estimasi PO.'
+                  : `Selisih ${priceDelta > 0 ? '+' : ''}${formatRupiah(priceDelta)} dari estimasi.`}
+              />
+              <div class="flex shrink-0 items-center pb-1.5">
+                {#if priceDelta !== 0}
+                  <Badge variant={priceDelta > 0 ? 'danger' : 'success'} size="sm">
+                    {priceDelta > 0 ? '+' : ''}{priceDeltaPct.toFixed(1)}%
+                  </Badge>
+                {:else}
+                  <Badge variant="neutral" size="sm">cocok</Badge>
+                {/if}
+              </div>
+            </div>
+            {#if priceDelta !== 0}
+              <div class="mt-2.5 rounded-md bg-slate-50/80 px-3 py-2">
+                <Checkbox
+                  bind:checked={receiveUpdateSupplierCostMap[line.id]}
+                  label="Simpan harga ini sebagai harga pemasok"
+                  description="Update master produk supaya PO berikutnya ke pemasok yang sama autofill dengan harga terbaru ini."
+                />
+              </div>
+            {/if}
+          {/if}
+
+          {#if needsExp && willReceive}
             <div class="mt-3 grid grid-cols-[1fr_auto] items-end gap-3">
               <Input
                 label="Tanggal kedaluwarsa"

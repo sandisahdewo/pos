@@ -39,6 +39,7 @@
   import { taxRates } from '$lib/stores/taxRates.svelte';
   import { suppliers } from '$lib/stores/suppliers.svelte';
   import { formatRupiah } from '$lib/utils/currency';
+  import { supplierComparison } from '$lib/utils/supplierAnalytics';
   import { toast } from '$lib/stores/toast.svelte';
   import {
     activeAttributes,
@@ -1843,13 +1844,42 @@
               <li>Tidak ada perbedaan warna/ukuran/edisi.</li>
             </ul>
 
-            <p class="mt-3 text-slate-500">
-              <strong>Catatan keterbatasan saat ini</strong>: kalau pakai varian <em>plus</em> kemasan
-              (mis. Kaos × ukuran lusin), kemasan & harga lusinannya
-              <strong>sama untuk semua varian</strong>. Tidak bisa beda harga atau barcode lusinan
-              per warna. Kalau butuh itu, pisahkan jadi produk berbeda atau jadikan kemasan
-              sebagai varian (mis. atribut "Kemasan: Ecer / Lusinan").
-            </p>
+            <div class="mt-3 rounded-md border border-amber-200 bg-amber-50/60 p-2.5 text-slate-700">
+              <p class="font-semibold">⚠ Kalau pakai varian + kemasan bareng</p>
+              <p class="mt-1.5">
+                Harga jual & barcode untuk satu kemasan <strong>shared lintas varian</strong>.
+                Misal Kaos × Lusin: harga 1 lusin = sama untuk Hitam, Putih, Abu-abu —
+                model tidak bisa simpan harga jual berbeda per (warna, lusin).
+                <br />
+                <span class="text-slate-500">
+                  Catatan: ini hanya soal <strong>harga jual</strong>. Di PO, tiap line
+                  bisa punya harga beli sendiri (mis. Hijau Rp 5jt/gross, Merah Rp 5,5jt/gross)
+                  — itu bebas diatur saat input PO.
+                </span>
+              </p>
+
+              <p class="mt-2.5 font-semibold">Kalau harga jual per (varian, kemasan) harus benar-benar beda:</p>
+              <ul class="ml-4 mt-1 list-disc space-y-1">
+                <li>
+                  <strong>Selisih kecil (&lt;10%)</strong> → ambil rata-rata, terima saja
+                  (paling simple, paling sering dipakai).
+                </li>
+                <li>
+                  <strong>Selisih besar</strong> → jadikan kemasan sebagai varian.
+                  Pakai 2 atribut: <em>Warna</em> + <em>Kemasan</em> (mis. Merah/Hijau ×
+                  Ecer/Lusin/Gross = 9 varian eksplisit). Tiap kombinasi punya harga sendiri.
+                  <span class="text-slate-500">
+                    Trade-off: kehilangan konversi otomatis "1 lusin = 12 pcs"; stok di-track
+                    per kombinasi lebih manual.
+                  </span>
+                </li>
+                <li>
+                  <strong>Spec teknis berbeda</strong> → pisah jadi produk berbeda per warna
+                  (mis. "Kaos Polos Merah", "Kaos Polos Hijau" sebagai 3 produk independen,
+                  masing-masing dengan 3 kemasan sendiri).
+                </li>
+              </ul>
+            </div>
           </div>
         </details>
 
@@ -2334,6 +2364,97 @@
         </div>
       {/if}
     </Card>
+
+    {#if product?.id}
+      {@const cmp = supplierComparison(product.id)}
+      {#if cmp.length > 0}
+        {@const cheapestId = cmp.reduce((min, x) => (x.latestCost < min.latestCost ? x : min)).supplierId}
+        {@const mostExpensiveId = cmp.reduce((max, x) => (x.latestCost > max.latestCost ? x : max)).supplierId}
+        {@const mostIncreasesId = cmp.reduce(
+          (max, x) => (x.priceIncreaseCount > max.priceIncreaseCount ? x : max)
+        ).supplierId}
+        {@const mostFreq = cmp.reduce((max, x) => (x.batchCount > max.batchCount ? x : max))}
+        <Card>
+          <div class="mb-3 flex items-center gap-2">
+            <h3 class="text-sm font-semibold text-slate-900">Perbandingan harga pemasok</h3>
+            <Tooltip
+              content="Riwayat harga aktual dari semua pemasok yang pernah kirim produk ini (dari penerimaan PO). Otomatis di-update tiap PO selesai diterima — bukan dari angka manual di kartu Pemasok di atas."
+            />
+          </div>
+          <p class="mb-3 text-xs text-slate-500">
+            Diambil dari riwayat penerimaan PO. Bandingkan sebelum membuat PO berikutnya.
+          </p>
+          <div class="space-y-2">
+            {#each cmp as row (row.supplierId)}
+              {@const isCheapest = row.supplierId === cheapestId && cmp.length > 1}
+              {@const isMostExpensive = row.supplierId === mostExpensiveId && cmp.length > 1}
+              {@const isMostIncreases = row.supplierId === mostIncreasesId && row.priceIncreaseCount > 0 && cmp.length > 1}
+              {@const isMostFreq = row.supplierId === mostFreq.supplierId && mostFreq.batchCount > 1 && cmp.length > 1}
+              {@const deltaPct =
+                row.previousCost && row.previousCost > 0
+                  ? ((row.latestCost - row.previousCost) / row.previousCost) * 100
+                  : 0}
+              <div
+                class="rounded-lg border bg-white p-2.5 text-xs
+                  {isCheapest
+                  ? 'border-emerald-200 bg-emerald-50/40'
+                  : isMostExpensive
+                    ? 'border-rose-200 bg-rose-50/40'
+                    : 'border-slate-200'}"
+              >
+                <div class="flex flex-wrap items-center gap-1.5">
+                  <span class="font-medium text-slate-900">{row.supplierName}</span>
+                  {#if isCheapest}
+                    <Badge variant="success" size="sm">Termurah</Badge>
+                  {/if}
+                  {#if isMostExpensive}
+                    <Badge variant="danger" size="sm">Termahal</Badge>
+                  {/if}
+                  {#if isMostIncreases}
+                    <Badge variant="warning" size="sm">Sering naik harga</Badge>
+                  {/if}
+                  {#if isMostFreq}
+                    <Badge variant="info" size="sm">Paling sering</Badge>
+                  {/if}
+                </div>
+                <div class="mt-1.5 grid gap-x-3 gap-y-0.5 text-slate-600 sm:grid-cols-[1fr_1fr]">
+                  <div>
+                    Harga terakhir:
+                    <span class="font-semibold text-slate-900">{formatRupiah(row.latestCost)}</span>
+                    {#if deltaPct !== 0}
+                      <Badge variant={deltaPct > 0 ? 'danger' : 'success'} size="sm">
+                        {deltaPct > 0 ? '+' : ''}{deltaPct.toFixed(1)}%
+                      </Badge>
+                    {/if}
+                  </div>
+                  <div>
+                    Rata-rata:
+                    <span class="font-medium text-slate-700">
+                      {formatRupiah(row.weightedAvgCost)}
+                    </span>
+                  </div>
+                  <div>
+                    Rentang:
+                    <span class="text-slate-700">
+                      {formatRupiah(row.minCost)} – {formatRupiah(row.maxCost)}
+                    </span>
+                  </div>
+                  <div>
+                    Diterima:
+                    <span class="text-slate-700">{row.batchCount}×</span>
+                    {#if row.priceIncreaseCount > 0 || row.priceDecreaseCount > 0}
+                      <span class="text-slate-500">
+                        (naik {row.priceIncreaseCount}, turun {row.priceDecreaseCount})
+                      </span>
+                    {/if}
+                  </div>
+                </div>
+              </div>
+            {/each}
+          </div>
+        </Card>
+      {/if}
+    {/if}
 
     <Card>
       <div class="mb-3 flex items-center gap-2">

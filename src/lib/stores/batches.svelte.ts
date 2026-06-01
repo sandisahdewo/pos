@@ -405,6 +405,48 @@ const seed: Batch[] = [
     receivedAt: '2026-05-23',
     locationId: 'loc_gudang',
     notes: 'Demo: Latte sup_4 batch ke-2 — naik 5.5%.'
+  },
+  // Rokok — qty disimpan dalam batang (satuan dasar), bukan slop. 2 slop yang
+  // diterima dari pemasok ditranslate jadi 2 × 160 = 320 (Sampoerna) atau
+  // 2 × 120 = 240 (Djarum). Disimpan di rak belakang kasir, bukan gudang.
+  {
+    id: 'batch_26',
+    code: 'BATCH-2026-026',
+    productId: 'prd_15',
+    ownership: 'owned',
+    supplierId: 'sup_4',
+    unitCost: 2300,
+    qtyReceived: 320,
+    qtyRemaining: 248,
+    receivedAt: '2026-05-20',
+    locationId: 'loc_rack',
+    notes: 'Initial seed — 2 slop Sampoerna A Mild. 72 batang sudah terjual (campur ecer + bungkus).'
+  },
+  {
+    id: 'batch_27',
+    code: 'BATCH-2026-027',
+    productId: 'prd_16',
+    ownership: 'owned',
+    supplierId: 'sup_4',
+    unitCost: 2500,
+    qtyReceived: 240,
+    qtyRemaining: 192,
+    receivedAt: '2026-05-22',
+    locationId: 'loc_rack',
+    notes: 'Initial seed — 2 slop Djarum Super. 48 batang sudah terjual (4 bungkus).'
+  },
+  {
+    id: 'batch_28',
+    code: 'BATCH-2026-028',
+    productId: 'prd_16',
+    ownership: 'owned',
+    supplierId: 'sup_4',
+    unitCost: 2650,
+    qtyReceived: 120,
+    qtyRemaining: 120,
+    receivedAt: '2026-05-27',
+    locationId: 'loc_rack',
+    notes: 'Initial seed — 1 slop Djarum Super, batch lanjutan dengan biaya naik 6% (demo fifo-current).'
   }
 ];
 

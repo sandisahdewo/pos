@@ -1,5 +1,6 @@
 import { customers } from './customers.svelte';
 import type { PaymentMethod } from './orders.svelte';
+import { settings, type ServiceType } from './settings.svelte';
 
 export type CartLine = {
   id: string;
@@ -20,6 +21,10 @@ export type CartSession = {
   paymentMethod: PaymentMethod;
   paymentAmount: number;
   dismissedPromoIds: string[];
+  // F&B service metadata. Set from settings.operations.fnb.defaultServiceType when
+  // a new session opens; ignored at charge time when settings.fnb.enabled is false.
+  serviceType: ServiceType;
+  tableNumber: string;
   createdAt: string;
   updatedAt: string;
 };
@@ -37,6 +42,8 @@ function blank(label: string): CartSession {
     paymentMethod: 'cash',
     paymentAmount: 0,
     dismissedPromoIds: [],
+    serviceType: settings.value.operations.fnb.defaultServiceType,
+    tableNumber: '',
     createdAt: nowIso(),
     updatedAt: nowIso()
   };

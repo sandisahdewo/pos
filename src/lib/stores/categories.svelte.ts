@@ -89,6 +89,14 @@ const seed: Category[] = [
     color: 'warning',
     taxRateId: '',
     parentId: 'cat_2'
+  },
+  {
+    id: 'cat_9',
+    name: 'Rokok',
+    slug: 'rokok',
+    description: 'Rokok kretek dan filter — dijual ecer per batang, per bungkus, atau per slop.',
+    color: 'danger',
+    taxRateId: 'tax_ppn11'
   }
 ];
 

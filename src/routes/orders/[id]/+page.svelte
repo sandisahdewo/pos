@@ -7,7 +7,8 @@
     User as UserIcon,
     XCircle,
     Calendar,
-    BadgePercent
+    BadgePercent,
+    Printer
   } from 'lucide-svelte';
   import {
     Badge,
@@ -26,13 +27,16 @@
   } from '$lib/stores/orders.svelte';
   import { customers } from '$lib/stores/customers.svelte';
   import { pricelists } from '$lib/stores/pricelists.svelte';
+  import { serviceTypeLabels } from '$lib/stores/settings.svelte';
   import { toast } from '$lib/stores/toast.svelte';
   import { formatRupiah } from '$lib/utils/currency';
+  import ReceiptModal from '$lib/components/pos/ReceiptModal.svelte';
 
   const id = $derived(page.params.id ?? '');
   const order = $derived(id ? orders.getById(id) : undefined);
 
   let confirmCancelOpen = $state(false);
+  let receiptOpen = $state(false);
 
   function fmtDateTime(iso: string): string {
     const d = new Date(iso);
@@ -89,6 +93,10 @@
     ]}
   >
     {#snippet actions()}
+      <Button variant="outline" onclick={() => (receiptOpen = true)}>
+        <Printer class="h-4 w-4" />
+        Cetak struk
+      </Button>
       {#if order.status === 'paid'}
         <Button variant="outline" onclick={() => (confirmCancelOpen = true)}>
           <XCircle class="h-4 w-4" />
@@ -137,6 +145,19 @@
               <Badge variant="outline">{paymentMethodLabels[order.paymentMethod]}</Badge>
             </dd>
           </div>
+          {#if order.serviceType}
+            <div>
+              <dt class="text-xs font-medium text-slate-500">Tipe layanan</dt>
+              <dd class="mt-1 flex items-center gap-2">
+                <Badge variant={order.serviceType === 'dineIn' ? 'info' : 'neutral'}>
+                  {serviceTypeLabels[order.serviceType]}
+                </Badge>
+                {#if order.tableNumber}
+                  <span class="text-sm text-slate-700">Meja {order.tableNumber}</span>
+                {/if}
+              </dd>
+            </div>
+          {/if}
         </dl>
       </Card>
 
@@ -262,3 +283,5 @@
   confirmLabel="Batalkan pesanan"
   onConfirm={doCancel}
 />
+
+<ReceiptModal bind:open={receiptOpen} order={order ?? null} />

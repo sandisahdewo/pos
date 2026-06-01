@@ -75,6 +75,10 @@ export type Order = {
   payments: OrderPayment[];     // chronological list of partial payments (incl. initial)
   status: OrderStatus;          // 'credit' when paidAmount < total, 'paid' when full, 'cancelled' otherwise
   notes: string;
+  // F&B service metadata. Snapshotted at charge time when settings.operations.fnb.enabled.
+  // Legacy orders (charged before the feature was on) omit both fields.
+  serviceType?: 'dineIn' | 'takeAway';
+  tableNumber?: string;
   createdAt: string;            // ISO datetime
 };
 

@@ -3,7 +3,7 @@
 </script>
 
 <svelte:head>
-  <title>Kasir · POS Admin</title>
+  <title>Kasir · Tampilan Lengkap · POS Admin</title>
 </svelte:head>
 
-<PosTerminal mode="scan" />
+<PosTerminal mode="grid" />

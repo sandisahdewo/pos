@@ -1359,6 +1359,106 @@ const seed: Product[] = [
     ],
     components: [],
     extras: []
+  },
+  // === prd_15 & prd_16: Rokok (base = batang, kemasan = bungkus + slop) ===
+  // Mendemokan jual ecer per batang sementara membeli ke pemasok per slop.
+  // Stok disimpan di satuan terkecil (batang); tiap kemasan otomatis convert
+  // sesuai factor saat dijual / diterima. Dua merek berbeda jumlah isi:
+  //   - Sampoerna A Mild = 16 batang / bungkus, 160 batang / slop, harga fixed
+  //   - Djarum Super     = 12 batang / bungkus, 120 batang / slop, markup_pct
+  //                        dengan markupCostSource fifo-current (harga ecer
+  //                        otomatis ikut biaya batch).
+  // Karena factor packaging shared lintas varian (lihat catatan prd_13), merek
+  // dengan isi berbeda dibuat sebagai produk terpisah, bukan varian.
+  {
+    id: 'prd_15',
+    kind: 'goods',
+    sku: 'RKK-SMP-MILD',
+    name: 'Sampoerna A Mild',
+    categoryId: 'cat_9',
+    brandId: 'brand_sampoerna',
+    tags: ['Best Seller'],
+    unitId: 'unit_10',
+    cost: 2300,
+    prices: [retail({ kind: 'fixed', value: 3000 })],
+    status: 'active',
+    description:
+      'Rokok mild. 1 bungkus = 16 batang, 1 slop = 10 bungkus = 160 batang. Dijual ecer per batang, per bungkus, atau per slop.',
+    suppliers: [
+      {
+        supplierId: 'sup_4',
+        isPrimary: true,
+        unitCost: 2300,
+        leadTimeDays: 2,
+        supplierSku: 'GA-RKK-SMP16',
+        minOrderQty: 160,
+        notes: 'Pesan minimum 1 slop (160 batang).'
+      }
+    ],
+    imageUrl: 'https://picsum.photos/seed/pos-rokok-sampoerna/240/240',
+    units: [
+      {
+        unitId: 'unit_11',
+        factor: 16,
+        prices: [retail({ kind: 'fixed', value: 38000 })],
+        barcode: '8997002930015'
+      },
+      {
+        unitId: 'unit_12',
+        factor: 160,
+        prices: [retail({ kind: 'fixed', value: 365000 })],
+        barcode: '8997002930022'
+      }
+    ],
+    attributes: [],
+    variants: [],
+    components: [],
+    extras: []
+  },
+  {
+    id: 'prd_16',
+    kind: 'goods',
+    sku: 'RKK-DJR-SUP',
+    name: 'Djarum Super',
+    categoryId: 'cat_9',
+    brandId: 'brand_djarum',
+    unitId: 'unit_10',
+    cost: 2500,
+    prices: [retail({ kind: 'markup_pct', value: 20 })],
+    markupCostSource: 'fifo-current',
+    status: 'active',
+    description:
+      'Rokok kretek filter. 1 bungkus = 12 batang, 1 slop = 10 bungkus = 120 batang. Harga ecer ikut biaya FIFO supaya naiknya cukai langsung tercermin.',
+    suppliers: [
+      {
+        supplierId: 'sup_4',
+        isPrimary: true,
+        unitCost: 2500,
+        leadTimeDays: 2,
+        supplierSku: 'GA-RKK-DJR12',
+        minOrderQty: 120,
+        notes: 'Pesan minimum 1 slop (120 batang).'
+      }
+    ],
+    imageUrl: 'https://picsum.photos/seed/pos-rokok-djarum/240/240',
+    units: [
+      {
+        unitId: 'unit_11',
+        factor: 12,
+        prices: [retail({ kind: 'markup_pct', value: 10 })],
+        barcode: '8997111120014'
+      },
+      {
+        unitId: 'unit_12',
+        factor: 120,
+        prices: [retail({ kind: 'markup_pct', value: 5 })],
+        barcode: '8997111120021'
+      }
+    ],
+    attributes: [],
+    variants: [],
+    components: [],
+    extras: []
   }
 ];
 

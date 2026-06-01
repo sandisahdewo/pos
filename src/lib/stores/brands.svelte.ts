@@ -43,6 +43,22 @@ const seed: Brand[] = [
     description: 'Minuman berkarbonasi.',
     imageUrl: 'https://picsum.photos/seed/brand-cola/120/120',
     status: 'active'
+  },
+  {
+    id: 'brand_sampoerna',
+    name: 'Sampoerna',
+    slug: 'sampoerna',
+    description: 'Pabrik rokok kretek dan filter (Indonesia).',
+    imageUrl: 'https://picsum.photos/seed/brand-sampoerna/120/120',
+    status: 'active'
+  },
+  {
+    id: 'brand_djarum',
+    name: 'Djarum',
+    slug: 'djarum',
+    description: 'Pabrik rokok kretek (Indonesia).',
+    imageUrl: 'https://picsum.photos/seed/brand-djarum/120/120',
+    status: 'active'
   }
 ];
 

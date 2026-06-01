@@ -16,7 +16,8 @@
     basePrice,
     effectiveEntry,
     computeSalePrice,
-    effectiveVariantCost
+    effectiveVariantCost,
+    type Product
   } from '$lib/stores/products.svelte';
   import { pricelists } from '$lib/stores/pricelists.svelte';
   import { units } from '$lib/stores/units.svelte';
@@ -285,24 +286,39 @@
     return `${years} tahun lalu`;
   }
 
+  // PO biasanya beli dalam kemasan terbesar (mis. slop, karton) supaya operator
+  // tidak perlu mengetik factor ulang setiap kali. Tetap bisa di-override via
+  // Select satuan di tiap line. Produk tanpa packaging fallback ke base unit.
+  function defaultPurchaseUnit(
+    product: Product | undefined
+  ): { unitId: string; unitFactor: number } {
+    if (!product) return { unitId: '', unitFactor: 1 };
+    if (product.units.length === 0) {
+      return { unitId: product.unitId, unitFactor: 1 };
+    }
+    const largest = product.units.reduce((max, pack) =>
+      pack.factor > max.factor ? pack : max
+    );
+    return { unitId: largest.unitId, unitFactor: largest.factor };
+  }
+
   function addLine() {
     const firstProduct = productOptions[0]?.value ?? '';
     const product = products.getById(firstProduct);
-    const initialPrice = product?.cost ?? 0;
-    form.lines = [
-      ...form.lines,
-      {
-        id: crypto.randomUUID(),
-        productId: firstProduct,
-        variantId: undefined,
-        quantity: 1,
-        receivedQty: 0,
-        unitId: product?.unitId ?? '',
-        unitFactor: 1,
-        unitPrice: initialPrice,
-        notes: ''
-      }
-    ];
+    const { unitId, unitFactor } = defaultPurchaseUnit(product);
+    const line: PurchaseOrderLine = {
+      id: crypto.randomUUID(),
+      productId: firstProduct,
+      variantId: undefined,
+      quantity: 1,
+      receivedQty: 0,
+      unitId,
+      unitFactor,
+      unitPrice: 0,
+      notes: ''
+    };
+    line.unitPrice = defaultUnitPrice(line);
+    form.lines = [...form.lines, line];
   }
 
   function removeLine(i: number) {
@@ -312,8 +328,9 @@
   function onProductChange(line: PurchaseOrderLine) {
     const product = products.getById(line.productId);
     line.variantId = undefined;
-    line.unitId = product?.unitId ?? '';
-    line.unitFactor = 1;
+    const { unitId, unitFactor } = defaultPurchaseUnit(product);
+    line.unitId = unitId;
+    line.unitFactor = unitFactor;
     line.unitPrice = defaultUnitPrice(line);
   }
 

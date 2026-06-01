@@ -20,6 +20,7 @@
   } from '$lib/stores/orders.svelte';
   import { customers } from '$lib/stores/customers.svelte';
   import { pricelists } from '$lib/stores/pricelists.svelte';
+  import { settings, serviceTypeLabels } from '$lib/stores/settings.svelte';
   import { formatRupiah } from '$lib/utils/currency';
 
   let search = $state('');
@@ -56,15 +57,19 @@
       });
   });
 
-  const columns = [
-    { key: 'code' as const, label: 'Pesanan' },
-    { key: 'createdAt' as const, label: 'Waktu' },
-    { key: 'customerId' as const, label: 'Pelanggan' },
-    { key: 'lines' as const, label: 'Item', align: 'right' as const, width: '80px' },
-    { key: 'paymentMethod' as const, label: 'Pembayaran' },
-    { key: 'status' as const, label: 'Status' },
-    { key: 'total' as const, label: 'Total', align: 'right' as const, width: '140px' }
-  ];
+  const fnbOn = $derived(settings.value.operations.fnb.enabled);
+  const columns = $derived(
+    [
+      { key: 'code' as const, label: 'Pesanan' },
+      { key: 'createdAt' as const, label: 'Waktu' },
+      { key: 'customerId' as const, label: 'Pelanggan' },
+      { key: 'lines' as const, label: 'Item', align: 'right' as const, width: '80px' },
+      ...(fnbOn ? [{ key: 'serviceType' as const, label: 'Tipe', width: '110px' }] : []),
+      { key: 'paymentMethod' as const, label: 'Pembayaran' },
+      { key: 'status' as const, label: 'Status' },
+      { key: 'total' as const, label: 'Total', align: 'right' as const, width: '140px' }
+    ]
+  );
 
   function customerLabel(o: Order): string {
     if (!o.customerId) return 'Walk-in';
@@ -149,6 +154,19 @@
         </div>
       {:else if column.key === 'lines'}
         <span class="font-medium text-slate-900">{orderItemCount(row)}</span>
+      {:else if column.key === 'serviceType'}
+        {#if row.serviceType}
+          <div class="flex items-center gap-1.5">
+            <Badge variant={row.serviceType === 'dineIn' ? 'info' : 'neutral'} size="sm">
+              {serviceTypeLabels[row.serviceType]}
+            </Badge>
+            {#if row.tableNumber}
+              <span class="text-xs text-slate-500">Meja {row.tableNumber}</span>
+            {/if}
+          </div>
+        {:else}
+          <span class="text-xs text-slate-400">—</span>
+        {/if}
       {:else if column.key === 'paymentMethod'}
         <Badge variant="outline" size="sm">{paymentMethodLabels[row.paymentMethod]}</Badge>
       {:else if column.key === 'status'}

@@ -16,7 +16,10 @@ const seed: Unit[] = [
   { id: 'unit_6', name: 'Mililiter', code: 'mL', description: 'Seperseribu liter.' },
   { id: 'unit_7', name: 'Lusin', code: 'lusin', description: 'Satuan tradisional 12 pcs (tekstil/garmen).' },
   { id: 'unit_8', name: 'Kodi', code: 'kodi', description: 'Satuan tradisional 20 pcs (tekstil/garmen).' },
-  { id: 'unit_9', name: 'Gross', code: 'gross', description: 'Satuan tradisional 144 pcs (12 lusin).' }
+  { id: 'unit_9', name: 'Gross', code: 'gross', description: 'Satuan tradisional 144 pcs (12 lusin).' },
+  { id: 'unit_10', name: 'Batang', code: 'btg', description: 'Satuan rokok terkecil — satu batang.' },
+  { id: 'unit_11', name: 'Bungkus', code: 'bks', description: 'Pak rokok. Isi bervariasi per merek (mis. 12, 16, atau 20 batang).' },
+  { id: 'unit_12', name: 'Slop', code: 'slop', description: 'Karton rokok berisi 10 bungkus.' }
 ];
 
 class UnitsStore {

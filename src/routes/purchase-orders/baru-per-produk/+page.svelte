@@ -23,6 +23,7 @@
   import { suppliers } from '$lib/stores/suppliers.svelte';
   import { categories } from '$lib/stores/categories.svelte';
   import { brands } from '$lib/stores/brands.svelte';
+  import { units } from '$lib/stores/units.svelte';
   import { purchaseOrders, type PurchaseOrderInput } from '$lib/stores/purchaseOrders.svelte';
   import { toast } from '$lib/stores/toast.svelte';
   import { latestSupplierPrice } from '$lib/utils/supplierAnalytics';
@@ -46,9 +47,14 @@
     productCategoryId: string;
     productBrandId?: string;
     productUnitId: string;
-    quantity: number;
+    // Satuan pembelian yang dipilih untuk item ini. Default = packaging dengan
+    // factor terbesar (mis. slop) supaya operator tidak perlu ganti tiap kali.
+    // Bisa di-override per-item di expanded editor.
+    unitId: string;
+    unitFactor: number;
+    quantity: number;        // dalam satuan yang dipilih (mis. 2 slop, bukan 320 batang)
     supplierId: string;
-    unitPrice: number;       // per base unit (factor 1 untuk MVP — operator pilih packaging di edit PO)
+    unitPrice: number;       // per satuan yang dipilih (mis. harga per slop)
     notes: string;
   };
 
@@ -151,35 +157,67 @@
     return cart.some((c) => c.productId === productId && c.variantId === variantId);
   }
 
+  // PO biasanya beli dalam kemasan terbesar. Konsisten dengan
+  // PurchaseOrderForm.defaultPurchaseUnit. Produk tanpa packaging fallback ke
+  // base unit.
+  function defaultPurchaseUnit(
+    product: Product
+  ): { unitId: string; unitFactor: number } {
+    if (product.units.length === 0) {
+      return { unitId: product.unitId, unitFactor: 1 };
+    }
+    const largest = product.units.reduce((max, pack) =>
+      pack.factor > max.factor ? pack : max
+    );
+    return { unitId: largest.unitId, unitFactor: largest.factor };
+  }
+
+  // Biaya per satuan dasar — variant.cost > supplier.unitCost > product.cost.
+  function baseCostFor(item: CartItem): number {
+    const product = products.getById(item.productId);
+    if (!product) return 0;
+    if (item.variantId) {
+      const v = product.variants.find((vv) => vv.id === item.variantId);
+      if (v && v.cost > 0) return v.cost;
+    }
+    if (item.supplierId) {
+      const ps = (product.suppliers ?? []).find((s) => s.supplierId === item.supplierId);
+      if (ps && ps.unitCost > 0) return ps.unitCost;
+    }
+    return product.cost;
+  }
+
+  function defaultUnitPrice(item: CartItem): number {
+    return baseCostFor(item) * (item.unitFactor || 1);
+  }
+
   function addToCart(row: PickerRow) {
     if (isInCart(row.productId, row.variantId)) return;
     const product = products.getById(row.productId);
     if (!product) return;
     const primary = primarySupplier(product);
     const supplierId = primary?.supplierId ?? row.supplierIds[0] ?? '';
-    const unitCost = primary?.unitCost ?? product.cost;
-    const variant = row.variantId
-      ? product.variants.find((v) => v.id === row.variantId)
-      : undefined;
+    const { unitId, unitFactor } = defaultPurchaseUnit(product);
     const newId = crypto.randomUUID();
-    cart = [
-      ...cart,
-      {
-        id: newId,
-        productId: row.productId,
-        variantId: row.variantId,
-        productName: row.productName,
-        variantName: row.variantName,
-        productSku: row.sku,
-        productCategoryId: row.categoryId,
-        productBrandId: row.brandId,
-        productUnitId: product.unitId,
-        quantity: 1,
-        supplierId,
-        unitPrice: variant?.cost ?? unitCost,
-        notes: ''
-      }
-    ];
+    const item: CartItem = {
+      id: newId,
+      productId: row.productId,
+      variantId: row.variantId,
+      productName: row.productName,
+      variantName: row.variantName,
+      productSku: row.sku,
+      productCategoryId: row.categoryId,
+      productBrandId: row.brandId,
+      productUnitId: product.unitId,
+      unitId,
+      unitFactor,
+      quantity: 1,
+      supplierId,
+      unitPrice: 0,
+      notes: ''
+    };
+    item.unitPrice = defaultUnitPrice(item);
+    cart = [...cart, item];
     // Auto-expand item yang baru ditambah supaya operator bisa langsung
     // atur qty / harga tanpa klik lagi.
     expandedItems = new Set([...expandedItems, newId]);
@@ -196,25 +234,37 @@
 
   function onItemSupplierChange(item: CartItem, newSupplierId: string) {
     item.supplierId = newSupplierId;
-    // Re-suggest unitPrice dari supplier baru. Prioritas:
-    //   1. ProductSupplier.unitCost untuk supplier ini
-    //   2. variant.cost (kalau ada variant)
-    //   3. product.cost
+    // Re-suggest unitPrice dari supplier baru. baseCostFor sudah menerapkan
+    // prioritas variant > supplier > product.cost, lalu defaultUnitPrice
+    // mengalikan factor satuan terpilih.
+    item.unitPrice = defaultUnitPrice(item);
+  }
+
+  function unitOptionsFor(item: CartItem): { value: string; label: string }[] {
     const product = products.getById(item.productId);
-    if (!product) return;
-    const ps = product.suppliers?.find((s) => s.supplierId === newSupplierId);
-    if (ps && ps.unitCost > 0) {
-      item.unitPrice = ps.unitCost;
-      return;
+    if (!product) return [];
+    const baseUnit = units.getById(product.unitId);
+    const baseCode = baseUnit?.code ?? '?';
+    const baseName = baseUnit?.name ?? '?';
+    const opts: { value: string; label: string }[] = [
+      { value: `${product.unitId}|1`, label: `${baseName} (${baseCode}) — base` }
+    ];
+    for (const pack of product.units) {
+      const u = units.getById(pack.unitId);
+      if (!u) continue;
+      opts.push({
+        value: `${pack.unitId}|${pack.factor}`,
+        label: `${u.name} (${u.code}) — 1 = ${pack.factor} ${baseCode}`
+      });
     }
-    if (item.variantId) {
-      const v = product.variants.find((vv) => vv.id === item.variantId);
-      if (v && v.cost > 0) {
-        item.unitPrice = v.cost;
-        return;
-      }
-    }
-    item.unitPrice = product.cost;
+    return opts;
+  }
+
+  function onItemUnitChange(item: CartItem, value: string) {
+    const [unitId, factorStr] = value.split('|');
+    item.unitId = unitId;
+    item.unitFactor = Number(factorStr) || 1;
+    item.unitPrice = defaultUnitPrice(item);
   }
 
   function supplierOptionsFor(item: CartItem): { value: string; label: string }[] {
@@ -291,20 +341,17 @@
         orderDate: today,
         expectedDate: '',
         receivedDate: '',
-        lines: group.items.map((it) => {
-          const product = products.getById(it.productId);
-          return {
-            id: crypto.randomUUID(),
-            productId: it.productId,
-            variantId: it.variantId,
-            quantity: it.quantity,
-            receivedQty: 0,
-            unitId: product?.unitId ?? '',
-            unitFactor: 1,
-            unitPrice: it.unitPrice,
-            notes: it.notes
-          };
-        }),
+        lines: group.items.map((it) => ({
+          id: crypto.randomUUID(),
+          productId: it.productId,
+          variantId: it.variantId,
+          quantity: it.quantity,
+          receivedQty: 0,
+          unitId: it.unitId,
+          unitFactor: it.unitFactor,
+          unitPrice: it.unitPrice,
+          notes: it.notes
+        })),
         notes: 'Dibuat lewat mode "PO per produk".'
       };
       const created = purchaseOrders.add(payload);
@@ -481,11 +528,15 @@
           <div class="space-y-1.5">
             {#each cart as item (item.id)}
               {@const supplierOpts = supplierOptionsFor(item)}
+              {@const unitOpts = unitOptionsFor(item)}
               {@const lastPrice = lastPriceFor(item)}
               {@const subtotal = item.quantity * item.unitPrice}
               {@const expanded = expandedItems.has(item.id)}
               {@const supplierLabel =
                 suppliers.getById(item.supplierId)?.name ?? '—'}
+              {@const itemUnitCode = units.getById(item.unitId)?.code ?? ''}
+              {@const baseUnitCode = units.getById(item.productUnitId)?.code ?? ''}
+              {@const baseQty = item.quantity * item.unitFactor}
               <div class="rounded-lg border border-slate-200 bg-white">
                 <!-- Compact row (always visible). Split jadi dua tombol
                      sebelahan supaya tidak nested <button>: kiri toggle
@@ -510,7 +561,7 @@
                         {/if}
                       </div>
                       <div class="truncate text-[11px] text-slate-500">
-                        {supplierLabel} · {item.quantity}× · {formatRupiah(subtotal)}
+                        {supplierLabel} · {item.quantity} {itemUnitCode} · {formatRupiah(subtotal)}
                       </div>
                     </div>
                   </button>
@@ -536,6 +587,17 @@
                           (e.currentTarget as HTMLSelectElement).value
                         )}
                       options={supplierOpts}
+                    />
+
+                    <Select
+                      label="Satuan beli"
+                      value={`${item.unitId}|${item.unitFactor}`}
+                      onchange={(e) =>
+                        onItemUnitChange(
+                          item,
+                          (e.currentTarget as HTMLSelectElement).value
+                        )}
+                      options={unitOpts}
                     />
 
                     {#if lastPrice}
@@ -572,6 +634,13 @@
                         bind:value={item.unitPrice}
                       />
                     </div>
+
+                    {#if item.unitFactor > 1 && baseUnitCode}
+                      <p class="text-[11px] text-slate-500">
+                        = <span class="font-medium text-slate-700">{baseQty} {baseUnitCode}</span>
+                        ({item.quantity} × {item.unitFactor})
+                      </p>
+                    {/if}
 
                     <div class="flex items-center justify-between border-t border-slate-200 pt-2 text-xs">
                       <span class="text-slate-500">Subtotal</span>

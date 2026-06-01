@@ -1,7 +1,7 @@
 <script lang="ts">
-  import { Boxes, Settings as SettingsIcon, CalendarClock, ExternalLink } from 'lucide-svelte';
+  import { Boxes, Settings as SettingsIcon, CalendarClock, ExternalLink, Utensils } from 'lucide-svelte';
   import { Button, Card, PageHeader, Toggle } from '$lib/components/ui';
-  import { settings } from '$lib/stores/settings.svelte';
+  import { settings, serviceTypeLabels, type ServiceType } from '$lib/stores/settings.svelte';
   import { locations } from '$lib/stores/locations.svelte';
   import { toast } from '$lib/stores/toast.svelte';
 
@@ -45,6 +45,29 @@
         'Data shift yang sudah ada tetap tersimpan. Penjualan baru tidak akan terkait shift sampai diaktifkan lagi.'
       );
     }
+  }
+
+  function onFnbToggle(checked: boolean) {
+    settings.setFnbEnabled(checked);
+    if (checked) {
+      toast.success(
+        'Dine-in / Take-away diaktifkan',
+        'Setiap transaksi di /pos akan menanyakan tipe layanan dan (opsional) nomor meja.'
+      );
+    } else {
+      toast.success(
+        'Dine-in / Take-away dimatikan',
+        'Transaksi baru tidak menyimpan tipe layanan. Order lama tetap menampilkan datanya.'
+      );
+    }
+  }
+
+  function onDefaultServiceTypeChange(value: ServiceType) {
+    settings.setFnbField('defaultServiceType', value);
+  }
+
+  function onRequireTableNumberToggle(checked: boolean) {
+    settings.setFnbField('requireTableNumber', checked);
   }
 </script>
 
@@ -165,6 +188,60 @@
             <p>
               Cocok untuk warung yang dijalankan sendiri tanpa kasir terpisah. Bisa diaktifkan kapan saja
               tanpa kehilangan data.
+            </p>
+          </div>
+        {/if}
+      </div>
+
+      <div class="rounded-lg border border-slate-200 p-4">
+        <Toggle
+          checked={settings.value.operations.fnb.enabled}
+          onchange={onFnbToggle}
+          label="Dine-in / Take-away"
+          description="Tampilkan pilihan tipe layanan dan nomor meja di kasir. Cocok untuk kafe, warung makan, atau resto kecil. Biaya tambahan seperti service charge atau biaya kemasan tetap ditangani lewat produk biasa atau extras — fitur ini hanya menandai tipe layanan."
+        />
+
+        {#if settings.value.operations.fnb.enabled}
+          <div class="mt-3 space-y-3">
+            <div class="rounded-md border border-emerald-100 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
+              <p class="font-semibold">Aktif</p>
+              <p class="mt-0.5">
+                Setiap sesi kasir baru akan diawali dengan tipe layanan default. Operator dapat menggantinya
+                per transaksi.
+              </p>
+            </div>
+
+            <div>
+              <p class="mb-1.5 text-xs font-medium text-slate-700">Default tipe layanan</p>
+              <div class="inline-flex rounded-md border border-slate-200 bg-white p-0.5">
+                {#each ['dineIn', 'takeAway'] as const as type}
+                  <button
+                    type="button"
+                    class="rounded px-3 py-1 text-xs font-medium {settings.value.operations.fnb
+                      .defaultServiceType === type
+                      ? 'bg-slate-900 text-white'
+                      : 'text-slate-600 hover:bg-slate-100'}"
+                    onclick={() => onDefaultServiceTypeChange(type)}
+                  >
+                    {serviceTypeLabels[type]}
+                  </button>
+                {/each}
+              </div>
+              <p class="mt-1 text-[11px] text-slate-500">Dipakai saat tab kasir baru dibuka.</p>
+            </div>
+
+            <Toggle
+              checked={settings.value.operations.fnb.requireTableNumber}
+              onchange={onRequireTableNumberToggle}
+              label="Wajib isi nomor meja saat dine-in"
+              description="Order dine-in tidak bisa dibayar jika nomor meja kosong."
+            />
+          </div>
+        {:else}
+          <div class="mt-3 rounded-md border border-slate-100 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+            <p>
+              Cocok untuk toko retail / minimarket yang tidak melayani makan di tempat. Nyalakan kapan saja
+              tanpa mempengaruhi order yang sudah ada.
             </p>
           </div>
         {/if}

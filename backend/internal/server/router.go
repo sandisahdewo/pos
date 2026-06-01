@@ -36,6 +36,8 @@ func NewRouter(opts Options) http.Handler {
 
 	authH := handlers.NewAuthHandler(opts.Deps)
 	unitsH := handlers.NewUnitsHandler(opts.Deps)
+	usersH := handlers.NewUsersHandler(opts.Deps)
+	rolesH := handlers.NewRolesHandler(opts.Deps)
 
 	r.Get("/healthz", healthz)
 
@@ -55,6 +57,27 @@ func NewRouter(opts Options) http.Handler {
 				u.Get("/{id}", unitsH.Get)
 				u.Patch("/{id}", unitsH.Update)
 				u.Delete("/{id}", unitsH.Delete)
+			})
+
+			// Admin-only: user (employee) + role management.
+			p.Group(func(adm chi.Router) {
+				adm.Use(middleware.RequireRole("Admin"))
+
+				adm.Route("/users", func(u chi.Router) {
+					u.Get("/", usersH.List)
+					u.Post("/", usersH.Create)
+					u.Get("/{id}", usersH.Get)
+					u.Patch("/{id}", usersH.Update)
+					u.Delete("/{id}", usersH.Delete)
+				})
+
+				adm.Route("/roles", func(ro chi.Router) {
+					ro.Get("/", rolesH.List)
+					ro.Post("/", rolesH.Create)
+					ro.Get("/{id}", rolesH.Get)
+					ro.Patch("/{id}", rolesH.Update)
+					ro.Delete("/{id}", rolesH.Delete)
+				})
 			})
 		})
 	})

@@ -1,103 +1,91 @@
 import { roles } from './roles.svelte';
+import {
+  listUsers,
+  createUser,
+  updateUser,
+  deleteUser,
+  type ApiUser,
+  type UserInput
+} from '$lib/api/users';
 
 export type EmployeeStatus = 'active' | 'inactive';
 
+// Mirrors the backend `users` table. Login uses `email`; PIN is for shift open.
+// `password` is write-only — never read back from the API.
 export type Employee = {
   id: string;
   name: string;
   email: string;
   phone: string;
-  username: string;
-  password: string;
   roleIds: string[];
   status: EmployeeStatus;
   joinedAt: string;
   pin: string;
 };
 
-export type EmployeeInput = Omit<Employee, 'id'>;
+export type EmployeeInput = Omit<Employee, 'id'> & {
+  password: string;
+};
 
-const seed: Employee[] = [
-  {
-    id: 'emp_1',
-    name: 'Sari Wahyuni',
-    email: 'sari@warmindo.test',
-    phone: '+62 812-3456-7890',
-    username: 'admin',
-    password: 'admin123',
-    roleIds: ['role_admin'],
-    status: 'active',
-    joinedAt: '2023-01-10',
-    pin: '1234'
-  },
-  {
-    id: 'emp_2',
-    name: 'Joko Susilo',
-    email: 'joko@warmindo.test',
-    phone: '+62 813-9876-5432',
-    username: 'joko',
-    password: 'joko123',
-    roleIds: ['role_manajer'],
-    status: 'active',
-    joinedAt: '2023-06-20',
-    pin: '2580'
-  },
-  {
-    id: 'emp_3',
-    name: 'Rina Marlina',
-    email: 'rina@warmindo.test',
-    phone: '+62 821-1122-3344',
-    username: 'kasir',
-    password: 'kasir123',
-    roleIds: ['role_kasir'],
-    status: 'active',
-    joinedAt: '2024-02-15',
-    pin: '4321'
-  },
-  {
-    id: 'emp_4',
-    name: 'Andi Pratama',
-    email: 'andi@warmindo.test',
-    phone: '+62 822-5566-7788',
-    username: 'andi',
-    password: 'andi123',
-    roleIds: ['role_kasir', 'role_gudang'],
-    status: 'active',
-    joinedAt: '2024-09-01',
-    pin: '1357'
-  },
-  {
-    id: 'emp_5',
-    name: 'Dimas Saputra',
-    email: 'dimas@warmindo.test',
-    phone: '+62 823-4455-6677',
-    username: 'dimas',
-    password: 'dimas123',
-    roleIds: ['role_staf'],
-    status: 'inactive',
-    joinedAt: '2025-03-05',
-    pin: '8642'
-  }
-];
+function toEmployee(u: ApiUser): Employee {
+  return {
+    id: u.id,
+    name: u.name,
+    email: u.email,
+    phone: u.phone,
+    roleIds: u.roleIds,
+    status: u.status,
+    joinedAt: u.joinedAt.slice(0, 10),
+    pin: u.pin
+  };
+}
+
+function toUserInput(input: EmployeeInput): UserInput {
+  return {
+    email: input.email,
+    name: input.name,
+    phone: input.phone,
+    password: input.password,
+    pin: input.pin,
+    status: input.status,
+    joinedAt: input.joinedAt,
+    roleIds: input.roleIds
+  };
+}
 
 class EmployeesStore {
-  items = $state<Employee[]>(structuredClone(seed));
-  private nextId = seed.length + 1;
+  items = $state<Employee[]>([]);
+  loaded = $state(false);
+  loading = $state(false);
 
-  add(input: EmployeeInput): Employee {
-    const employee: Employee = { ...input, id: `emp_${this.nextId++}` };
-    this.items.push(employee);
-    return employee;
+  async load(): Promise<void> {
+    if (this.loading) return;
+    this.loading = true;
+    try {
+      const users = await listUsers();
+      this.items = users.map(toEmployee);
+      this.loaded = true;
+    } finally {
+      this.loading = false;
+    }
   }
 
-  update(id: string, patch: Partial<EmployeeInput>): Employee | undefined {
-    const idx = this.items.findIndex((e) => e.id === id);
-    if (idx === -1) return undefined;
-    this.items[idx] = { ...this.items[idx], ...patch };
-    return this.items[idx];
+  async add(input: EmployeeInput): Promise<Employee> {
+    const created = await createUser(toUserInput(input));
+    const emp = toEmployee(created);
+    this.items = [...this.items, emp];
+    return emp;
   }
 
-  remove(id: string) {
+  async update(id: string, patch: EmployeeInput): Promise<Employee | undefined> {
+    const updated = await updateUser(id, toUserInput(patch));
+    const emp = toEmployee(updated);
+    this.items = this.items.map((e) => (e.id === id ? emp : e));
+    return emp;
+  }
+
+  async remove(id: string): Promise<void> {
+    await deleteUser(id);
     this.items = this.items.filter((e) => e.id !== id);
   }
 
@@ -105,9 +93,9 @@ class EmployeesStore {
     return this.items.find((e) => e.id === id);
   }
 
-  getByUsername(username: string): Employee | undefined {
-    const u = username.trim().toLowerCase();
-    return this.items.find((e) => e.username.toLowerCase() === u);
+  getByEmail(email: string): Employee | undefined {
+    const lower = email.trim().toLowerCase();
+    return this.items.find((e) => e.email.toLowerCase() === lower);
   }
 
   verifyPin(employeeId: string, pin: string): boolean {
@@ -120,7 +108,6 @@ class EmployeesStore {
     return this.items.filter((e) => e.status === 'active');
   }
 
-  /** Count of employees currently assigned to a given role. */
   countByRole(roleId: string): number {
     return this.items.reduce((n, e) => n + (e.roleIds.includes(roleId) ? 1 : 0), 0);
   }
@@ -128,7 +115,6 @@ class EmployeesStore {
 
 export const employees = new EmployeesStore();
 
-/** Human-readable label for an employee's role membership. */
 export function roleLabelFor(employee: { roleIds: string[] }, separator = ' · '): string {
   return roles.labelFor(employee.roleIds, separator);
 }

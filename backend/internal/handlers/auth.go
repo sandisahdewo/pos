@@ -48,8 +48,24 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "invalid credentials")
 		return
 	}
+	if user.Status != "active" {
+		writeError(w, http.StatusForbidden, "akun pegawai ini tidak aktif")
+		return
+	}
 
-	token, err := h.deps.Issuer.Issue(user.ID, user.Role)
+	roleNames, err := loadRoleNamesFor(r.Context(), h.deps.DB, user.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	roleIDs, err := loadRoleIDsFor(r.Context(), h.deps.DB, user.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	user.RoleIDs = roleIDs
+
+	token, err := h.deps.Issuer.Issue(user.ID, roleNames)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "issue token")
 		return
@@ -57,7 +73,8 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, loginResponse{Token: token, User: user})
 }
 
-// Me returns the authenticated user's profile based on the JWT claims.
+// Me returns the authenticated user's profile (with role IDs) based on the
+// JWT claims. Roles + permissions can be fetched separately via /api/roles.
 func (h *AuthHandler) Me(w http.ResponseWriter, r *http.Request) {
 	claims, ok := auth.ClaimsFrom(r.Context())
 	if !ok {
@@ -70,5 +87,11 @@ func (h *AuthHandler) Me(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "user not found")
 		return
 	}
+	ids, err := loadRoleIDsFor(r.Context(), h.deps.DB, user.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	user.RoleIDs = ids
 	writeJSON(w, http.StatusOK, user)
 }

@@ -54,6 +54,16 @@
   let form = $state<FormState>(emptyForm());
   let errors = $state<{ name?: string; permissions?: string }>({});
   let editingIsSystem = $state(false);
+  let submitting = $state(false);
+
+  // Load roles from API on mount.
+  $effect(() => {
+    if (!roles.loaded && !roles.loading) {
+      roles.load().catch((err) => {
+        toast.error('Gagal memuat peran', err?.message ?? 'Tidak diketahui');
+      });
+    }
+  });
 
   const filtered = $derived.by(() => {
     const q = search.trim().toLowerCase();
@@ -157,25 +167,33 @@
     return Object.keys(next).length === 0;
   }
 
-  function save() {
+  async function save() {
     if (!validate()) return;
     const permList = form.grantAll ? [ALL_PERMISSIONS_WILDCARD] : Array.from(form.permissions);
-    if (editingId) {
-      roles.update(editingId, {
-        name: form.name.trim(),
-        description: form.description.trim(),
-        permissions: permList
-      });
-      toast.success('Peran diperbarui', form.name.trim());
-    } else {
-      const created = roles.add({
-        name: form.name.trim(),
-        description: form.description.trim(),
-        permissions: permList
-      });
-      toast.success('Peran dibuat', created.name);
+    submitting = true;
+    try {
+      if (editingId) {
+        await roles.update(editingId, {
+          name: form.name.trim(),
+          description: form.description.trim(),
+          permissions: permList
+        });
+        toast.success('Peran diperbarui', form.name.trim());
+      } else {
+        const created = await roles.add({
+          name: form.name.trim(),
+          description: form.description.trim(),
+          permissions: permList
+        });
+        toast.success('Peran dibuat', created.name);
+      }
+      formOpen = false;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Terjadi kesalahan';
+      toast.error('Gagal menyimpan peran', msg);
+    } finally {
+      submitting = false;
     }
-    formOpen = false;
   }
 
   function askDelete(role: Role) {
@@ -183,16 +201,16 @@
     confirmOpen = true;
   }
 
-  function doDelete() {
+  async function doDelete() {
     if (!pendingDelete) return;
-    const name = pendingDelete.name;
-    const result = roles.remove(pendingDelete.id);
+    const target = pendingDelete;
     pendingDelete = null;
+    const result = await roles.remove(target.id);
     if (!result.ok) {
       toast.error('Tidak bisa menghapus peran', result.reason);
       return;
     }
-    toast.success('Peran dihapus', name);
+    toast.success('Peran dihapus', target.name);
   }
 
   function permissionCount(role: Role): number {
@@ -436,7 +454,9 @@
       {editingIsSystem ? 'Tutup' : 'Batal'}
     </Button>
     {#if !editingIsSystem || (editingIsSystem && form.description !== roles.getById(editingId ?? '')?.description)}
-      <Button onclick={save}>{editingId ? 'Simpan perubahan' : 'Tambah peran'}</Button>
+      <Button onclick={save} loading={submitting} disabled={submitting}>
+        {editingId ? 'Simpan perubahan' : 'Tambah peran'}
+      </Button>
     {/if}
   {/snippet}
 </Modal>

@@ -1,13 +1,7 @@
 import { apiFetch } from './client';
+import type { ApiUser } from './users';
 
-export type ApiUser = {
-  id: string;
-  email: string;
-  name: string;
-  role: string;
-  createdAt: string;
-  updatedAt: string;
-};
+export type { ApiUser } from './users';
 
 export type LoginResponse = {
   token: string;

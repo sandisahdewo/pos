@@ -10,7 +10,7 @@ import (
 
 type Claims struct {
 	UserID uuid.UUID `json:"uid"`
-	Role   string    `json:"role"`
+	Roles  []string  `json:"roles"`
 	jwt.RegisteredClaims
 }
 
@@ -23,11 +23,11 @@ func NewIssuer(secret []byte, ttl time.Duration) *Issuer {
 	return &Issuer{secret: secret, ttl: ttl}
 }
 
-func (i *Issuer) Issue(userID uuid.UUID, role string) (string, error) {
+func (i *Issuer) Issue(userID uuid.UUID, roles []string) (string, error) {
 	now := time.Now()
 	claims := Claims{
 		UserID: userID,
-		Role:   role,
+		Roles:  roles,
 		RegisteredClaims: jwt.RegisteredClaims{
 			IssuedAt:  jwt.NewNumericDate(now),
 			ExpiresAt: jwt.NewNumericDate(now.Add(i.ttl)),
@@ -52,4 +52,14 @@ func (i *Issuer) Parse(tokenStr string) (*Claims, error) {
 		return nil, errors.New("invalid token")
 	}
 	return claims, nil
+}
+
+// HasRole reports whether the claims include the given role identifier.
+func (c *Claims) HasRole(role string) bool {
+	for _, r := range c.Roles {
+		if r == role {
+			return true
+		}
+	}
+	return false
 }

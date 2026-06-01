@@ -10,7 +10,6 @@
     Eye,
     EyeOff,
     KeyRound,
-    AtSign,
     Lock,
     ShieldAlert
   } from 'lucide-svelte';
@@ -44,12 +43,12 @@
   let editingId = $state<string | null>(null);
   let confirmOpen = $state(false);
   let pendingDelete = $state<Employee | null>(null);
+  let submitting = $state(false);
 
   type FormState = {
     name: string;
     email: string;
     phone: string;
-    username: string;
     password: string;
     roleIds: string[];
     status: EmployeeStatus;
@@ -61,7 +60,6 @@
     name: '',
     email: '',
     phone: '',
-    username: '',
     password: '',
     roleIds: [],
     status: 'active',
@@ -74,6 +72,15 @@
   let showPin = $state(false);
   let showPassword = $state(false);
 
+  // Hydrate the employees cache from /api/users on mount.
+  $effect(() => {
+    if (!employees.loaded && !employees.loading) {
+      employees.load().catch((err) => {
+        toast.error('Gagal memuat pegawai', err?.message ?? 'Tidak diketahui');
+      });
+    }
+  });
+
   const filtered = $derived.by(() => {
     const q = search.trim().toLowerCase();
     return employees.items.filter((e) => {
@@ -83,7 +90,6 @@
       return (
         e.name.toLowerCase().includes(q) ||
         e.email.toLowerCase().includes(q) ||
-        e.username.toLowerCase().includes(q) ||
         e.phone.toLowerCase().includes(q)
       );
     });
@@ -124,8 +130,9 @@
       name: emp.name,
       email: emp.email,
       phone: emp.phone,
-      username: emp.username,
-      password: emp.password,
+      // Password is never read back from the API. Operator only fills this
+      // field when they want to reset the password on update.
+      password: '',
       roleIds: [...emp.roleIds],
       status: emp.status,
       joinedAt: emp.joinedAt,
@@ -151,39 +158,48 @@
     if (!form.email.trim()) next.email = 'Email wajib diisi.';
     else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email))
       next.email = 'Masukkan email yang valid.';
-    if (!form.phone.trim()) next.phone = 'Telepon wajib diisi.';
-    if (!form.username.trim()) next.username = 'Username wajib diisi.';
-    else if (!/^[a-zA-Z0-9._-]{3,}$/.test(form.username))
-      next.username = 'Minimal 3 karakter, hanya huruf/angka/.-_ .';
     else {
-      const dupUser = employees.items.find(
-        (e) => e.username.toLowerCase() === form.username.trim().toLowerCase() && e.id !== editingId
+      const dupEmail = employees.items.find(
+        (e) => e.email.toLowerCase() === form.email.trim().toLowerCase() && e.id !== editingId
       );
-      if (dupUser) next.username = `Username dipakai oleh ${dupUser.name}.`;
+      if (dupEmail) next.email = `Email dipakai oleh ${dupEmail.name}.`;
     }
-    if (!form.password) next.password = 'Kata sandi wajib diisi.';
-    else if (form.password.length < 6) next.password = 'Minimal 6 karakter.';
+    if (!form.phone.trim()) next.phone = 'Telepon wajib diisi.';
+    // Password wajib hanya saat tambah baru. Saat edit, kosong = pertahankan.
+    if (!editingId && !form.password) next.password = 'Kata sandi wajib diisi.';
+    else if (form.password && form.password.length < 6)
+      next.password = 'Minimal 6 karakter.';
     if (form.roleIds.length === 0) next.roleIds = 'Pilih minimal satu peran.';
     if (!form.joinedAt) next.joinedAt = 'Tanggal bergabung wajib diisi.';
-    if (!/^\d{4}$/.test(form.pin)) next.pin = 'PIN harus 4 digit angka.';
-    else {
-      const dup = employees.items.find((e) => e.pin === form.pin && e.id !== editingId);
-      if (dup) next.pin = `PIN sudah dipakai oleh ${dup.name}.`;
+    if (form.pin) {
+      if (!/^\d{4}$/.test(form.pin)) next.pin = 'PIN harus 4 digit angka.';
+      else {
+        const dup = employees.items.find((e) => e.pin === form.pin && e.id !== editingId);
+        if (dup) next.pin = `PIN sudah dipakai oleh ${dup.name}.`;
+      }
     }
     errors = next;
     return Object.keys(next).length === 0;
   }
 
-  function save() {
+  async function save() {
     if (!validate()) return;
-    if (editingId) {
-      employees.update(editingId, { ...form });
-      toast.success('Pegawai diperbarui', form.name);
-    } else {
-      employees.add({ ...form });
-      toast.success('Pegawai ditambahkan', form.name);
+    submitting = true;
+    try {
+      if (editingId) {
+        await employees.update(editingId, { ...form });
+        toast.success('Pegawai diperbarui', form.name);
+      } else {
+        await employees.add({ ...form });
+        toast.success('Pegawai ditambahkan', form.name);
+      }
+      formOpen = false;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Terjadi kesalahan';
+      toast.error('Gagal menyimpan pegawai', msg);
+    } finally {
+      submitting = false;
     }
-    formOpen = false;
   }
 
   function askDelete(emp: Employee) {
@@ -191,12 +207,17 @@
     confirmOpen = true;
   }
 
-  function doDelete() {
+  async function doDelete() {
     if (!pendingDelete) return;
-    const name = pendingDelete.name;
-    employees.remove(pendingDelete.id);
+    const target = pendingDelete;
     pendingDelete = null;
-    toast.success('Pegawai dihapus', name);
+    try {
+      await employees.remove(target.id);
+      toast.success('Pegawai dihapus', target.name);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Terjadi kesalahan';
+      toast.error('Gagal menghapus pegawai', msg);
+    }
   }
 
   function fmtDate(iso: string) {
@@ -233,7 +254,7 @@
 <Card padded={false}>
   <div class="flex flex-wrap items-center gap-2 border-b border-slate-100 px-4 py-3">
     <div class="min-w-[220px] flex-1">
-      <Input placeholder="Cari nama, username, email, atau telepon…" bind:value={search}>
+      <Input placeholder="Cari nama, email, atau telepon…" bind:value={search}>
         {#snippet leading()}<Search class="h-4 w-4" />{/snippet}
       </Input>
     </div>
@@ -253,8 +274,8 @@
           <div class="min-w-0">
             <div class="truncate font-medium text-slate-900">{row.name}</div>
             <div class="flex items-center gap-1 truncate text-xs text-slate-500">
-              <AtSign class="h-3 w-3" />
-              {row.username}
+              <Mail class="h-3 w-3" />
+              {row.email}
             </div>
           </div>
         </div>
@@ -339,20 +360,12 @@
         {#snippet leading()}<Phone class="h-4 w-4" />{/snippet}
       </Input>
       <Input
-        label="Username"
-        placeholder="mis. maria"
-        bind:value={form.username}
-        error={errors.username}
-        hint="Dipakai untuk masuk ke aplikasi."
-      >
-        {#snippet leading()}<AtSign class="h-4 w-4" />{/snippet}
-      </Input>
-      <Input
         label="Kata sandi"
         type={showPassword ? 'text' : 'password'}
-        placeholder="Minimal 6 karakter"
+        placeholder={editingId ? 'Kosongkan untuk tidak mengubah' : 'Minimal 6 karakter'}
         bind:value={form.password}
         error={errors.password}
+        hint={editingId ? 'Isi hanya jika ingin reset kata sandi pegawai ini.' : undefined}
       >
         {#snippet leading()}<Lock class="h-4 w-4" />{/snippet}
         {#snippet trailing()}
@@ -440,7 +453,9 @@
 
   {#snippet footer()}
     <Button variant="outline" onclick={() => (formOpen = false)}>Batal</Button>
-    <Button onclick={save}>{editingId ? 'Simpan perubahan' : 'Tambah pegawai'}</Button>
+    <Button onclick={save} loading={submitting} disabled={submitting}>
+      {editingId ? 'Simpan perubahan' : 'Tambah pegawai'}
+    </Button>
   {/snippet}
 </Modal>
 

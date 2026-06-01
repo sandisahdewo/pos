@@ -30,6 +30,27 @@ func RequireAuth(issuer *auth.Issuer) func(http.Handler) http.Handler {
 	}
 }
 
+// RequireRole gates a route to callers whose JWT claims include any of the
+// given role identifiers. Must be chained after RequireAuth.
+func RequireRole(roles ...string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			claims, ok := auth.ClaimsFrom(r.Context())
+			if !ok {
+				writeError(w, http.StatusUnauthorized, "no claims")
+				return
+			}
+			for _, want := range roles {
+				if claims.HasRole(want) {
+					next.ServeHTTP(w, r)
+					return
+				}
+			}
+			writeError(w, http.StatusForbidden, "akses ditolak")
+		})
+	}
+}
+
 func writeError(w http.ResponseWriter, status int, msg string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)

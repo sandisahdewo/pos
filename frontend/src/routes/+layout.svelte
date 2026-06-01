@@ -8,6 +8,8 @@
   import ToastContainer from '$lib/components/layout/ToastContainer.svelte';
   import { sidebar } from '$lib/stores/sidebar.svelte';
   import { user } from '$lib/stores/user.svelte';
+  import { roles } from '$lib/stores/roles.svelte';
+  import { employees } from '$lib/stores/employees.svelte';
   import { Button } from '$lib/components/ui';
   import { permissionForPath, permissionLabel } from '$lib/auth/permissions';
 
@@ -21,9 +23,26 @@
     });
   });
 
+  // Once authenticated, load the role catalog (needed for permission checks
+  // across the app) and the employees cache (used by various stores for
+  // performedBy attribution). Roles is the blocker for `user.permissions`.
+  $effect(() => {
+    if (!user.isAuthenticated) return;
+    if (!roles.loaded && !roles.loading) {
+      roles.load().catch(() => {});
+    }
+    if (!employees.loaded && !employees.loading) {
+      employees.load().catch(() => {});
+    }
+  });
+
   const isAuthRoute = $derived(page.url.pathname.startsWith('/login'));
   const requiredPermission = $derived(permissionForPath(page.url.pathname));
-  const isAllowed = $derived(!requiredPermission || user.can(requiredPermission));
+  // Wait for the role catalog before evaluating permissions — otherwise a
+  // freshly-logged-in user briefly sees "Akses ditolak" while roles load.
+  const isAllowed = $derived(
+    !requiredPermission || !roles.loaded || user.can(requiredPermission)
+  );
 
   $effect(() => {
     if (!hydrated) return;

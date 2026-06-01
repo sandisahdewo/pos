@@ -1,0 +1,86 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: pos
+      POSTGRES_PASSWORD: pos
+      POSTGRES_DB: pos
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pos -d pos"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    environment:
+      DATABASE_URL: postgres://pos:pos@postgres:5432/pos?sslmode=disable
+      JWT_SECRET: ${JWT_SECRET:-dev-only-change-me}
+      HTTP_ADDR: ":8080"
+      CORS_ALLOW_ORIGIN: http://localhost:5173
+      DEBUG_SQL: ${DEBUG_SQL:-0}
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # One-shot migration runner. Run with: `docker compose run --rm migrate up`.
+  # Supported commands: init | up | down | status | create <name>
+  migrate:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    environment:
+      DATABASE_URL: postgres://pos:pos@postgres:5432/pos?sslmode=disable
+      JWT_SECRET: dev-only-ignored-by-migrate
+    entrypoint: ["/app/migrate"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    profiles: ["tools"]
+
+  # One-shot seed runner (idempotent admin upsert). Run with:
+  # `docker compose run --rm seed`. Override via ADMIN_EMAIL / ADMIN_PASSWORD.
+  seed:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    environment:
+      DATABASE_URL: postgres://pos:pos@postgres:5432/pos?sslmode=disable
+      JWT_SECRET: dev-only-ignored-by-seed
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@pos.local}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin123}
+      ADMIN_NAME: ${ADMIN_NAME:-Admin}
+    entrypoint: ["/app/seed"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    profiles: ["tools"]
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./frontend:/app
+      # Anonymous volume on node_modules so the host's (possibly empty)
+      # directory doesn't shadow the one installed inside the image.
+      - /app/node_modules
+    environment:
+      # Vite reads this for any in-app fetch defaults. Keep frontend pointed
+      # at host-mapped backend (browser runs on host, not inside the network).
+      VITE_API_BASE_URL: http://localhost:8080
+    depends_on:
+      - backend
+
+volumes:
+  pgdata:

@@ -10,8 +10,8 @@
   let dropdownOpen = $state(false);
   let notifOpen = $state(false);
 
-  const displayName = $derived(user.current?.name ?? 'Tamu');
-  const displayEmail = $derived(user.current?.email ?? '');
+  const displayName = $derived(user.displayName);
+  const displayEmail = $derived(user.displayEmail);
   const initials = $derived(
     displayName
       .split(' ')

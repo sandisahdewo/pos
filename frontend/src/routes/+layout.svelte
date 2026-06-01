@@ -13,11 +13,20 @@
 
   let { children } = $props();
 
+  // Hydrate session from localStorage on app boot. Runs once on the client.
+  let hydrated = $state(false);
+  $effect(() => {
+    user.hydrate().finally(() => {
+      hydrated = true;
+    });
+  });
+
   const isAuthRoute = $derived(page.url.pathname.startsWith('/login'));
   const requiredPermission = $derived(permissionForPath(page.url.pathname));
   const isAllowed = $derived(!requiredPermission || user.can(requiredPermission));
 
   $effect(() => {
+    if (!hydrated) return;
     if (!isAuthRoute && !user.isAuthenticated) {
       goto('/login');
     }
@@ -61,7 +70,7 @@
             </p>
             <p class="mt-2 text-xs text-slate-400">
               Anda masuk sebagai
-              <span class="font-medium text-slate-600">{user.current?.name ?? 'Tamu'}</span>
+              <span class="font-medium text-slate-600">{user.displayName}</span>
               ({user.roleLabel}). Hubungi admin untuk menambah peran.
             </p>
             <div class="mt-5 flex items-center gap-2">

@@ -5,7 +5,7 @@
   import { user } from '$lib/stores/user.svelte';
   import { toast } from '$lib/stores/toast.svelte';
 
-  let username = $state('');
+  let email = $state('');
   let password = $state('');
   let showPassword = $state(false);
   let rememberMe = $state(true);
@@ -16,8 +16,8 @@
     event.preventDefault();
     error = null;
 
-    if (!username.trim()) {
-      error = 'Username wajib diisi.';
+    if (!email.trim()) {
+      error = 'Email wajib diisi.';
       return;
     }
     if (!password) {
@@ -26,10 +26,7 @@
     }
 
     submitting = true;
-    // Simulate a small latency so the loading state is visible.
-    await new Promise((resolve) => setTimeout(resolve, 350));
-
-    const result = user.login(username, password);
+    const result = await user.login(email.trim(), password);
     submitting = false;
 
     if (!result.ok) {
@@ -37,12 +34,12 @@
       return;
     }
 
-    toast.success(`Selamat datang, ${user.current?.name ?? ''}`, 'Anda berhasil masuk.');
+    toast.success(`Selamat datang, ${user.displayName}`, 'Anda berhasil masuk.');
     await goto('/');
   }
 
   function fillDemo() {
-    username = 'admin';
+    email = 'admin@pos.local';
     password = 'admin123';
     error = null;
   }
@@ -124,11 +121,11 @@
           {/if}
 
           <Input
-            label="Username"
-            type="text"
-            autocomplete="username"
-            placeholder="mis. admin"
-            bind:value={username}
+            label="Email"
+            type="email"
+            autocomplete="email"
+            placeholder="mis. admin@pos.local"
+            bind:value={email}
             disabled={submitting}
           >
             {#snippet leading()}<User class="h-4 w-4" />{/snippet}
@@ -184,10 +181,10 @@
             <div class="text-xs text-slate-600">
               <p class="font-medium text-slate-700">Akun demo</p>
               <p class="mt-0.5 leading-relaxed">
-                <span class="font-mono">admin</span> / <span class="font-mono">admin123</span> ·
-                <span class="font-mono">kasir</span> / <span class="font-mono">kasir123</span>
+                <span class="font-mono">admin@pos.local</span> /
+                <span class="font-mono">admin123</span>
               </p>
-              <p class="mt-0.5 text-slate-400">Tiap akun punya kombinasi peran yang berbeda.</p>
+              <p class="mt-0.5 text-slate-400">Seed dari backend via <code>docker compose run --rm seed</code>.</p>
             </div>
             <button
               type="button"

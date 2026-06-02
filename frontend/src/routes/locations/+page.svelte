@@ -157,16 +157,34 @@
     return Object.keys(next).length === 0;
   }
 
-  function save() {
-    if (!validate()) return;
-    if (editingId) {
-      locations.update(editingId, { ...form });
-      toast.success('Lokasi diperbarui', form.name);
-    } else {
-      locations.add({ ...form });
-      toast.success('Lokasi ditambahkan', form.name);
+  let submitting = $state(false);
+
+  $effect(() => {
+    if (!locations.loaded && !locations.loading) {
+      locations.load().catch((err) =>
+        toast.error('Gagal memuat lokasi', err?.message ?? 'Tidak diketahui')
+      );
     }
-    formOpen = false;
+  });
+
+  async function save() {
+    if (!validate()) return;
+    submitting = true;
+    try {
+      if (editingId) {
+        await locations.update(editingId, { ...form });
+        toast.success('Lokasi diperbarui', form.name);
+      } else {
+        await locations.add({ ...form });
+        toast.success('Lokasi ditambahkan', form.name);
+      }
+      formOpen = false;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Terjadi kesalahan';
+      toast.error('Gagal menyimpan lokasi', msg);
+    } finally {
+      submitting = false;
+    }
   }
 
   function askDelete(loc: Location) {
@@ -174,18 +192,23 @@
     confirmOpen = true;
   }
 
-  function doDelete() {
+  async function doDelete() {
     if (!pendingDelete) return;
-    const name = pendingDelete.name;
-    const result = locations.remove(pendingDelete.id);
+    const target = pendingDelete;
     pendingDelete = null;
-    if (result.ok) toast.success('Lokasi dihapus', name);
-    else toast.error('Tidak bisa dihapus', result.reason ?? '');
+    const result = await locations.remove(target.id);
+    if (result.ok) toast.success('Lokasi dihapus', target.name);
+    else toast.error('Tidak bisa dihapus', result.reason);
   }
 
-  function makeDefaultReceipt(loc: Location) {
-    locations.update(loc.id, { isDefaultReceipt: true });
-    toast.success('Lokasi default penerimaan diperbarui', loc.name);
+  async function makeDefaultReceipt(loc: Location) {
+    try {
+      await locations.update(loc.id, { isDefaultReceipt: true });
+      toast.success('Lokasi default penerimaan diperbarui', loc.name);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Terjadi kesalahan';
+      toast.error('Gagal mengubah default', msg);
+    }
   }
 </script>
 
@@ -391,7 +414,9 @@
 
   {#snippet footer()}
     <Button variant="outline" onclick={() => (formOpen = false)}>Batal</Button>
-    <Button onclick={save}>{editingId ? 'Simpan perubahan' : 'Tambah lokasi'}</Button>
+    <Button onclick={save} loading={submitting} disabled={submitting}>
+      {editingId ? 'Simpan perubahan' : 'Tambah lokasi'}
+    </Button>
   {/snippet}
 </Modal>
 

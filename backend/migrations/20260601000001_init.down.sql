@@ -2,6 +2,14 @@ SET statement_timeout = 0;
 
 --bun:split
 
+DROP INDEX IF EXISTS locations_one_default_receipt;
+
+--bun:split
+
+DROP TABLE IF EXISTS locations;
+
+--bun:split
+
 DROP TABLE IF EXISTS tags;
 
 --bun:split

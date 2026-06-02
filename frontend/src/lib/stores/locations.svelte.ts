@@ -1,4 +1,12 @@
 import { batches } from './batches.svelte';
+import {
+  listLocations,
+  createLocation,
+  updateLocation,
+  deleteLocation,
+  type ApiLocation,
+  type LocationInput as ApiLocationInput
+} from '$lib/api/locations';
 
 export type LocationKind = 'shelf' | 'rack' | 'warehouse';
 export type LocationStatus = 'active' | 'archived';
@@ -16,50 +24,6 @@ export type Location = {
 };
 
 export type LocationInput = Omit<Location, 'id' | 'slug'> & { slug?: string };
-
-function slugify(name: string): string {
-  return name
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '');
-}
-
-const seed: Location[] = [
-  {
-    id: 'loc_shelf',
-    name: 'Etalase',
-    slug: 'etalase',
-    kind: 'shelf',
-    customerVisible: true,
-    isDefaultReceipt: false,
-    displayOrder: 1,
-    description: 'Produk yang dipajang di depan — pelanggan bisa ambil sendiri.',
-    status: 'active'
-  },
-  {
-    id: 'loc_rack',
-    name: 'Rak Belakang',
-    slug: 'rak-belakang',
-    kind: 'rack',
-    customerVisible: false,
-    isDefaultReceipt: false,
-    displayOrder: 2,
-    description: 'Stok di belakang kasir — pelanggan minta, kasir ambilkan.',
-    status: 'active'
-  },
-  {
-    id: 'loc_gudang',
-    name: 'Gudang',
-    slug: 'gudang',
-    kind: 'warehouse',
-    customerVisible: false,
-    isDefaultReceipt: true,
-    displayOrder: 3,
-    description: 'Penyimpanan bulk — tidak diakses pelanggan.',
-    status: 'active'
-  }
-];
 
 export const locationKindOptions: { value: LocationKind; label: string; description: string }[] = [
   {
@@ -83,47 +47,87 @@ export function defaultVisibilityForKind(kind: LocationKind): boolean {
   return kind === 'shelf';
 }
 
+function toLocation(l: ApiLocation): Location {
+  return {
+    id: l.id,
+    name: l.name,
+    slug: l.slug,
+    kind: l.kind,
+    customerVisible: l.customerVisible,
+    isDefaultReceipt: l.isDefaultReceipt,
+    displayOrder: l.displayOrder,
+    description: l.description,
+    status: l.status
+  };
+}
+
+function toApiInput(l: LocationInput): ApiLocationInput {
+  return {
+    name: l.name,
+    slug: l.slug,
+    kind: l.kind,
+    customerVisible: l.customerVisible,
+    isDefaultReceipt: l.isDefaultReceipt,
+    displayOrder: l.displayOrder,
+    description: l.description,
+    status: l.status
+  };
+}
+
 class LocationsStore {
-  items = $state<Location[]>([...seed]);
-  private nextId = seed.length + 1;
+  items = $state<Location[]>([]);
+  loaded = $state(false);
+  loading = $state(false);
 
-  add(input: LocationInput): Location {
-    const loc: Location = {
-      id: `loc_${this.nextId++}`,
-      name: input.name,
-      slug: input.slug?.trim() || slugify(input.name),
-      kind: input.kind,
-      customerVisible: input.customerVisible,
-      isDefaultReceipt: input.isDefaultReceipt,
-      displayOrder: input.displayOrder,
-      description: input.description,
-      status: input.status
+  async load(): Promise<void> {
+    if (this.loading) return;
+    this.loading = true;
+    try {
+      const list = await listLocations();
+      this.items = list.map(toLocation);
+      this.loaded = true;
+    } finally {
+      this.loading = false;
+    }
+  }
+
+  async add(input: LocationInput): Promise<Location> {
+    const created = await createLocation(toApiInput(input));
+    const l = toLocation(created);
+    // Promoting to default also demotes any other in the backend — reflect that.
+    this.items = [
+      ...this.items.map((x) => (l.isDefaultReceipt ? { ...x, isDefaultReceipt: false } : x)),
+      l
+    ];
+    return l;
+  }
+
+  async update(id: string, patch: Partial<LocationInput>): Promise<Location | undefined> {
+    const current = this.getById(id);
+    if (!current) return undefined;
+    const next: LocationInput = {
+      name: patch.name ?? current.name,
+      slug: patch.slug,
+      kind: patch.kind ?? current.kind,
+      customerVisible: patch.customerVisible ?? current.customerVisible,
+      isDefaultReceipt: patch.isDefaultReceipt ?? current.isDefaultReceipt,
+      displayOrder: patch.displayOrder ?? current.displayOrder,
+      description: patch.description ?? current.description,
+      status: patch.status ?? current.status
     };
-    if (loc.isDefaultReceipt) {
-      this.items = this.items.map((l) => ({ ...l, isDefaultReceipt: false }));
-    }
-    this.items.push(loc);
-    return loc;
+    const updated = await updateLocation(id, toApiInput(next));
+    const l = toLocation(updated);
+    this.items = this.items.map((x) => {
+      if (x.id === id) return l;
+      if (l.isDefaultReceipt) return { ...x, isDefaultReceipt: false };
+      return x;
+    });
+    return l;
   }
 
-  update(id: string, patch: Partial<LocationInput>): Location | undefined {
-    const idx = this.items.findIndex((l) => l.id === id);
-    if (idx === -1) return undefined;
-    const slugPatch =
-      patch.name && !patch.slug ? { slug: slugify(patch.name) } : {};
-    if (patch.isDefaultReceipt) {
-      this.items = this.items.map((l) => ({
-        ...l,
-        ...(l.id === id ? { ...patch, ...slugPatch } : {}),
-        isDefaultReceipt: l.id === id
-      }));
-      return this.items.find((l) => l.id === id);
-    }
-    this.items[idx] = { ...this.items[idx], ...patch, ...slugPatch };
-    return this.items[idx];
-  }
-
-  remove(id: string): { ok: boolean; reason?: string } {
+  async remove(id: string): Promise<{ ok: true } | { ok: false; reason: string }> {
+    // Client-side guard mirrors backend rules so the UI can show an instant
+    // explanation. Backend still enforces these as the source of truth.
     const loc = this.getById(id);
     if (!loc) return { ok: false, reason: 'Lokasi tidak ditemukan.' };
     if (loc.isDefaultReceipt)
@@ -135,15 +139,21 @@ class LocationsStore {
       };
     if (this.items.length <= 1)
       return { ok: false, reason: 'Minimal harus ada satu lokasi.' };
-    this.items = this.items.filter((l) => l.id !== id);
-    return { ok: true };
+    try {
+      await deleteLocation(id);
+      this.items = this.items.filter((l) => l.id !== id);
+      return { ok: true };
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : 'Gagal menghapus lokasi.';
+      return { ok: false, reason };
+    }
   }
 
   getById(id: string): Location | undefined {
     return this.items.find((l) => l.id === id);
   }
 
-  default(): Location {
+  default(): Location | undefined {
     return (
       this.items.find((l) => l.isDefaultReceipt && l.status === 'active') ??
       this.items.find((l) => l.status === 'active') ??
@@ -152,7 +162,7 @@ class LocationsStore {
   }
 
   defaultId(): string {
-    return this.default()?.id ?? 'loc_gudang';
+    return this.default()?.id ?? '';
   }
 
   active(): Location[] {

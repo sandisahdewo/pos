@@ -52,6 +52,9 @@ func main() {
 	if err := seedBrands(ctx, bundb); err != nil {
 		log.Fatalf("seed brands: %v", err)
 	}
+	if err := seedLocations(ctx, bundb); err != nil {
+		log.Fatalf("seed locations: %v", err)
+	}
 
 	email := envOr("ADMIN_EMAIL", "admin@pos.local")
 	password := envOr("ADMIN_PASSWORD", "admin123")
@@ -344,6 +347,61 @@ func seedBrands(ctx context.Context, db *bun.DB) error {
 		}
 	}
 	return nil
+}
+
+// seedLocations inserts the three standard storage locations: shelf, rack,
+// warehouse. Idempotent via UNIQUE on `slug`. The default-receipt flag is
+// asserted in a tx that first demotes any other default so the partial
+// unique index doesn't fire.
+var systemLocations = []models.Location{
+	{
+		Name: "Etalase", Slug: "etalase", Kind: models.LocationKindShelf,
+		CustomerVisible: true, IsDefaultReceipt: false, DisplayOrder: 1,
+		Description: "Produk yang dipajang di depan — pelanggan bisa ambil sendiri.",
+		Status:      models.LocationStatusActive,
+	},
+	{
+		Name: "Rak Belakang", Slug: "rak-belakang", Kind: models.LocationKindRack,
+		CustomerVisible: false, IsDefaultReceipt: false, DisplayOrder: 2,
+		Description: "Stok di belakang kasir — pelanggan minta, kasir ambilkan.",
+		Status:      models.LocationStatusActive,
+	},
+	{
+		Name: "Gudang", Slug: "gudang", Kind: models.LocationKindWarehouse,
+		CustomerVisible: false, IsDefaultReceipt: true, DisplayOrder: 3,
+		Description: "Penyimpanan bulk — tidak diakses pelanggan.",
+		Status:      models.LocationStatusActive,
+	},
+}
+
+func seedLocations(ctx context.Context, db *bun.DB) error {
+	return db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		// Demote all defaults first so the partial unique index won't fire.
+		if _, err := tx.NewUpdate().Table("locations").
+			Set("is_default_receipt = false").
+			Where("is_default_receipt = true").
+			Exec(ctx); err != nil {
+			return err
+		}
+		for _, l := range systemLocations {
+			row := l
+			_, err := tx.NewInsert().Model(&row).
+				On("CONFLICT (slug) DO UPDATE").
+				Set("name = EXCLUDED.name").
+				Set("kind = EXCLUDED.kind").
+				Set("customer_visible = EXCLUDED.customer_visible").
+				Set("is_default_receipt = EXCLUDED.is_default_receipt").
+				Set("display_order = EXCLUDED.display_order").
+				Set("description = EXCLUDED.description").
+				Set("status = EXCLUDED.status").
+				Set("updated_at = current_timestamp").
+				Exec(ctx)
+			if err != nil {
+				return fmt.Errorf("upsert location %s: %w", l.Slug, err)
+			}
+		}
+		return nil
+	})
 }
 
 func envOr(key, fallback string) string {

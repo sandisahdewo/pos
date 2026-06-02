@@ -150,3 +150,26 @@ CREATE TABLE tags (
     created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at     TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+--bun:split
+
+CREATE TABLE locations (
+    id                 UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    name               TEXT        NOT NULL,
+    slug               TEXT        NOT NULL UNIQUE,
+    kind               TEXT        NOT NULL DEFAULT 'shelf',
+    customer_visible   BOOLEAN     NOT NULL DEFAULT false,
+    is_default_receipt BOOLEAN     NOT NULL DEFAULT false,
+    display_order      INTEGER     NOT NULL DEFAULT 0,
+    description        TEXT        NOT NULL DEFAULT '',
+    status             TEXT        NOT NULL DEFAULT 'active',
+    created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at         TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+--bun:split
+
+-- At most one default-receipt location at a time. Partial unique index enforces it.
+CREATE UNIQUE INDEX locations_one_default_receipt
+    ON locations ((is_default_receipt))
+    WHERE is_default_receipt;

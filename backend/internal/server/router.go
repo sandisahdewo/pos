@@ -43,6 +43,7 @@ func NewRouter(opts Options) http.Handler {
 	categoriesH := handlers.NewCategoriesHandler(opts.Deps)
 	brandsH := handlers.NewBrandsHandler(opts.Deps)
 	tagsH := handlers.NewTagsHandler(opts.Deps)
+	locationsH := handlers.NewLocationsHandler(opts.Deps)
 
 	r.Get("/healthz", healthz)
 
@@ -68,6 +69,8 @@ func NewRouter(opts Options) http.Handler {
 			p.Get("/brands", brandsH.List)
 			p.Get("/brands/{id}", brandsH.Get)
 			p.Get("/tags", tagsH.List)
+			p.Get("/locations", locationsH.List)
+			p.Get("/locations/{id}", locationsH.Get)
 
 			// Admin-only: user (employee) + role management + master data writes.
 			p.Group(func(adm chi.Router) {
@@ -112,6 +115,10 @@ func NewRouter(opts Options) http.Handler {
 				adm.Post("/tags", tagsH.Create)
 				adm.Patch("/tags/{id}", tagsH.Update)
 				adm.Delete("/tags/{id}", tagsH.Delete)
+
+				adm.Post("/locations", locationsH.Create)
+				adm.Patch("/locations/{id}", locationsH.Update)
+				adm.Delete("/locations/{id}", locationsH.Delete)
 			})
 		})
 	})

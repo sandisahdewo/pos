@@ -16,6 +16,7 @@
   import { brands } from '$lib/stores/brands.svelte';
   import { tags } from '$lib/stores/tags.svelte';
   import { units } from '$lib/stores/units.svelte';
+  import { locations } from '$lib/stores/locations.svelte';
   import { Button } from '$lib/components/ui';
   import { permissionForPath, permissionLabel } from '$lib/auth/permissions';
 
@@ -43,6 +44,7 @@
     if (!units.loaded && !units.loading) units.load().catch(() => {});
     if (!brands.loaded && !brands.loading) brands.load().catch(() => {});
     if (!tags.loaded && !tags.loading) tags.load().catch(() => {});
+    if (!locations.loaded && !locations.loading) locations.load().catch(() => {});
   });
 
   const isAuthRoute = $derived(page.url.pathname.startsWith('/login'));

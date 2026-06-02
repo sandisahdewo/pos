@@ -2,6 +2,18 @@ SET statement_timeout = 0;
 
 --bun:split
 
+DROP TABLE IF EXISTS purchase_order_payments;
+
+--bun:split
+
+DROP TABLE IF EXISTS purchase_order_lines;
+
+--bun:split
+
+DROP TABLE IF EXISTS purchase_orders;
+
+--bun:split
+
 DROP TABLE IF EXISTS product_components;
 
 --bun:split

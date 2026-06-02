@@ -330,32 +330,38 @@
     confirmSubmitOpen = true;
   }
 
-  function doSubmit() {
+  async function doSubmit() {
     const today = new Date().toISOString().slice(0, 10);
     const createdCodes: string[] = [];
-    for (const group of groups) {
-      const payload: PurchaseOrderInput = {
-        type: 'standard',
-        supplierId: group.supplierId,
-        status: 'draft',
-        orderDate: today,
-        expectedDate: '',
-        receivedDate: '',
-        lines: group.items.map((it) => ({
-          id: crypto.randomUUID(),
-          productId: it.productId,
-          variantId: it.variantId,
-          quantity: it.quantity,
-          receivedQty: 0,
-          unitId: it.unitId,
-          unitFactor: it.unitFactor,
-          unitPrice: it.unitPrice,
-          notes: it.notes
-        })),
-        notes: 'Dibuat lewat mode "PO per produk".'
-      };
-      const created = purchaseOrders.add(payload);
-      createdCodes.push(created.code);
+    try {
+      for (const group of groups) {
+        const payload: PurchaseOrderInput = {
+          type: 'standard',
+          supplierId: group.supplierId,
+          status: 'draft',
+          orderDate: today,
+          expectedDate: '',
+          receivedDate: '',
+          lines: group.items.map((it) => ({
+            id: crypto.randomUUID(),
+            productId: it.productId,
+            variantId: it.variantId,
+            quantity: it.quantity,
+            receivedQty: 0,
+            unitId: it.unitId,
+            unitFactor: it.unitFactor,
+            unitPrice: it.unitPrice,
+            notes: it.notes
+          })),
+          notes: 'Dibuat lewat mode "PO per produk".'
+        };
+        const created = await purchaseOrders.add(payload);
+        createdCodes.push(created.code);
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Terjadi kesalahan';
+      toast.error('Gagal menyimpan PO', msg);
+      return;
     }
     toast.success(
       `${createdCodes.length} PO berhasil dibuat`,

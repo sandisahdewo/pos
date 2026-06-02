@@ -503,7 +503,7 @@
   );
   const bulkLineCount = $derived(bulkLines.length);
 
-  function saveBulkPOs() {
+  async function saveBulkPOs() {
     bulkError = '';
     if (bulkGroups.length === 0) {
       bulkError = 'Tidak ada item untuk dibuat PO.';
@@ -524,35 +524,40 @@
 
     const today = new Date().toISOString().slice(0, 10);
     const createdPOs = [];
-    for (const g of bulkGroups) {
-      const expected = new Date(Date.now() + g.leadTimeDays * 24 * 60 * 60 * 1000)
-        .toISOString()
-        .slice(0, 10);
-      const lines = g.lines.map((l) => {
-        const product = products.getById(l.row.productId);
-        return {
-          id: `pol_bulk_${crypto.randomUUID()}`,
-          productId: l.row.productId,
-          variantId: l.row.variantId,
-          quantity: l.qty,
-          receivedQty: 0,
-          unitId: product?.unitId ?? '',
-          unitFactor: 1,
-          unitPrice: l.unitPrice,
-          notes: ''
-        };
-      });
-      const created = purchaseOrders.add({
-        type: 'standard',
-        supplierId: g.supplierId,
-        status: 'draft',
-        orderDate: today,
-        expectedDate: expected,
-        receivedDate: '',
-        lines,
-        notes: `Auto-generated dari Prediksi Stok · ${lines.length} item`
-      });
-      createdPOs.push(created);
+    try {
+      for (const g of bulkGroups) {
+        const expected = new Date(Date.now() + g.leadTimeDays * 24 * 60 * 60 * 1000)
+          .toISOString()
+          .slice(0, 10);
+        const lines = g.lines.map((l) => {
+          const product = products.getById(l.row.productId);
+          return {
+            id: `pol_bulk_${crypto.randomUUID()}`,
+            productId: l.row.productId,
+            variantId: l.row.variantId,
+            quantity: l.qty,
+            receivedQty: 0,
+            unitId: product?.unitId ?? '',
+            unitFactor: 1,
+            unitPrice: l.unitPrice,
+            notes: ''
+          };
+        });
+        const created = await purchaseOrders.add({
+          type: 'standard',
+          supplierId: g.supplierId,
+          status: 'draft',
+          orderDate: today,
+          expectedDate: expected,
+          receivedDate: '',
+          lines,
+          notes: `Auto-generated dari Prediksi Stok · ${lines.length} item`
+        });
+        createdPOs.push(created);
+      }
+    } catch (err) {
+      bulkError = err instanceof Error ? err.message : 'Gagal menyimpan PO.';
+      return;
     }
 
     toast.success(
@@ -569,7 +574,7 @@
     }
   }
 
-  function savePO() {
+  async function savePO() {
     poError = '';
     if (!poRow) return;
     if (!poSupplierId) {
@@ -596,28 +601,34 @@
       .toISOString()
       .slice(0, 10);
 
-    const created = purchaseOrders.add({
-      type: 'standard',
-      supplierId: poSupplierId,
-      status: 'draft',
-      orderDate: today,
-      expectedDate: expected,
-      receivedDate: '',
-      lines: [
-        {
-          id: `pol_fc_${crypto.randomUUID()}`,
-          productId: poRow.productId,
-          variantId: poRow.variantId,
-          quantity: poQty,
-          receivedQty: 0,
-          unitId: product.unitId,
-          unitFactor: 1,
-          unitPrice: poUnitPrice,
-          notes: ''
-        }
-      ],
-      notes: poNotes.trim()
-    });
+    let created;
+    try {
+      created = await purchaseOrders.add({
+        type: 'standard',
+        supplierId: poSupplierId,
+        status: 'draft',
+        orderDate: today,
+        expectedDate: expected,
+        receivedDate: '',
+        lines: [
+          {
+            id: `pol_fc_${crypto.randomUUID()}`,
+            productId: poRow.productId,
+            variantId: poRow.variantId,
+            quantity: poQty,
+            receivedQty: 0,
+            unitId: product.unitId,
+            unitFactor: 1,
+            unitPrice: poUnitPrice,
+            notes: ''
+          }
+        ],
+        notes: poNotes.trim()
+      });
+    } catch (err) {
+      poError = err instanceof Error ? err.message : 'Gagal menyimpan PO.';
+      return;
+    }
 
     toast.success(
       `PO dibuat · ${created.code}`,
@@ -625,7 +636,7 @@
     );
     poOpen = false;
     poQtyDirty = false;
-    goto(`/purchase-orders/${created.id}`);
+    await goto(`/purchase-orders/${created.id}`);
   }
 
   function variantLabel(r: Row): string {

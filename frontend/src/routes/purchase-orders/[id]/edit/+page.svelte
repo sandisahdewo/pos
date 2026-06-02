@@ -14,10 +14,15 @@
   const po = $derived(id ? purchaseOrders.getById(id) : undefined);
   const canEdit = $derived(po?.status === 'draft');
 
-  function save(data: PurchaseOrderInput) {
-    purchaseOrders.update(id, data);
-    toast.success('Order pembelian diperbarui', po?.code ?? '');
-    goto(`/purchase-orders/${id}`);
+  async function save(data: PurchaseOrderInput) {
+    try {
+      await purchaseOrders.update(id, data);
+      toast.success('Order pembelian diperbarui', po?.code ?? '');
+      await goto(`/purchase-orders/${id}`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Terjadi kesalahan';
+      toast.error('Gagal menyimpan PO', msg);
+    }
   }
 
   function cancel() {

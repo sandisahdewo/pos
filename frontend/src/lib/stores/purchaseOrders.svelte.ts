@@ -2,6 +2,12 @@ import { products, type Product, type ProductVariant } from './products.svelte';
 import { batches } from './batches.svelte';
 import { locations } from './locations.svelte';
 import { stockMovements } from './stockMovements.svelte';
+import {
+  listPurchaseOrders,
+  createPurchaseOrder,
+  updatePurchaseOrder,
+  deletePurchaseOrder
+} from '$lib/api/purchase-orders';
 
 export type PurchaseOrderType = 'standard' | 'consignment';
 export type PurchaseOrderStatus = 'draft' | 'sent' | 'partial' | 'received' | 'cancelled';
@@ -12,7 +18,7 @@ export type PurchaseOrderPayment = {
   id: string;
   amount: number;
   method: PurchaseOrderPaymentMethod;
-  at: string;        // ISO datetime
+  at: string;
   notes: string;
 };
 
@@ -20,11 +26,11 @@ export type PurchaseOrderLine = {
   id: string;
   productId: string;
   variantId?: string;
-  quantity: number;        // ordered quantity (chosen unit)
-  receivedQty: number;     // already received (chosen unit); 0 ≤ receivedQty ≤ quantity
-  unitId: string;          // base unit or one of the product's packaging units
-  unitFactor: number;      // base units per 1 of unitId (snapshot at PO creation)
-  unitPrice: number;       // price per chosen unit
+  quantity: number;
+  receivedQty: number;
+  unitId: string;
+  unitFactor: number;
+  unitPrice: number;
   notes: string;
 };
 
@@ -38,8 +44,8 @@ export type PurchaseOrder = {
   expectedDate: string;
   receivedDate: string;
   lines: PurchaseOrderLine[];
-  paidAmount: number;                   // cumulative payments to supplier (for standard POs only)
-  payments: PurchaseOrderPayment[];     // chronological partial payments
+  paidAmount: number;
+  payments: PurchaseOrderPayment[];
   notes: string;
 };
 
@@ -48,361 +54,164 @@ export type PurchaseOrderInput = Omit<PurchaseOrder, 'id' | 'code' | 'paidAmount
   payments?: PurchaseOrderPayment[];
 };
 
-const seed: PurchaseOrder[] = [
-  {
-    id: 'po_1',
-    code: 'PO-2026-001',
-    type: 'standard',
-    supplierId: 'sup_1',
-    status: 'received',
-    orderDate: '2026-04-15',
-    expectedDate: '2026-04-22',
-    receivedDate: '2026-04-22',
-    lines: [
-      {
-        id: 'pol_1',
-        productId: 'prd_1',
-        quantity: 50,
-        receivedQty: 50,
-        unitId: 'unit_1',
-        unitFactor: 1,
-        unitPrice: 5000,
-        notes: ''
-      },
-      {
-        id: 'pol_2',
-        productId: 'prd_2',
-        quantity: 20,
-        receivedQty: 20,
-        unitId: 'unit_1',
-        unitFactor: 1,
-        unitPrice: 12000,
-        notes: ''
-      }
-    ],
-    paidAmount: 200000,
-    payments: [
-      {
-        id: 'popay_seed_1',
-        amount: 200000,
-        method: 'transfer',
-        at: '2026-04-23T09:00:00.000Z',
-        notes: 'DP 40% setelah barang diterima — sisa Net-14 dari supplier.'
-      }
-    ],
-    notes: 'Monthly coffee order.'
-  },
-  {
-    id: 'po_2',
-    code: 'PO-2026-002',
-    type: 'standard',
-    supplierId: 'sup_2',
-    status: 'draft',
-    orderDate: '2026-05-12',
-    expectedDate: '2026-05-13',
-    receivedDate: '',
-    lines: [
-      {
-        id: 'pol_3',
-        productId: 'prd_3',
-        quantity: 24,
-        receivedQty: 0,
-        unitId: 'unit_1',
-        unitFactor: 1,
-        unitPrice: 8000,
-        notes: ''
-      }
-    ],
-    paidAmount: 0,
-    payments: [],
-    notes: 'Pastry delivery, cash on delivery.'
-  },
-  {
-    id: 'po_3',
-    code: 'PO-2026-003',
-    type: 'consignment',
-    supplierId: 'sup_3',
-    status: 'sent',
-    orderDate: '2026-05-10',
-    expectedDate: '2026-05-24',
-    receivedDate: '',
-    lines: [
-      {
-        id: 'pol_4',
-        productId: 'prd_4',
-        variantId: 'v_1',
-        quantity: 8,
-        receivedQty: 0,
-        unitId: 'unit_1',
-        unitFactor: 1,
-        unitPrice: 50000,
-        notes: 'White colorway'
-      },
-      {
-        id: 'pol_5',
-        productId: 'prd_4',
-        variantId: 'v_2',
-        quantity: 8,
-        receivedQty: 0,
-        unitId: 'unit_1',
-        unitFactor: 1,
-        unitPrice: 50000,
-        notes: 'Black colorway'
-      },
-      {
-        id: 'pol_6',
-        productId: 'prd_4',
-        variantId: 'v_3',
-        quantity: 4,
-        receivedQty: 0,
-        unitId: 'unit_1',
-        unitFactor: 1,
-        unitPrice: 60000,
-        notes: 'Brand Blue, premium'
-      }
-    ],
-    paidAmount: 0,
-    payments: [],
-    notes: 'Quarterly consignment refresh. Pay only as items sell.'
-  },
-  {
-    id: 'po_4',
-    code: 'PO-2026-004',
-    type: 'standard',
-    supplierId: 'sup_4',
-    status: 'draft',
-    orderDate: '2026-05-13',
-    expectedDate: '2026-05-16',
-    receivedDate: '',
-    lines: [
-      {
-        id: 'pol_7',
-        productId: 'prd_5',
-        quantity: 20,
-        receivedQty: 0,
-        unitId: 'unit_2',
-        unitFactor: 24,
-        unitPrice: 78000,
-        notes: '24-can case'
-      },
-      {
-        id: 'pol_8',
-        productId: 'prd_5',
-        quantity: 30,
-        receivedQty: 0,
-        unitId: 'unit_2',
-        unitFactor: 6,
-        unitPrice: 21000,
-        notes: '6-pack'
-      }
-    ],
-    paidAmount: 0,
-    payments: [],
-    notes: 'Weekly beverage restock.'
-  },
-  {
-    id: 'po_5',
-    code: 'PO-2026-005',
-    type: 'standard',
-    supplierId: 'sup_2',
-    status: 'sent',
-    orderDate: '2026-05-13',
-    expectedDate: '2026-05-13',
-    receivedDate: '',
-    lines: [
-      {
-        id: 'pol_9',
-        productId: 'prd_8',
-        quantity: 60,
-        receivedQty: 0,
-        unitId: 'unit_1',
-        unitFactor: 1,
-        unitPrice: 2500,
-        notes: '60 butir, segar hari ini'
-      },
-      {
-        id: 'pol_10',
-        productId: 'prd_9',
-        quantity: 1,
-        receivedQty: 0,
-        unitId: 'unit_3',
-        unitFactor: 1000,
-        unitPrice: 135000,
-        notes: '1 kg daging cincang'
-      },
-      {
-        id: 'pol_11',
-        productId: 'prd_3',
-        quantity: 24,
-        receivedQty: 0,
-        unitId: 'unit_1',
-        unitFactor: 1,
-        unitPrice: 8000,
-        notes: 'Croissant baru'
-      }
-    ],
-    paidAmount: 100000,
-    payments: [
-      {
-        id: 'popay_seed_2',
-        amount: 100000,
-        method: 'cash',
-        at: '2026-05-13T07:30:00.000Z',
-        notes: 'DP tunai saat order — sisa dibayar saat antar besok.'
-      }
-    ],
-    notes: 'Pengiriman bahan segar pagi — semua butuh tanggal kedaluwarsa saat diterima.'
-  }
-];
-
-function fmtCodeNumber(n: number): string {
-  return n.toString().padStart(3, '0');
-}
-
 class PurchaseOrdersStore {
-  items = $state<PurchaseOrder[]>([...seed]);
-  private nextId = seed.length + 1;
-  private nextCodeNum = seed.length + 1;
+  items = $state<PurchaseOrder[]>([]);
+  loaded = $state(false);
+  loading = $state(false);
 
-  private generateCode(): string {
-    const year = new Date().getFullYear();
-    return `PO-${year}-${fmtCodeNumber(this.nextCodeNum++)}`;
+  async load(): Promise<void> {
+    if (this.loading) return;
+    this.loading = true;
+    try {
+      const list = await listPurchaseOrders();
+      this.items = list.map(normalizeIncoming);
+      this.loaded = true;
+    } finally {
+      this.loading = false;
+    }
   }
 
-  add(input: PurchaseOrderInput): PurchaseOrder {
-    const po: PurchaseOrder = {
+  async add(input: PurchaseOrderInput): Promise<PurchaseOrder> {
+    const payload = toPayload({
       ...input,
-      id: `po_${this.nextId++}`,
-      code: this.generateCode(),
+      id: '',
+      code: '',
       paidAmount: input.paidAmount ?? 0,
       payments: input.payments ?? []
-    };
-    this.items.push(po);
+    });
+    const created = await createPurchaseOrder(payload);
+    const po = normalizeIncoming(created);
+    this.items = [...this.items, po];
     return po;
   }
 
-  // Record a payment toward a standard (non-consignment) PO. Tracks supplier
-  // utang separately from receive() — paying doesn't affect stock; receiving
-  // doesn't affect payments. Consignment POs use /payouts instead.
-  recordPayment(
-    poId: string,
-    args: {
-      amount: number;
-      method: PurchaseOrderPaymentMethod;
-      notes?: string;
-      at?: string;
-    }
-  ): { ok: boolean; reason?: string; po?: PurchaseOrder } {
-    const idx = this.items.findIndex((p) => p.id === poId);
-    if (idx === -1) return { ok: false, reason: 'PO not found.' };
-    const po = this.items[idx];
-    if (po.type === 'consignment')
-      return {
-        ok: false,
-        reason: 'PO konsinyasi memakai Pembayaran Konsinyasi, bukan Utang.'
-      };
-    if (po.status === 'cancelled')
-      return { ok: false, reason: 'PO sudah dibatalkan.' };
-    if (!Number.isFinite(args.amount) || args.amount <= 0)
-      return { ok: false, reason: 'Jumlah pembayaran harus lebih dari 0.' };
-    const total = poTotal(po);
-    const outstanding = total - po.paidAmount;
-    if (args.amount > outstanding + 0.0001)
-      return {
-        ok: false,
-        reason: `Jumlah melebihi sisa utang (${outstanding}).`
-      };
-    const payment: PurchaseOrderPayment = {
-      id: `popay_${crypto.randomUUID()}`,
-      amount: args.amount,
-      method: args.method,
-      at: args.at ?? new Date().toISOString(),
-      notes: args.notes ?? ''
-    };
-    this.items[idx] = {
-      ...po,
-      paidAmount: po.paidAmount + args.amount,
-      payments: [...po.payments, payment]
-    };
-    return { ok: true, po: this.items[idx] };
+  async update(id: string, patch: Partial<PurchaseOrderInput>): Promise<PurchaseOrder | undefined> {
+    const current = this.getById(id);
+    if (!current) return undefined;
+    const merged: PurchaseOrder = { ...current, ...patch } as PurchaseOrder;
+    const updated = await updatePurchaseOrder(id, toPayload(merged));
+    const po = normalizeIncoming(updated);
+    this.items = this.items.map((p) => (p.id === id ? po : p));
+    return po;
   }
 
-  update(id: string, patch: Partial<PurchaseOrderInput>): PurchaseOrder | undefined {
-    const idx = this.items.findIndex((p) => p.id === id);
-    if (idx === -1) return undefined;
-    this.items[idx] = { ...this.items[idx], ...patch };
-    return this.items[idx];
-  }
-
-  remove(id: string): boolean {
+  async remove(id: string): Promise<{ ok: true } | { ok: false; reason: string }> {
     const po = this.getById(id);
-    if (!po) return false;
-    if (po.status !== 'draft') return false;
-    this.items = this.items.filter((p) => p.id !== id);
-    return true;
+    if (!po) return { ok: false, reason: 'PO tidak ditemukan.' };
+    if (po.status !== 'draft') return { ok: false, reason: 'Hanya draft yang bisa dihapus.' };
+    try {
+      await deletePurchaseOrder(id);
+      this.items = this.items.filter((p) => p.id !== id);
+      return { ok: true };
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : 'Gagal menghapus PO.';
+      return { ok: false, reason };
+    }
   }
 
   getById(id: string): PurchaseOrder | undefined {
     return this.items.find((p) => p.id === id);
   }
 
-  markSent(id: string): { ok: boolean; reason?: string } {
+  async markSent(id: string): Promise<{ ok: true } | { ok: false; reason: string }> {
     const po = this.getById(id);
-    if (!po) return { ok: false, reason: 'PO not found.' };
-    if (po.status !== 'draft') return { ok: false, reason: 'Only drafts can be sent.' };
-    if (po.lines.length === 0) return { ok: false, reason: 'Add at least one line first.' };
-    this.update(id, { status: 'sent' });
-    return { ok: true };
+    if (!po) return { ok: false, reason: 'PO tidak ditemukan.' };
+    if (po.status !== 'draft') return { ok: false, reason: 'Hanya draft yang bisa dikirim.' };
+    if (po.lines.length === 0) return { ok: false, reason: 'Tambahkan minimal satu item.' };
+    try {
+      await this.update(id, { status: 'sent' });
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, reason: err instanceof Error ? err.message : 'Gagal.' };
+    }
   }
 
-  cancel(id: string): { ok: boolean; reason?: string } {
+  async cancel(id: string): Promise<{ ok: true } | { ok: false; reason: string }> {
     const po = this.getById(id);
-    if (!po) return { ok: false, reason: 'PO not found.' };
-    if (po.status === 'received') return { ok: false, reason: 'Received POs cannot be cancelled.' };
-    if (po.status === 'cancelled') return { ok: false, reason: 'Already cancelled.' };
-    this.update(id, { status: 'cancelled' });
-    return { ok: true };
+    if (!po) return { ok: false, reason: 'PO tidak ditemukan.' };
+    if (po.status === 'received') return { ok: false, reason: 'PO yang sudah diterima tidak bisa dibatalkan.' };
+    if (po.status === 'cancelled') return { ok: false, reason: 'Sudah dibatalkan.' };
+    try {
+      await this.update(id, { status: 'cancelled' });
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, reason: err instanceof Error ? err.message : 'Gagal.' };
+    }
   }
 
-  // Receive supports partial fulfillment. `receiveQty` maps line.id → qty to receive
-  // this round (in the line's chosen unit). Omitted lines receive their full remaining
-  // quantity. `expiresAt` maps line.id → ISO date for batches whose product
-  // requiresExpiration. Status transitions to 'partial' if some but not all lines
-  // are fully done, or 'received' when every line is complete.
-  receive(
+  // Record a supplier payment. Validates locally, then PATCHes the PO with
+  // the appended payment + updated paidAmount.
+  async recordPayment(
+    poId: string,
+    args: { amount: number; method: PurchaseOrderPaymentMethod; notes?: string; at?: string }
+  ): Promise<{ ok: boolean; reason?: string; po?: PurchaseOrder }> {
+    const po = this.getById(poId);
+    if (!po) return { ok: false, reason: 'PO tidak ditemukan.' };
+    if (po.type === 'consignment')
+      return { ok: false, reason: 'PO konsinyasi memakai Pembayaran Konsinyasi, bukan Utang.' };
+    if (po.status === 'cancelled') return { ok: false, reason: 'PO sudah dibatalkan.' };
+    if (!Number.isFinite(args.amount) || args.amount <= 0)
+      return { ok: false, reason: 'Jumlah pembayaran harus lebih dari 0.' };
+    const total = poTotal(po);
+    const outstanding = total - po.paidAmount;
+    if (args.amount > outstanding + 0.0001)
+      return { ok: false, reason: `Jumlah melebihi sisa utang (${outstanding}).` };
+
+    const payment: PurchaseOrderPayment = {
+      id: crypto.randomUUID(),
+      amount: args.amount,
+      method: args.method,
+      at: args.at ?? new Date().toISOString(),
+      notes: args.notes ?? ''
+    };
+    try {
+      const updated = await this.update(poId, {
+        paidAmount: po.paidAmount + args.amount,
+        payments: [...po.payments, payment]
+      } as Partial<PurchaseOrderInput>);
+      return { ok: true, po: updated };
+    } catch (err) {
+      return { ok: false, reason: err instanceof Error ? err.message : 'Gagal.' };
+    }
+  }
+
+  // Receive flow: persist new PO state to backend, then run the stock-side
+  // effects (batches + stockMovements + optional supplier cost update) on the
+  // frontend. The latter still rely on frontend-only stores; will move to
+  // backend when batches/stockMovements migrate.
+  async receive(
     id: string,
     opts?: {
       receivedDate?: string;
       receiveQty?: Record<string, number>;
       expiresAt?: Record<string, string>;
-      // Harga sebenarnya dari nota supplier — per line, dalam satuan yang
-      // sama dengan line.unitPrice (per unit yang dipilih, mis. per gross).
-      // Kalau diisi, override line.unitPrice untuk menghitung Batch.unitCost.
-      // Kalau tidak diisi, fallback ke line.unitPrice (estimasi PO).
       actualPrices?: Record<string, number>;
-      // Per line: kalau true, update ProductSupplier.unitCost di master
-      // dengan harga aktual per base unit. Berguna supaya PO berikutnya
-      // ke supplier yang sama autofill dengan harga terbaru.
       updateSupplierCost?: Record<string, boolean>;
     }
-  ): { ok: boolean; reason?: string } {
+  ): Promise<{ ok: boolean; reason?: string }> {
     const po = this.getById(id);
-    if (!po) return { ok: false, reason: 'PO not found.' };
-    if (po.status === 'received') return { ok: false, reason: 'Already received.' };
-    if (po.status === 'cancelled') return { ok: false, reason: 'PO is cancelled.' };
-    if (po.status === 'draft') return { ok: false, reason: 'Mark as sent first.' };
-    if (po.lines.length === 0) return { ok: false, reason: 'No lines to receive.' };
+    if (!po) return { ok: false, reason: 'PO tidak ditemukan.' };
+    if (po.status === 'received') return { ok: false, reason: 'PO sudah diterima sepenuhnya.' };
+    if (po.status === 'cancelled') return { ok: false, reason: 'PO sudah dibatalkan.' };
+    if (po.status === 'draft') return { ok: false, reason: 'Kirim PO terlebih dulu.' };
+    if (po.lines.length === 0) return { ok: false, reason: 'Tidak ada item untuk diterima.' };
 
     const effectiveReceivedDate = opts?.receivedDate || new Date().toISOString().slice(0, 10);
+    type SideEffect = {
+      line: PurchaseOrderLine;
+      baseQty: number;
+      perBaseUnitCost: number;
+      expiresAt?: string;
+    };
+    const sideEffects: SideEffect[] = [];
+
     let touched = 0;
     const nextLines = po.lines.map((line) => {
       if (line.quantity <= 0) return line;
       const product = products.getById(line.productId);
       if (!product) return line;
-
       const remaining = line.quantity - line.receivedQty;
       if (remaining <= 0) return line;
-
       const requested = opts?.receiveQty?.[line.id];
       const qtyToReceive = Math.max(
         0,
@@ -412,69 +221,77 @@ class PurchaseOrdersStore {
 
       const factor = line.unitFactor > 0 ? line.unitFactor : 1;
       const baseQty = qtyToReceive * factor;
-      // Actual price wins atas estimasi PO. Operator isi dari invoice supplier.
       const effectiveUnitPrice = opts?.actualPrices?.[line.id] ?? line.unitPrice;
       const perBaseUnitCost = effectiveUnitPrice / factor;
 
-      const newBatch = batches.add({
-        productId: line.productId,
-        variantId: line.variantId,
-        ownership: po.type === 'consignment' ? 'consignment' : 'owned',
-        supplierId: po.supplierId,
-        sourcePurchaseOrderId: po.id,
-        sourcePurchaseOrderLineId: line.id,
-        unitCost: perBaseUnitCost,
-        qtyReceived: baseQty,
-        qtyRemaining: baseQty,
-        receivedAt: effectiveReceivedDate,
-        expiresAt: opts?.expiresAt?.[line.id] || undefined,
-        locationId: locations.defaultId(),
-        notes: ''
+      sideEffects.push({
+        line,
+        baseQty,
+        perBaseUnitCost,
+        expiresAt: opts?.expiresAt?.[line.id] || undefined
       });
-
-      stockMovements.log({
-        kind: 'receive',
-        productId: line.productId,
-        variantId: line.variantId,
-        locationId: newBatch.locationId,
-        batchId: newBatch.id,
-        qtyDelta: baseQty,
-        qtyAfter: newBatch.qtyRemaining,
-        unitCost: perBaseUnitCost,
-        reference: { kind: 'po', id: po.id, code: po.code },
-        notes: po.type === 'consignment' ? 'Penerimaan konsinyasi' : 'Penerimaan PO'
-      });
-
-      // Opsi: simpan harga aktual sebagai ProductSupplier.unitCost di master
-      // produk supaya PO berikutnya pakai harga terbaru sebagai default.
-      if (opts?.updateSupplierCost?.[line.id] && po.type !== 'consignment') {
-        const existing = product.suppliers ?? [];
-        const idx = existing.findIndex((s) => s.supplierId === po.supplierId);
-        if (idx >= 0) {
-          const updated = existing.map((s, i) =>
-            i === idx ? { ...s, unitCost: perBaseUnitCost } : s
-          );
-          // Fire-and-forget: refreshing the supplier cost is a side-effect of
-          // PO receiving. If the request fails the next manual save will
-          // re-sync. PO store stays synchronous.
-          void products.update(line.productId, { suppliers: updated });
-        }
-        // Kalau supplier ini belum punya entry di Product.suppliers, skip —
-        // jangan tambah entry baru otomatis (operator yang harus mendaftarkan
-        // pemasok di master produk dulu sebelum tracked secara struktural).
-      }
 
       touched++;
       return { ...line, receivedQty: line.receivedQty + qtyToReceive };
     });
 
-    if (touched === 0) return { ok: false, reason: 'No quantities to receive.' };
+    if (touched === 0) return { ok: false, reason: 'Tidak ada kuantitas untuk diterima.' };
 
     const allReceived = nextLines.every((l) => l.receivedQty >= l.quantity);
     const nextStatus: PurchaseOrderStatus = allReceived ? 'received' : 'partial';
     const patch: Partial<PurchaseOrderInput> = { status: nextStatus, lines: nextLines };
     if (allReceived) patch.receivedDate = effectiveReceivedDate;
-    this.update(id, patch);
+
+    try {
+      await this.update(id, patch);
+    } catch (err) {
+      return { ok: false, reason: err instanceof Error ? err.message : 'Gagal simpan PO.' };
+    }
+
+    // Side-effects run after backend persistence so we don't end up with
+    // batches for a PO state that didn't save.
+    for (const fx of sideEffects) {
+      const newBatch = batches.add({
+        productId: fx.line.productId,
+        variantId: fx.line.variantId,
+        ownership: po.type === 'consignment' ? 'consignment' : 'owned',
+        supplierId: po.supplierId,
+        sourcePurchaseOrderId: po.id,
+        sourcePurchaseOrderLineId: fx.line.id,
+        unitCost: fx.perBaseUnitCost,
+        qtyReceived: fx.baseQty,
+        qtyRemaining: fx.baseQty,
+        receivedAt: effectiveReceivedDate,
+        expiresAt: fx.expiresAt,
+        locationId: locations.defaultId(),
+        notes: ''
+      });
+      stockMovements.log({
+        kind: 'receive',
+        productId: fx.line.productId,
+        variantId: fx.line.variantId,
+        locationId: newBatch.locationId,
+        batchId: newBatch.id,
+        qtyDelta: fx.baseQty,
+        qtyAfter: newBatch.qtyRemaining,
+        unitCost: fx.perBaseUnitCost,
+        reference: { kind: 'po', id: po.id, code: po.code },
+        notes: po.type === 'consignment' ? 'Penerimaan konsinyasi' : 'Penerimaan PO'
+      });
+
+      if (opts?.updateSupplierCost?.[fx.line.id] && po.type !== 'consignment') {
+        const product = products.getById(fx.line.productId);
+        const existing = product?.suppliers ?? [];
+        const idx = existing.findIndex((s) => s.supplierId === po.supplierId);
+        if (idx >= 0) {
+          const updated = existing.map((s, i) =>
+            i === idx ? { ...s, unitCost: fx.perBaseUnitCost } : s
+          );
+          void products.update(fx.line.productId, { suppliers: updated });
+        }
+      }
+    }
+
     return { ok: true };
   }
 
@@ -492,6 +309,78 @@ class PurchaseOrdersStore {
   }
 }
 
+// ─── Shape coercion ────────────────────────────────────────────────────────
+// Backend uses TEXT for dates ("" when unset). Frontend already expects that
+// shape — but variantId/unitId come back as undefined when null at DB level,
+// and frontend expects string (empty when unset). Normalize on the boundary.
+
+function normalizeIncoming(raw: unknown): PurchaseOrder {
+  const r = raw as Partial<PurchaseOrder> & Record<string, unknown>;
+  const lines = ((r.lines as PurchaseOrderLine[] | undefined) ?? []).map((l) => ({
+    id: l.id,
+    productId: l.productId,
+    variantId: l.variantId ?? undefined,
+    quantity: Number(l.quantity ?? 0),
+    receivedQty: Number(l.receivedQty ?? 0),
+    unitId: l.unitId ?? '',
+    unitFactor: Number(l.unitFactor ?? 1),
+    unitPrice: Number(l.unitPrice ?? 0),
+    notes: l.notes ?? ''
+  }));
+  const payments = ((r.payments as PurchaseOrderPayment[] | undefined) ?? []).map((p) => ({
+    id: p.id,
+    amount: Number(p.amount ?? 0),
+    method: (p.method ?? 'cash') as PurchaseOrderPaymentMethod,
+    at: p.at ?? '',
+    notes: p.notes ?? ''
+  }));
+  return {
+    id: String(r.id ?? ''),
+    code: String(r.code ?? ''),
+    type: (r.type ?? 'standard') as PurchaseOrderType,
+    supplierId: String(r.supplierId ?? ''),
+    status: (r.status ?? 'draft') as PurchaseOrderStatus,
+    orderDate: (r.orderDate ?? '') as string,
+    expectedDate: (r.expectedDate ?? '') as string,
+    receivedDate: (r.receivedDate ?? '') as string,
+    lines,
+    paidAmount: Number(r.paidAmount ?? 0),
+    payments,
+    notes: (r.notes ?? '') as string
+  };
+}
+
+function toPayload(po: Partial<PurchaseOrder>): Record<string, unknown> {
+  return {
+    type: po.type ?? 'standard',
+    supplierId: po.supplierId,
+    status: po.status ?? 'draft',
+    orderDate: po.orderDate ?? '',
+    expectedDate: po.expectedDate ?? '',
+    receivedDate: po.receivedDate ?? '',
+    paidAmount: po.paidAmount ?? 0,
+    notes: po.notes ?? '',
+    lines: (po.lines ?? []).map((l) => ({
+      id: l.id,
+      productId: l.productId,
+      variantId: l.variantId || null,
+      quantity: l.quantity,
+      receivedQty: l.receivedQty,
+      unitId: l.unitId || null,
+      unitFactor: l.unitFactor,
+      unitPrice: l.unitPrice,
+      notes: l.notes
+    })),
+    payments: (po.payments ?? []).map((p) => ({
+      id: p.id,
+      amount: p.amount,
+      method: p.method,
+      at: p.at,
+      notes: p.notes
+    }))
+  };
+}
+
 export const purchaseOrders = new PurchaseOrdersStore();
 
 export function lineSubtotal(line: PurchaseOrderLine): number {
@@ -499,13 +388,11 @@ export function lineSubtotal(line: PurchaseOrderLine): number {
 }
 
 export function lineBaseQuantity(line: PurchaseOrderLine): number {
-  const factor = line.unitFactor > 0 ? line.unitFactor : 1;
-  return line.quantity * factor;
+  return line.quantity * (line.unitFactor || 1);
 }
 
 export function lineBaseUnitCost(line: PurchaseOrderLine): number {
-  const factor = line.unitFactor > 0 ? line.unitFactor : 1;
-  return line.unitPrice / factor;
+  return line.unitPrice / (line.unitFactor || 1);
 }
 
 export function poTotal(po: PurchaseOrder): number {
@@ -517,7 +404,7 @@ export function variantOptionsFor(product: Product | undefined): ProductVariant[
 }
 
 export const purchaseOrderTypeLabels: Record<PurchaseOrderType, string> = {
-  standard: 'Standar',
+  standard: 'Standard',
   consignment: 'Konsinyasi'
 };
 

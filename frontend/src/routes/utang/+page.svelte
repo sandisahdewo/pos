@@ -168,14 +168,14 @@
     payOpen = true;
   }
 
-  function savePay() {
+  async function savePay() {
     if (!payPo) return;
     payError = '';
     if (!Number.isFinite(payAmount) || payAmount <= 0) {
       payError = 'Jumlah pembayaran harus lebih dari 0.';
       return;
     }
-    const result = purchaseOrders.recordPayment(payPo.id, {
+    const result = await purchaseOrders.recordPayment(payPo.id, {
       amount: payAmount,
       method: payMethod,
       notes: payNotes.trim()

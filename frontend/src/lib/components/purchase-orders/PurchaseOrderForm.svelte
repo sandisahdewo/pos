@@ -40,7 +40,7 @@
   type Props = {
     purchaseOrder?: PurchaseOrder | null;
     submitLabel?: string;
-    onSubmit: (data: PurchaseOrderInput) => void;
+    onSubmit: (data: PurchaseOrderInput) => void | Promise<void>;
     onCancel: () => void;
   };
 

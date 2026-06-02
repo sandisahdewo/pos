@@ -131,9 +131,9 @@
       .sort((a, b) => a.receivedAt.localeCompare(b.receivedAt));
   }
 
-  function doSend() {
+  async function doSend() {
     if (!po) return;
-    const r = purchaseOrders.markSent(po.id);
+    const r = await purchaseOrders.markSent(po.id);
     if (r.ok) toast.success('Ditandai sebagai terkirim', po.code);
     else toast.error('Tidak bisa dikirim', r.reason ?? '');
   }
@@ -164,7 +164,7 @@
     return products.getById(productId)?.requiresExpiration === true;
   }
 
-  function doReceive() {
+  async function doReceive() {
     if (!po) return;
     // Validate expiration where required.
     for (const line of po.lines) {
@@ -183,7 +183,7 @@
         return;
       }
     }
-    const r = purchaseOrders.receive(po.id, {
+    const r = await purchaseOrders.receive(po.id, {
       receiveQty: receiveQtyMap,
       expiresAt: receiveExpiresAtMap,
       actualPrices: receiveActualPriceMap,
@@ -200,9 +200,9 @@
     } else toast.error('Tidak bisa diterima', r.reason ?? '');
   }
 
-  function doCancel() {
+  async function doCancel() {
     if (!po) return;
-    const r = purchaseOrders.cancel(po.id);
+    const r = await purchaseOrders.cancel(po.id);
     if (r.ok) toast.success('Dibatalkan', po.code);
     else toast.error('Tidak bisa dibatalkan', r.reason ?? '');
   }

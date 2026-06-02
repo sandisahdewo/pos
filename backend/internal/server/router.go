@@ -45,6 +45,7 @@ func NewRouter(opts Options) http.Handler {
 	tagsH := handlers.NewTagsHandler(opts.Deps)
 	locationsH := handlers.NewLocationsHandler(opts.Deps)
 	productsH := handlers.NewProductsHandler(opts.Deps)
+	purchaseOrdersH := handlers.NewPurchaseOrdersHandler(opts.Deps)
 
 	r.Get("/healthz", healthz)
 
@@ -74,6 +75,8 @@ func NewRouter(opts Options) http.Handler {
 			p.Get("/locations/{id}", locationsH.Get)
 			p.Get("/products", productsH.List)
 			p.Get("/products/{id}", productsH.Get)
+			p.Get("/purchase-orders", purchaseOrdersH.List)
+			p.Get("/purchase-orders/{id}", purchaseOrdersH.Get)
 
 			// Admin-only: user (employee) + role management + master data writes.
 			p.Group(func(adm chi.Router) {
@@ -126,6 +129,10 @@ func NewRouter(opts Options) http.Handler {
 				adm.Post("/products", productsH.Create)
 				adm.Patch("/products/{id}", productsH.Update)
 				adm.Delete("/products/{id}", productsH.Delete)
+
+				adm.Post("/purchase-orders", purchaseOrdersH.Create)
+				adm.Patch("/purchase-orders/{id}", purchaseOrdersH.Update)
+				adm.Delete("/purchase-orders/{id}", purchaseOrdersH.Delete)
 			})
 		})
 	})

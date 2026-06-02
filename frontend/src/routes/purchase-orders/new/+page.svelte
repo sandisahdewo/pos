@@ -8,10 +8,15 @@
   } from '$lib/stores/purchaseOrders.svelte';
   import { toast } from '$lib/stores/toast.svelte';
 
-  function save(data: PurchaseOrderInput) {
-    const created = purchaseOrders.add(data);
-    toast.success('Order pembelian dibuat', created.code);
-    goto(`/purchase-orders/${created.id}`);
+  async function save(data: PurchaseOrderInput) {
+    try {
+      const created = await purchaseOrders.add(data);
+      toast.success('Order pembelian dibuat', created.code);
+      await goto(`/purchase-orders/${created.id}`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Terjadi kesalahan';
+      toast.error('Gagal menyimpan PO', msg);
+    }
   }
 
   function cancel() {

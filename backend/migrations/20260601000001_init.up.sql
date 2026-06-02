@@ -360,3 +360,62 @@ CREATE TABLE product_components (
 
 CREATE INDEX product_components_product_idx ON product_components(product_id);
 CREATE INDEX product_components_component_idx ON product_components(component_product_id);
+
+--bun:split
+
+-- Purchase orders. Header table; lines and payments live in child tables.
+-- Code is generated server-side as PO-YYYY-NNN with NNN being the count of
+-- POs created this year + 1, padded to 3 digits. Slight race possible at
+-- high concurrency — handler retries on UNIQUE violation.
+CREATE TABLE purchase_orders (
+    id            UUID          PRIMARY KEY DEFAULT gen_random_uuid(),
+    code          TEXT          NOT NULL UNIQUE,
+    type          TEXT          NOT NULL DEFAULT 'standard',
+    supplier_id   UUID          NOT NULL REFERENCES suppliers(id) ON DELETE RESTRICT,
+    status        TEXT          NOT NULL DEFAULT 'draft',
+    order_date    TEXT          NOT NULL DEFAULT '',
+    expected_date TEXT          NOT NULL DEFAULT '',
+    received_date TEXT          NOT NULL DEFAULT '',
+    paid_amount   NUMERIC(14,2) NOT NULL DEFAULT 0,
+    notes         TEXT          NOT NULL DEFAULT '',
+    created_at    TIMESTAMPTZ   NOT NULL DEFAULT now(),
+    updated_at    TIMESTAMPTZ   NOT NULL DEFAULT now()
+);
+
+CREATE INDEX purchase_orders_supplier_idx ON purchase_orders(supplier_id);
+CREATE INDEX purchase_orders_status_idx   ON purchase_orders(status);
+CREATE INDEX purchase_orders_order_date_idx ON purchase_orders(order_date);
+
+--bun:split
+
+CREATE TABLE purchase_order_lines (
+    id                UUID          PRIMARY KEY DEFAULT gen_random_uuid(),
+    purchase_order_id UUID          NOT NULL REFERENCES purchase_orders(id) ON DELETE CASCADE,
+    product_id        UUID          NOT NULL REFERENCES products(id) ON DELETE RESTRICT,
+    variant_id        UUID          REFERENCES product_variants(id) ON DELETE RESTRICT,
+    quantity          NUMERIC(14,4) NOT NULL,
+    received_qty      NUMERIC(14,4) NOT NULL DEFAULT 0,
+    -- unit_id is the chosen unit for this line — base unit OR a packaging
+    -- unit. Snapshot factor at PO time in case packaging factor later changes.
+    unit_id           UUID          REFERENCES units(id) ON DELETE RESTRICT,
+    unit_factor       NUMERIC(14,4) NOT NULL DEFAULT 1,
+    unit_price        NUMERIC(14,2) NOT NULL DEFAULT 0,
+    notes             TEXT          NOT NULL DEFAULT '',
+    position          INTEGER       NOT NULL DEFAULT 0
+);
+
+CREATE INDEX purchase_order_lines_po_idx ON purchase_order_lines(purchase_order_id);
+CREATE INDEX purchase_order_lines_product_idx ON purchase_order_lines(product_id);
+
+--bun:split
+
+CREATE TABLE purchase_order_payments (
+    id                UUID          PRIMARY KEY DEFAULT gen_random_uuid(),
+    purchase_order_id UUID          NOT NULL REFERENCES purchase_orders(id) ON DELETE CASCADE,
+    amount            NUMERIC(14,2) NOT NULL,
+    method            TEXT          NOT NULL DEFAULT 'cash',
+    paid_at           TIMESTAMPTZ   NOT NULL DEFAULT now(),
+    notes             TEXT          NOT NULL DEFAULT ''
+);
+
+CREATE INDEX purchase_order_payments_po_idx ON purchase_order_payments(purchase_order_id);

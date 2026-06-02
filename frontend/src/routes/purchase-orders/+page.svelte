@@ -105,13 +105,13 @@
     confirmOpen = true;
   }
 
-  function doDelete() {
+  async function doDelete() {
     if (!pendingDelete) return;
-    const code = pendingDelete.code;
-    const ok = purchaseOrders.remove(pendingDelete.id);
+    const target = pendingDelete;
     pendingDelete = null;
-    if (ok) toast.success('Order pembelian dihapus', code);
-    else toast.error('Tidak bisa dihapus', 'Hanya PO berstatus Draft yang bisa dihapus.');
+    const result = await purchaseOrders.remove(target.id);
+    if (result.ok) toast.success('Order pembelian dihapus', target.code);
+    else toast.error('Tidak bisa dihapus', result.reason);
   }
 
   function fmtDate(iso: string) {

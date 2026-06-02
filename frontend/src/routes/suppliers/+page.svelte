@@ -115,16 +115,34 @@
     return Object.keys(next).length === 0;
   }
 
-  function save() {
-    if (!validate()) return;
-    if (editingId) {
-      suppliers.update(editingId, { ...form });
-      toast.success('Pemasok diperbarui', form.name);
-    } else {
-      suppliers.add({ ...form });
-      toast.success('Pemasok ditambahkan', form.name);
+  let submitting = $state(false);
+
+  $effect(() => {
+    if (!suppliers.loaded && !suppliers.loading) {
+      suppliers.load().catch((err) =>
+        toast.error('Gagal memuat pemasok', err?.message ?? 'Tidak diketahui')
+      );
     }
-    formOpen = false;
+  });
+
+  async function save() {
+    if (!validate()) return;
+    submitting = true;
+    try {
+      if (editingId) {
+        await suppliers.update(editingId, { ...form });
+        toast.success('Pemasok diperbarui', form.name);
+      } else {
+        await suppliers.add({ ...form });
+        toast.success('Pemasok ditambahkan', form.name);
+      }
+      formOpen = false;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Terjadi kesalahan';
+      toast.error('Gagal menyimpan pemasok', msg);
+    } finally {
+      submitting = false;
+    }
   }
 
   function askDelete(s: Supplier) {
@@ -132,12 +150,17 @@
     confirmOpen = true;
   }
 
-  function doDelete() {
+  async function doDelete() {
     if (!pendingDelete) return;
-    const name = pendingDelete.name;
-    suppliers.remove(pendingDelete.id);
+    const target = pendingDelete;
     pendingDelete = null;
-    toast.success('Pemasok dihapus', name);
+    try {
+      await suppliers.remove(target.id);
+      toast.success('Pemasok dihapus', target.name);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Terjadi kesalahan';
+      toast.error('Gagal menghapus pemasok', msg);
+    }
   }
 </script>
 
@@ -297,7 +320,9 @@
 
   {#snippet footer()}
     <Button variant="outline" onclick={() => (formOpen = false)}>Batal</Button>
-    <Button onclick={save}>{editingId ? 'Simpan perubahan' : 'Tambah pemasok'}</Button>
+    <Button onclick={save} loading={submitting} disabled={submitting}>
+      {editingId ? 'Simpan perubahan' : 'Tambah pemasok'}
+    </Button>
   {/snippet}
 </Modal>
 

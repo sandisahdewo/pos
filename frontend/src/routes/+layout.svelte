@@ -10,6 +10,12 @@
   import { user } from '$lib/stores/user.svelte';
   import { roles } from '$lib/stores/roles.svelte';
   import { employees } from '$lib/stores/employees.svelte';
+  import { suppliers } from '$lib/stores/suppliers.svelte';
+  import { categories } from '$lib/stores/categories.svelte';
+  import { taxRates } from '$lib/stores/taxRates.svelte';
+  import { brands } from '$lib/stores/brands.svelte';
+  import { tags } from '$lib/stores/tags.svelte';
+  import { units } from '$lib/stores/units.svelte';
   import { Button } from '$lib/components/ui';
   import { permissionForPath, permissionLabel } from '$lib/auth/permissions';
 
@@ -23,17 +29,20 @@
     });
   });
 
-  // Once authenticated, load the role catalog (needed for permission checks
-  // across the app) and the employees cache (used by various stores for
-  // performedBy attribution). Roles is the blocker for `user.permissions`.
+  // Once authenticated, prime the app-wide caches that other pages assume are
+  // populated synchronously: role catalog (gates permissions), employees
+  // (performedBy attribution), and the three master-data stores (suppliers,
+  // categories, tax rates) referenced by products / PO / POS flows.
   $effect(() => {
     if (!user.isAuthenticated) return;
-    if (!roles.loaded && !roles.loading) {
-      roles.load().catch(() => {});
-    }
-    if (!employees.loaded && !employees.loading) {
-      employees.load().catch(() => {});
-    }
+    if (!roles.loaded && !roles.loading) roles.load().catch(() => {});
+    if (!employees.loaded && !employees.loading) employees.load().catch(() => {});
+    if (!taxRates.loaded && !taxRates.loading) taxRates.load().catch(() => {});
+    if (!suppliers.loaded && !suppliers.loading) suppliers.load().catch(() => {});
+    if (!categories.loaded && !categories.loading) categories.load().catch(() => {});
+    if (!units.loaded && !units.loading) units.load().catch(() => {});
+    if (!brands.loaded && !brands.loading) brands.load().catch(() => {});
+    if (!tags.loaded && !tags.loading) tags.load().catch(() => {});
   });
 
   const isAuthRoute = $derived(page.url.pathname.startsWith('/login'));

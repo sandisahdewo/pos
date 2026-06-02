@@ -169,17 +169,35 @@
     return Object.keys(next).length === 0;
   }
 
-  function save() {
+  let submitting = $state(false);
+
+  $effect(() => {
+    if (!categories.loaded && !categories.loading) {
+      categories.load().catch((err) =>
+        toast.error('Gagal memuat kategori', err?.message ?? 'Tidak diketahui')
+      );
+    }
+  });
+
+  async function save() {
     if (!validate()) return;
     const payload = { ...form, parentId: form.parentId || undefined };
-    if (editingId) {
-      categories.update(editingId, payload);
-      toast.success('Kategori diperbarui', form.name);
-    } else {
-      categories.add(payload);
-      toast.success('Kategori ditambahkan', form.name);
+    submitting = true;
+    try {
+      if (editingId) {
+        await categories.update(editingId, payload);
+        toast.success('Kategori diperbarui', form.name);
+      } else {
+        await categories.add(payload);
+        toast.success('Kategori ditambahkan', form.name);
+      }
+      formOpen = false;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Terjadi kesalahan';
+      toast.error('Gagal menyimpan kategori', msg);
+    } finally {
+      submitting = false;
     }
-    formOpen = false;
   }
 
   function askDelete(cat: Category) {
@@ -187,12 +205,17 @@
     confirmOpen = true;
   }
 
-  function doDelete() {
+  async function doDelete() {
     if (!pendingDelete) return;
-    const name = pendingDelete.name;
-    categories.remove(pendingDelete.id);
+    const target = pendingDelete;
     pendingDelete = null;
-    toast.success('Kategori dihapus', name);
+    try {
+      await categories.remove(target.id);
+      toast.success('Kategori dihapus', target.name);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Terjadi kesalahan';
+      toast.error('Gagal menghapus kategori', msg);
+    }
   }
 </script>
 
@@ -351,7 +374,9 @@
 
   {#snippet footer()}
     <Button variant="outline" onclick={() => (formOpen = false)}>Batal</Button>
-    <Button onclick={save}>{editingId ? 'Simpan perubahan' : 'Tambah kategori'}</Button>
+    <Button onclick={save} loading={submitting} disabled={submitting}>
+      {editingId ? 'Simpan perubahan' : 'Tambah kategori'}
+    </Button>
   {/snippet}
 </Modal>
 

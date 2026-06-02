@@ -1,3 +1,12 @@
+import {
+  listUnits,
+  createUnit,
+  updateUnit,
+  deleteUnit,
+  type ApiUnit,
+  type UnitInput as ApiUnitInput
+} from '$lib/api/units';
+
 export type Unit = {
   id: string;
   name: string;
@@ -7,39 +16,59 @@ export type Unit = {
 
 export type UnitInput = Omit<Unit, 'id'>;
 
-const seed: Unit[] = [
-  { id: 'unit_1', name: 'Pcs', code: 'pcs', description: 'Dijual satuan.' },
-  { id: 'unit_2', name: 'Box', code: 'box', description: 'Dikemas dalam box (jumlah bervariasi).' },
-  { id: 'unit_3', name: 'Kilogram', code: 'kg', description: '1.000 gram berdasarkan berat.' },
-  { id: 'unit_4', name: 'Gram', code: 'g', description: 'Satu gram berdasarkan berat.' },
-  { id: 'unit_5', name: 'Liter', code: 'L', description: '1.000 mililiter berdasarkan volume.' },
-  { id: 'unit_6', name: 'Mililiter', code: 'mL', description: 'Seperseribu liter.' },
-  { id: 'unit_7', name: 'Lusin', code: 'lusin', description: 'Satuan tradisional 12 pcs (tekstil/garmen).' },
-  { id: 'unit_8', name: 'Kodi', code: 'kodi', description: 'Satuan tradisional 20 pcs (tekstil/garmen).' },
-  { id: 'unit_9', name: 'Gross', code: 'gross', description: 'Satuan tradisional 144 pcs (12 lusin).' },
-  { id: 'unit_10', name: 'Batang', code: 'btg', description: 'Satuan rokok terkecil — satu batang.' },
-  { id: 'unit_11', name: 'Bungkus', code: 'bks', description: 'Pak rokok. Isi bervariasi per merek (mis. 12, 16, atau 20 batang).' },
-  { id: 'unit_12', name: 'Slop', code: 'slop', description: 'Karton rokok berisi 10 bungkus.' }
-];
+function toUnit(u: ApiUnit): Unit {
+  return {
+    id: u.id,
+    name: u.name,
+    code: u.code,
+    description: u.description
+  };
+}
+
+function toApiInput(u: UnitInput): ApiUnitInput {
+  return { name: u.name, code: u.code, description: u.description };
+}
 
 class UnitsStore {
-  items = $state<Unit[]>([...seed]);
-  private nextId = seed.length + 1;
+  items = $state<Unit[]>([]);
+  loaded = $state(false);
+  loading = $state(false);
 
-  add(input: UnitInput): Unit {
-    const unit: Unit = { ...input, id: `unit_${this.nextId++}` };
-    this.items.push(unit);
-    return unit;
+  async load(): Promise<void> {
+    if (this.loading) return;
+    this.loading = true;
+    try {
+      const list = await listUnits();
+      this.items = list.map(toUnit);
+      this.loaded = true;
+    } finally {
+      this.loading = false;
+    }
   }
 
-  update(id: string, patch: Partial<UnitInput>): Unit | undefined {
-    const idx = this.items.findIndex((u) => u.id === id);
-    if (idx === -1) return undefined;
-    this.items[idx] = { ...this.items[idx], ...patch };
-    return this.items[idx];
+  async add(input: UnitInput): Promise<Unit> {
+    const created = await createUnit(toApiInput(input));
+    const u = toUnit(created);
+    this.items = [...this.items, u];
+    return u;
   }
 
-  remove(id: string) {
+  async update(id: string, patch: Partial<UnitInput>): Promise<Unit | undefined> {
+    const current = this.getById(id);
+    if (!current) return undefined;
+    const next: UnitInput = {
+      name: patch.name ?? current.name,
+      code: patch.code ?? current.code,
+      description: patch.description ?? current.description
+    };
+    const updated = await updateUnit(id, toApiInput(next));
+    const u = toUnit(updated);
+    this.items = this.items.map((x) => (x.id === id ? u : x));
+    return u;
+  }
+
+  async remove(id: string): Promise<void> {
+    await deleteUnit(id);
     this.items = this.items.filter((u) => u.id !== id);
   }
 

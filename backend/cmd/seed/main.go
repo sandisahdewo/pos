@@ -37,8 +37,20 @@ func main() {
 
 	ctx := context.Background()
 
+	if err := seedTaxRates(ctx, bundb); err != nil {
+		log.Fatalf("seed tax rates: %v", err)
+	}
 	if err := seedRoles(ctx, bundb); err != nil {
 		log.Fatalf("seed roles: %v", err)
+	}
+	if err := seedUnits(ctx, bundb); err != nil {
+		log.Fatalf("seed units: %v", err)
+	}
+	if err := seedTags(ctx, bundb); err != nil {
+		log.Fatalf("seed tags: %v", err)
+	}
+	if err := seedBrands(ctx, bundb); err != nil {
+		log.Fatalf("seed brands: %v", err)
 	}
 
 	email := envOr("ADMIN_EMAIL", "admin@pos.local")
@@ -192,6 +204,146 @@ func resetRolePermissions(ctx context.Context, db *bun.DB, roleID uuid.UUID, per
 		_, err := tx.NewInsert().Model(&rows).Exec(ctx)
 		return err
 	})
+}
+
+// Seed tax_rates using TEXT IDs that match the frontend convention so seed
+// products (still in frontend) can resolve via their hardcoded IDs.
+var systemTaxRates = []models.TaxRate{
+	{
+		ID:          "tax_ppn11",
+		Name:        "PPN 11%",
+		Rate:        11,
+		Description: "Standard Indonesian VAT (Pajak Pertambahan Nilai).",
+		IsDefault:   true,
+	},
+	{
+		ID:          "tax_exempt",
+		Name:        "Tax-exempt",
+		Rate:        0,
+		Description: "Items exempt from PPN (e.g., basic foodstuffs per UU HPP).",
+	},
+	{
+		ID:          "tax_zero",
+		Name:        "Zero-rated",
+		Rate:        0,
+		Description: "Zero-rated for export goods and certain services.",
+	},
+}
+
+func seedTaxRates(ctx context.Context, db *bun.DB) error {
+	return db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		// Clear is_default on all rows first so the partial unique index won't
+		// fire when re-asserting the seed's choice of default.
+		if _, err := tx.NewUpdate().Table("tax_rates").
+			Set("is_default = false").
+			Where("is_default = true").
+			Exec(ctx); err != nil {
+			return err
+		}
+		for _, tr := range systemTaxRates {
+			t := tr // local copy
+			_, err := tx.NewInsert().
+				Model(&t).
+				On("CONFLICT (id) DO UPDATE").
+				Set("name = EXCLUDED.name").
+				Set("rate = EXCLUDED.rate").
+				Set("description = EXCLUDED.description").
+				Set("is_default = EXCLUDED.is_default").
+				Set("updated_at = current_timestamp").
+				Exec(ctx)
+			if err != nil {
+				return fmt.Errorf("upsert tax rate %s: %w", t.ID, err)
+			}
+		}
+		return nil
+	})
+}
+
+// seedUnits inserts common units of measure if missing. Idempotent via the
+// UNIQUE constraint on `code`.
+var systemUnits = []models.Unit{
+	{Name: "Pcs", Code: "pcs", Description: "Dijual satuan."},
+	{Name: "Box", Code: "box", Description: "Dikemas dalam box (jumlah bervariasi)."},
+	{Name: "Kilogram", Code: "kg", Description: "1.000 gram berdasarkan berat."},
+	{Name: "Gram", Code: "g", Description: "Satu gram berdasarkan berat."},
+	{Name: "Liter", Code: "L", Description: "1.000 mililiter berdasarkan volume."},
+	{Name: "Mililiter", Code: "mL", Description: "Seperseribu liter."},
+	{Name: "Lusin", Code: "lusin", Description: "Satuan tradisional 12 pcs."},
+	{Name: "Kodi", Code: "kodi", Description: "Satuan tradisional 20 pcs."},
+	{Name: "Gross", Code: "gross", Description: "Satuan tradisional 144 pcs (12 lusin)."},
+	{Name: "Batang", Code: "btg", Description: "Satuan rokok terkecil — satu batang."},
+	{Name: "Bungkus", Code: "bks", Description: "Pak rokok. Isi bervariasi per merek (mis. 12, 16, 20 batang)."},
+	{Name: "Slop", Code: "slop", Description: "Karton rokok berisi 10 bungkus."},
+}
+
+func seedUnits(ctx context.Context, db *bun.DB) error {
+	for _, u := range systemUnits {
+		row := u
+		_, err := db.NewInsert().Model(&row).
+			On("CONFLICT (code) DO UPDATE").
+			Set("name = EXCLUDED.name").
+			Set("description = EXCLUDED.description").
+			Set("updated_at = current_timestamp").
+			Exec(ctx)
+		if err != nil {
+			return fmt.Errorf("upsert unit %s: %w", u.Code, err)
+		}
+	}
+	return nil
+}
+
+// seedTags inserts the well-known tags used by demo product seed. Idempotent
+// via UNIQUE on `name` — admins can edit color/description via UI afterwards.
+var systemTags = []models.Tag{
+	{Name: "Baru", Color: "brand", PublicVisible: true, Description: "Produk baru masuk katalog."},
+	{Name: "Best Seller", Color: "success", PublicVisible: true, Description: "Produk paling sering laku."},
+	{Name: "Halal", Color: "success", PublicVisible: true, Description: "Bersertifikat MUI Halal."},
+	{Name: "Promo", Color: "warning", PublicVisible: true, Description: "Sedang dalam program promo."},
+	{Name: "Lokal", Color: "info", PublicVisible: true, Description: "Produk lokal / UMKM."},
+}
+
+func seedTags(ctx context.Context, db *bun.DB) error {
+	for _, t := range systemTags {
+		row := t
+		_, err := db.NewInsert().Model(&row).
+			On("CONFLICT (name) DO UPDATE").
+			Set("color = EXCLUDED.color").
+			Set("public_visible = EXCLUDED.public_visible").
+			Set("description = EXCLUDED.description").
+			Set("updated_at = current_timestamp").
+			Exec(ctx)
+		if err != nil {
+			return fmt.Errorf("upsert tag %s: %w", t.Name, err)
+		}
+	}
+	return nil
+}
+
+// seedBrands inserts common consumer brand records — admin can extend via UI.
+// Idempotent via UNIQUE on `slug`.
+var systemBrands = []models.Brand{
+	{Name: "Indofood", Slug: "indofood", Description: "Mie instan, bumbu, dan produk konsumen masal.", Status: models.BrandStatusActive},
+	{Name: "Aqua", Slug: "aqua", Description: "Air minum dalam kemasan.", Status: models.BrandStatusActive},
+	{Name: "Coca-Cola", Slug: "coca-cola", Description: "Minuman berkarbonasi.", Status: models.BrandStatusActive},
+	{Name: "Sampoerna", Slug: "sampoerna", Description: "Pabrik rokok kretek dan filter.", Status: models.BrandStatusActive},
+	{Name: "Djarum", Slug: "djarum", Description: "Pabrik rokok kretek.", Status: models.BrandStatusActive},
+}
+
+func seedBrands(ctx context.Context, db *bun.DB) error {
+	for _, b := range systemBrands {
+		row := b
+		_, err := db.NewInsert().Model(&row).
+			On("CONFLICT (slug) DO UPDATE").
+			Set("name = EXCLUDED.name").
+			Set("description = EXCLUDED.description").
+			Set("status = EXCLUDED.status").
+			Set("updated_at = current_timestamp").
+			Exec(ctx)
+		if err != nil {
+			return fmt.Errorf("upsert brand %s: %w", b.Slug, err)
+		}
+	}
+	return nil
 }
 
 func envOr(key, fallback string) string {

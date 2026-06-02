@@ -25,7 +25,7 @@ type roleInput struct {
 }
 
 func (h *RolesHandler) List(w http.ResponseWriter, r *http.Request) {
-	var roles []models.Role
+	roles := []models.Role{}
 	err := h.deps.DB.NewSelect().Model(&roles).Order("name ASC").Scan(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())

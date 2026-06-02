@@ -68,16 +68,34 @@
     return Object.keys(next).length === 0;
   }
 
-  function save() {
-    if (!validate()) return;
-    if (editingId) {
-      units.update(editingId, { ...form });
-      toast.success('Satuan diperbarui', form.name);
-    } else {
-      units.add({ ...form });
-      toast.success('Satuan ditambahkan', form.name);
+  let submitting = $state(false);
+
+  $effect(() => {
+    if (!units.loaded && !units.loading) {
+      units.load().catch((err) =>
+        toast.error('Gagal memuat satuan', err?.message ?? 'Tidak diketahui')
+      );
     }
-    formOpen = false;
+  });
+
+  async function save() {
+    if (!validate()) return;
+    submitting = true;
+    try {
+      if (editingId) {
+        await units.update(editingId, { ...form });
+        toast.success('Satuan diperbarui', form.name);
+      } else {
+        await units.add({ ...form });
+        toast.success('Satuan ditambahkan', form.name);
+      }
+      formOpen = false;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Terjadi kesalahan';
+      toast.error('Gagal menyimpan satuan', msg);
+    } finally {
+      submitting = false;
+    }
   }
 
   function askDelete(u: Unit) {
@@ -85,12 +103,17 @@
     confirmOpen = true;
   }
 
-  function doDelete() {
+  async function doDelete() {
     if (!pendingDelete) return;
-    const name = pendingDelete.name;
-    units.remove(pendingDelete.id);
+    const target = pendingDelete;
     pendingDelete = null;
-    toast.success('Satuan dihapus', name);
+    try {
+      await units.remove(target.id);
+      toast.success('Satuan dihapus', target.name);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Terjadi kesalahan';
+      toast.error('Gagal menghapus satuan', msg);
+    }
   }
 </script>
 
@@ -201,7 +224,9 @@
 
   {#snippet footer()}
     <Button variant="outline" onclick={() => (formOpen = false)}>Batal</Button>
-    <Button onclick={save}>{editingId ? 'Simpan perubahan' : 'Tambah satuan'}</Button>
+    <Button onclick={save} loading={submitting} disabled={submitting}>
+      {editingId ? 'Simpan perubahan' : 'Tambah satuan'}
+    </Button>
   {/snippet}
 </Modal>
 

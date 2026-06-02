@@ -2,6 +2,34 @@ SET statement_timeout = 0;
 
 --bun:split
 
+DROP TABLE IF EXISTS tags;
+
+--bun:split
+
+DROP TABLE IF EXISTS brands;
+
+--bun:split
+
+DROP INDEX IF EXISTS categories_parent_idx;
+
+--bun:split
+
+DROP TABLE IF EXISTS categories;
+
+--bun:split
+
+DROP INDEX IF EXISTS tax_rates_one_default;
+
+--bun:split
+
+DROP TABLE IF EXISTS tax_rates;
+
+--bun:split
+
+DROP TABLE IF EXISTS suppliers;
+
+--bun:split
+
 DROP TABLE IF EXISTS units;
 
 --bun:split

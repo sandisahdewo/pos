@@ -106,16 +106,34 @@
     return Object.keys(next).length === 0;
   }
 
-  function save() {
-    if (!validate()) return;
-    if (editingId) {
-      tags.update(editingId, { ...form });
-      toast.success('Tag diperbarui', form.name);
-    } else {
-      tags.add({ ...form });
-      toast.success('Tag ditambahkan', form.name);
+  let submitting = $state(false);
+
+  $effect(() => {
+    if (!tags.loaded && !tags.loading) {
+      tags.load().catch((err) =>
+        toast.error('Gagal memuat tag', err?.message ?? 'Tidak diketahui')
+      );
     }
-    formOpen = false;
+  });
+
+  async function save() {
+    if (!validate()) return;
+    submitting = true;
+    try {
+      if (editingId) {
+        await tags.update(editingId, { ...form });
+        toast.success('Tag diperbarui', form.name);
+      } else {
+        await tags.add({ ...form });
+        toast.success('Tag ditambahkan', form.name);
+      }
+      formOpen = false;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Terjadi kesalahan';
+      toast.error('Gagal menyimpan tag', msg);
+    } finally {
+      submitting = false;
+    }
   }
 
   function askDelete(tag: Tag) {
@@ -123,12 +141,17 @@
     confirmOpen = true;
   }
 
-  function doDelete() {
+  async function doDelete() {
     if (!pendingDelete) return;
-    const name = pendingDelete.name;
-    tags.remove(pendingDelete.id);
+    const target = pendingDelete;
     pendingDelete = null;
-    toast.success('Tag dihapus', name);
+    try {
+      await tags.remove(target.id);
+      toast.success('Tag dihapus', target.name);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Terjadi kesalahan';
+      toast.error('Gagal menghapus tag', msg);
+    }
   }
 </script>
 
@@ -238,7 +261,9 @@
 
   {#snippet footer()}
     <Button variant="outline" onclick={() => (formOpen = false)}>Batal</Button>
-    <Button onclick={save}>{editingId ? 'Simpan perubahan' : 'Tambah tag'}</Button>
+    <Button onclick={save} loading={submitting} disabled={submitting}>
+      {editingId ? 'Simpan perubahan' : 'Tambah tag'}
+    </Button>
   {/snippet}
 </Modal>
 

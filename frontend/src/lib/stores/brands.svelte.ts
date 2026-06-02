@@ -1,3 +1,12 @@
+import {
+  listBrands,
+  createBrand,
+  updateBrand,
+  deleteBrand,
+  type ApiBrand,
+  type BrandInput as ApiBrandInput
+} from '$lib/api/brands';
+
 export type BrandStatus = 'active' | 'archived';
 
 export type Brand = {
@@ -5,90 +14,75 @@ export type Brand = {
   name: string;
   slug: string;
   description: string;
-  imageUrl: string; // logo URL; empty string when none
+  imageUrl: string;
   status: BrandStatus;
 };
 
 export type BrandInput = Omit<Brand, 'id' | 'slug'> & { slug?: string };
 
-function slugify(name: string): string {
-  return name
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '');
+function toBrand(b: ApiBrand): Brand {
+  return {
+    id: b.id,
+    name: b.name,
+    slug: b.slug,
+    description: b.description,
+    imageUrl: b.imageUrl,
+    status: b.status
+  };
 }
 
-const seed: Brand[] = [
-  {
-    id: 'brand_indofood',
-    name: 'Indofood',
-    slug: 'indofood',
-    description: 'Mie instan, bumbu, dan produk konsumen masal.',
-    imageUrl: 'https://picsum.photos/seed/brand-indofood/120/120',
-    status: 'active'
-  },
-  {
-    id: 'brand_aqua',
-    name: 'Aqua',
-    slug: 'aqua',
-    description: 'Air minum dalam kemasan.',
-    imageUrl: 'https://picsum.photos/seed/brand-aqua/120/120',
-    status: 'active'
-  },
-  {
-    id: 'brand_coca-cola',
-    name: 'Coca-Cola',
-    slug: 'coca-cola',
-    description: 'Minuman berkarbonasi.',
-    imageUrl: 'https://picsum.photos/seed/brand-cola/120/120',
-    status: 'active'
-  },
-  {
-    id: 'brand_sampoerna',
-    name: 'Sampoerna',
-    slug: 'sampoerna',
-    description: 'Pabrik rokok kretek dan filter (Indonesia).',
-    imageUrl: 'https://picsum.photos/seed/brand-sampoerna/120/120',
-    status: 'active'
-  },
-  {
-    id: 'brand_djarum',
-    name: 'Djarum',
-    slug: 'djarum',
-    description: 'Pabrik rokok kretek (Indonesia).',
-    imageUrl: 'https://picsum.photos/seed/brand-djarum/120/120',
-    status: 'active'
-  }
-];
+function toApiInput(b: BrandInput): ApiBrandInput {
+  return {
+    name: b.name,
+    slug: b.slug,
+    description: b.description,
+    imageUrl: b.imageUrl,
+    status: b.status
+  };
+}
 
 class BrandsStore {
-  items = $state<Brand[]>([...seed]);
-  private nextId = seed.length + 1;
+  items = $state<Brand[]>([]);
+  loaded = $state(false);
+  loading = $state(false);
 
-  add(input: BrandInput): Brand {
-    const brand: Brand = {
-      id: `brand_${this.nextId++}`,
-      name: input.name,
-      slug: input.slug?.trim() || slugify(input.name),
-      description: input.description,
-      imageUrl: input.imageUrl,
-      status: input.status
+  async load(): Promise<void> {
+    if (this.loading) return;
+    this.loading = true;
+    try {
+      const list = await listBrands();
+      this.items = list.map(toBrand);
+      this.loaded = true;
+    } finally {
+      this.loading = false;
+    }
+  }
+
+  async add(input: BrandInput): Promise<Brand> {
+    const created = await createBrand(toApiInput(input));
+    const b = toBrand(created);
+    this.items = [...this.items, b];
+    return b;
+  }
+
+  async update(id: string, patch: Partial<BrandInput>): Promise<Brand | undefined> {
+    const current = this.getById(id);
+    if (!current) return undefined;
+    const next: BrandInput = {
+      name: patch.name ?? current.name,
+      slug: patch.slug,
+      description: patch.description ?? current.description,
+      imageUrl: patch.imageUrl ?? current.imageUrl,
+      status: patch.status ?? current.status
     };
-    this.items.push(brand);
-    return brand;
+    const updated = await updateBrand(id, toApiInput(next));
+    const b = toBrand(updated);
+    this.items = this.items.map((x) => (x.id === id ? b : x));
+    return b;
   }
 
-  update(id: string, patch: Partial<BrandInput>): Brand | undefined {
-    const idx = this.items.findIndex((b) => b.id === id);
-    if (idx === -1) return undefined;
-    const next = { ...this.items[idx], ...patch };
-    if (patch.name && !patch.slug) next.slug = slugify(patch.name);
-    this.items[idx] = next;
-    return next;
-  }
-
-  remove(id: string) {
+  async remove(id: string): Promise<void> {
+    await deleteBrand(id);
     this.items = this.items.filter((b) => b.id !== id);
   }
 

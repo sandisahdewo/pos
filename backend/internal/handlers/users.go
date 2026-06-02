@@ -34,7 +34,7 @@ type userInput struct {
 }
 
 func (h *UsersHandler) List(w http.ResponseWriter, r *http.Request) {
-	var users []models.User
+	users := []models.User{}
 	err := h.deps.DB.NewSelect().Model(&users).Order("name ASC").Scan(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())

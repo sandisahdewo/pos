@@ -38,6 +38,11 @@ func NewRouter(opts Options) http.Handler {
 	unitsH := handlers.NewUnitsHandler(opts.Deps)
 	usersH := handlers.NewUsersHandler(opts.Deps)
 	rolesH := handlers.NewRolesHandler(opts.Deps)
+	suppliersH := handlers.NewSuppliersHandler(opts.Deps)
+	taxRatesH := handlers.NewTaxRatesHandler(opts.Deps)
+	categoriesH := handlers.NewCategoriesHandler(opts.Deps)
+	brandsH := handlers.NewBrandsHandler(opts.Deps)
+	tagsH := handlers.NewTagsHandler(opts.Deps)
 
 	r.Get("/healthz", healthz)
 
@@ -51,15 +56,20 @@ func NewRouter(opts Options) http.Handler {
 
 			p.Get("/auth/me", authH.Me)
 
-			p.Route("/units", func(u chi.Router) {
-				u.Get("/", unitsH.List)
-				u.Post("/", unitsH.Create)
-				u.Get("/{id}", unitsH.Get)
-				u.Patch("/{id}", unitsH.Update)
-				u.Delete("/{id}", unitsH.Delete)
-			})
+			// Reads available to any authed user (POS/products need them);
+			// writes gated to Admin below.
+			p.Get("/units", unitsH.List)
+			p.Get("/units/{id}", unitsH.Get)
+			p.Get("/suppliers", suppliersH.List)
+			p.Get("/suppliers/{id}", suppliersH.Get)
+			p.Get("/tax-rates", taxRatesH.List)
+			p.Get("/categories", categoriesH.List)
+			p.Get("/categories/{id}", categoriesH.Get)
+			p.Get("/brands", brandsH.List)
+			p.Get("/brands/{id}", brandsH.Get)
+			p.Get("/tags", tagsH.List)
 
-			// Admin-only: user (employee) + role management.
+			// Admin-only: user (employee) + role management + master data writes.
 			p.Group(func(adm chi.Router) {
 				adm.Use(middleware.RequireRole("Admin"))
 
@@ -78,6 +88,30 @@ func NewRouter(opts Options) http.Handler {
 					ro.Patch("/{id}", rolesH.Update)
 					ro.Delete("/{id}", rolesH.Delete)
 				})
+
+				adm.Post("/suppliers", suppliersH.Create)
+				adm.Patch("/suppliers/{id}", suppliersH.Update)
+				adm.Delete("/suppliers/{id}", suppliersH.Delete)
+
+				adm.Post("/tax-rates", taxRatesH.Create)
+				adm.Patch("/tax-rates/{id}", taxRatesH.Update)
+				adm.Delete("/tax-rates/{id}", taxRatesH.Delete)
+
+				adm.Post("/categories", categoriesH.Create)
+				adm.Patch("/categories/{id}", categoriesH.Update)
+				adm.Delete("/categories/{id}", categoriesH.Delete)
+
+				adm.Post("/units", unitsH.Create)
+				adm.Patch("/units/{id}", unitsH.Update)
+				adm.Delete("/units/{id}", unitsH.Delete)
+
+				adm.Post("/brands", brandsH.Create)
+				adm.Patch("/brands/{id}", brandsH.Update)
+				adm.Delete("/brands/{id}", brandsH.Delete)
+
+				adm.Post("/tags", tagsH.Create)
+				adm.Patch("/tags/{id}", tagsH.Update)
+				adm.Delete("/tags/{id}", tagsH.Delete)
 			})
 		})
 	})

@@ -1,4 +1,12 @@
 import { taxRates } from './taxRates.svelte';
+import {
+  listCategories,
+  createCategory,
+  updateCategory,
+  deleteCategory,
+  type ApiCategory,
+  type CategoryInput as ApiCategoryInput
+} from '$lib/api/categories';
 
 export type CategoryColor = 'brand' | 'success' | 'warning' | 'danger' | 'info' | 'neutral';
 
@@ -9,124 +17,83 @@ export type Category = {
   description: string;
   color: CategoryColor;
   taxRateId: string;
-  parentId?: string; // when set, this is a sub-category — undefined/empty = root
+  parentId?: string;
 };
 
 export type CategoryInput = Omit<Category, 'id' | 'slug'> & { slug?: string };
 
-function slugify(name: string): string {
-  return name
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '');
+function toCategory(c: ApiCategory): Category {
+  return {
+    id: c.id,
+    name: c.name,
+    slug: c.slug,
+    description: c.description,
+    color: c.color,
+    taxRateId: c.taxRateId ?? '',
+    parentId: c.parentId
+  };
 }
 
-const seed: Category[] = [
-  {
-    id: 'cat_1',
-    name: 'Minuman',
-    slug: 'minuman',
-    description: 'Kopi, teh, minuman ringan, dan air kemasan.',
-    color: 'info',
-    taxRateId: 'tax_ppn11'
-  },
-  {
-    id: 'cat_2',
-    name: 'Makanan',
-    slug: 'makanan',
-    description: 'Pastry, roti, dan makanan siap saji.',
-    color: 'warning',
-    taxRateId: 'tax_exempt'
-  },
-  {
-    id: 'cat_3',
-    name: 'Merchandise',
-    slug: 'merchandise',
-    description: 'Mug, kaos, dan suvenir berlogo.',
-    color: 'brand',
-    taxRateId: 'tax_ppn11'
-  },
-  {
-    id: 'cat_4',
-    name: 'Perlengkapan',
-    slug: 'perlengkapan',
-    description: 'Gelas, tutup, sedotan, dan habis pakai lainnya.',
-    color: 'neutral',
-    taxRateId: 'tax_ppn11'
-  },
-  {
-    id: 'cat_5',
-    name: 'Bahan Segar',
-    slug: 'bahan-segar',
-    description: 'Bahan baku perishable: telur, daging, sayur. Wajib pakai pelacakan batch + kedaluwarsa.',
-    color: 'success',
-    taxRateId: 'tax_exempt'
-  },
-  {
-    id: 'cat_6',
-    name: 'Kopi',
-    slug: 'kopi',
-    description: 'Sub-kategori minuman — kopi panas/dingin.',
-    color: 'info',
-    taxRateId: '',
-    parentId: 'cat_1'
-  },
-  {
-    id: 'cat_7',
-    name: 'Single Origin',
-    slug: 'kopi-single-origin',
-    description: 'Sub-sub-kategori — biji single origin (Sumatra, Toraja, dll.).',
-    color: 'info',
-    taxRateId: '',
-    parentId: 'cat_6'
-  },
-  {
-    id: 'cat_8',
-    name: 'Pastry',
-    slug: 'pastry',
-    description: 'Sub-kategori makanan — croissant, donut, kue.',
-    color: 'warning',
-    taxRateId: '',
-    parentId: 'cat_2'
-  },
-  {
-    id: 'cat_9',
-    name: 'Rokok',
-    slug: 'rokok',
-    description: 'Rokok kretek dan filter — dijual ecer per batang, per bungkus, atau per slop.',
-    color: 'danger',
-    taxRateId: 'tax_ppn11'
-  }
-];
+function toApiInput(c: CategoryInput): ApiCategoryInput {
+  return {
+    name: c.name,
+    slug: c.slug,
+    description: c.description,
+    color: c.color,
+    taxRateId: c.taxRateId ? c.taxRateId : null,
+    parentId: c.parentId ? c.parentId : null
+  };
+}
 
 class CategoriesStore {
-  items = $state<Category[]>([...seed]);
-  private nextId = seed.length + 1;
+  items = $state<Category[]>([]);
+  loaded = $state(false);
+  loading = $state(false);
 
-  add(input: CategoryInput): Category {
-    const category: Category = {
-      id: `cat_${this.nextId++}`,
-      name: input.name,
-      slug: input.slug?.trim() || slugify(input.name),
-      description: input.description,
-      color: input.color,
+  async load(): Promise<void> {
+    if (this.loading) return;
+    this.loading = true;
+    try {
+      const list = await listCategories();
+      this.items = list.map(toCategory);
+      this.loaded = true;
+    } finally {
+      this.loading = false;
+    }
+  }
+
+  async add(input: CategoryInput): Promise<Category> {
+    const payload: CategoryInput = {
+      ...input,
       taxRateId: input.taxRateId || taxRates.defaultId()
     };
-    this.items.push(category);
-    return category;
+    const created = await createCategory(toApiInput(payload));
+    const c = toCategory(created);
+    this.items = [...this.items, c];
+    return c;
   }
 
-  update(id: string, patch: Partial<CategoryInput>): Category | undefined {
-    const idx = this.items.findIndex((c) => c.id === id);
-    if (idx === -1) return undefined;
-    const next = { ...this.items[idx], ...patch };
-    if (patch.name && !patch.slug) next.slug = slugify(patch.name);
-    this.items[idx] = next;
-    return next;
+  async update(id: string, patch: Partial<CategoryInput>): Promise<Category | undefined> {
+    // Merge with the cached row so the PATCH request carries the full shape
+    // (backend Update expects all fields; partial updates are simulated here).
+    const current = this.getById(id);
+    if (!current) return undefined;
+    const next: CategoryInput = {
+      name: patch.name ?? current.name,
+      slug: patch.slug,
+      description: patch.description ?? current.description,
+      color: patch.color ?? current.color,
+      taxRateId: patch.taxRateId ?? current.taxRateId,
+      parentId: patch.parentId ?? current.parentId
+    };
+    const updated = await updateCategory(id, toApiInput(next));
+    const c = toCategory(updated);
+    this.items = this.items.map((x) => (x.id === id ? c : x));
+    return c;
   }
 
-  remove(id: string) {
+  async remove(id: string): Promise<void> {
+    await deleteCategory(id);
     this.items = this.items.filter((c) => c.id !== id);
   }
 

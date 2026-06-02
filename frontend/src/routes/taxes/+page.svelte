@@ -68,16 +68,34 @@
     return Object.keys(next).length === 0;
   }
 
-  function save() {
-    if (!validate()) return;
-    if (editingId) {
-      taxRates.update(editingId, { ...form });
-      toast.success('Tarif pajak diperbarui', form.name);
-    } else {
-      taxRates.add({ ...form });
-      toast.success('Tarif pajak ditambahkan', form.name);
+  let submitting = $state(false);
+
+  $effect(() => {
+    if (!taxRates.loaded && !taxRates.loading) {
+      taxRates.load().catch((err) =>
+        toast.error('Gagal memuat tarif pajak', err?.message ?? 'Tidak diketahui')
+      );
     }
-    formOpen = false;
+  });
+
+  async function save() {
+    if (!validate()) return;
+    submitting = true;
+    try {
+      if (editingId) {
+        await taxRates.update(editingId, { ...form });
+        toast.success('Tarif pajak diperbarui', form.name);
+      } else {
+        await taxRates.add({ ...form });
+        toast.success('Tarif pajak ditambahkan', form.name);
+      }
+      formOpen = false;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Terjadi kesalahan';
+      toast.error('Gagal menyimpan tarif pajak', msg);
+    } finally {
+      submitting = false;
+    }
   }
 
   function askDelete(t: TaxRate) {
@@ -85,18 +103,27 @@
     confirmOpen = true;
   }
 
-  function doDelete() {
+  async function doDelete() {
     if (!pendingDelete) return;
-    const name = pendingDelete.name;
-    const ok = taxRates.remove(pendingDelete.id);
+    const target = pendingDelete;
     pendingDelete = null;
-    if (ok) toast.success('Tarif pajak dihapus', name);
-    else toast.error('Tidak bisa dihapus', 'Tarif pajak utama atau tarif terakhir tidak bisa dihapus.');
+    const ok = await taxRates.remove(target.id);
+    if (ok) toast.success('Tarif pajak dihapus', target.name);
+    else
+      toast.error(
+        'Tidak bisa dihapus',
+        'Tarif pajak utama atau yang masih dipakai kategori tidak bisa dihapus.'
+      );
   }
 
-  function makeDefault(t: TaxRate) {
-    taxRates.update(t.id, { isDefault: true });
-    toast.success('Tarif pajak utama diperbarui', t.name);
+  async function makeDefault(t: TaxRate) {
+    try {
+      await taxRates.update(t.id, { isDefault: true });
+      toast.success('Tarif pajak utama diperbarui', t.name);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Terjadi kesalahan';
+      toast.error('Gagal mengubah tarif utama', msg);
+    }
   }
 </script>
 
@@ -234,7 +261,9 @@
 
   {#snippet footer()}
     <Button variant="outline" onclick={() => (formOpen = false)}>Batal</Button>
-    <Button onclick={save}>{editingId ? 'Simpan perubahan' : 'Tambah tarif pajak'}</Button>
+    <Button onclick={save} loading={submitting} disabled={submitting}>
+      {editingId ? 'Simpan perubahan' : 'Tambah tarif pajak'}
+    </Button>
   {/snippet}
 </Modal>
 

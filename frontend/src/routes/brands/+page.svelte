@@ -99,16 +99,34 @@
     return Object.keys(next).length === 0;
   }
 
-  function save() {
-    if (!validate()) return;
-    if (editingId) {
-      brands.update(editingId, { ...form });
-      toast.success('Brand diperbarui', form.name);
-    } else {
-      brands.add({ ...form });
-      toast.success('Brand ditambahkan', form.name);
+  let submitting = $state(false);
+
+  $effect(() => {
+    if (!brands.loaded && !brands.loading) {
+      brands.load().catch((err) =>
+        toast.error('Gagal memuat brand', err?.message ?? 'Tidak diketahui')
+      );
     }
-    formOpen = false;
+  });
+
+  async function save() {
+    if (!validate()) return;
+    submitting = true;
+    try {
+      if (editingId) {
+        await brands.update(editingId, { ...form });
+        toast.success('Brand diperbarui', form.name);
+      } else {
+        await brands.add({ ...form });
+        toast.success('Brand ditambahkan', form.name);
+      }
+      formOpen = false;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Terjadi kesalahan';
+      toast.error('Gagal menyimpan brand', msg);
+    } finally {
+      submitting = false;
+    }
   }
 
   function askDelete(brand: Brand) {
@@ -116,12 +134,17 @@
     confirmOpen = true;
   }
 
-  function doDelete() {
+  async function doDelete() {
     if (!pendingDelete) return;
-    const name = pendingDelete.name;
-    brands.remove(pendingDelete.id);
+    const target = pendingDelete;
     pendingDelete = null;
-    toast.success('Brand dihapus', name);
+    try {
+      await brands.remove(target.id);
+      toast.success('Brand dihapus', target.name);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Terjadi kesalahan';
+      toast.error('Gagal menghapus brand', msg);
+    }
   }
 </script>
 
@@ -254,7 +277,9 @@
 
   {#snippet footer()}
     <Button variant="outline" onclick={() => (formOpen = false)}>Batal</Button>
-    <Button onclick={save}>{editingId ? 'Simpan perubahan' : 'Tambah brand'}</Button>
+    <Button onclick={save} loading={submitting} disabled={submitting}>
+      {editingId ? 'Simpan perubahan' : 'Tambah brand'}
+    </Button>
   {/snippet}
 </Modal>
 

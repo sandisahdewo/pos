@@ -1,3 +1,12 @@
+import {
+  listSuppliers,
+  createSupplier,
+  updateSupplier,
+  deleteSupplier,
+  type ApiSupplier,
+  type SupplierInput as ApiSupplierInput
+} from '$lib/api/suppliers';
+
 export type SupplierStatus = 'active' | 'archived';
 
 export type Supplier = {
@@ -14,71 +23,66 @@ export type Supplier = {
 
 export type SupplierInput = Omit<Supplier, 'id'>;
 
-const seed: Supplier[] = [
-  {
-    id: 'sup_1',
-    name: 'PT Kopi Nusantara',
-    contactPerson: 'Budi Santoso',
-    email: 'orders@kopinusantara.id',
-    phone: '+62 21 5550 0142',
-    address: 'Jl. Sudirman No. 45, Jakarta Pusat',
-    leadTimeDays: 7,
-    status: 'active',
-    notes: 'Single-origin beans, monthly invoice terms.'
-  },
-  {
-    id: 'sup_2',
-    name: 'CV Roti Sejahtera',
-    contactPerson: 'Sri Wahyuni',
-    email: 'sri@rotisejahtera.id',
-    phone: '+62 22 5550 0188',
-    address: 'Jl. Setiabudi No. 12, Bandung',
-    leadTimeDays: 1,
-    status: 'active',
-    notes: 'Daily pastry delivery. Cash on delivery.'
-  },
-  {
-    id: 'sup_3',
-    name: 'Studio Karya Lokal',
-    contactPerson: 'Aulia Pratama',
-    email: 'aulia@karyalokal.id',
-    phone: '+62 813 5550 0173',
-    address: 'Jl. Kemang Raya No. 8, Jakarta Selatan',
-    leadTimeDays: 14,
-    status: 'active',
-    notes: 'Consignment merchandise — branded mugs, totes, prints.'
-  },
-  {
-    id: 'sup_4',
-    name: 'Toko Grosir Aneka',
-    contactPerson: 'Hendra Wijaya',
-    email: 'orders@grosirineka.id',
-    phone: '+62 31 5550 0107',
-    address: 'Jl. Diponegoro No. 99, Surabaya',
-    leadTimeDays: 3,
-    status: 'active',
-    notes: 'Beverages, snacks, supplies. Net-14 terms.'
-  }
-];
+function toSupplier(s: ApiSupplier): Supplier {
+  return {
+    id: s.id,
+    name: s.name,
+    contactPerson: s.contactPerson,
+    email: s.email,
+    phone: s.phone,
+    address: s.address,
+    leadTimeDays: s.leadTimeDays,
+    status: s.status,
+    notes: s.notes
+  };
+}
+
+function toApiInput(s: SupplierInput): ApiSupplierInput {
+  return {
+    name: s.name,
+    contactPerson: s.contactPerson,
+    email: s.email,
+    phone: s.phone,
+    address: s.address,
+    leadTimeDays: s.leadTimeDays,
+    status: s.status,
+    notes: s.notes
+  };
+}
 
 class SuppliersStore {
-  items = $state<Supplier[]>([...seed]);
-  private nextId = seed.length + 1;
+  items = $state<Supplier[]>([]);
+  loaded = $state(false);
+  loading = $state(false);
 
-  add(input: SupplierInput): Supplier {
-    const supplier: Supplier = { ...input, id: `sup_${this.nextId++}` };
-    this.items.push(supplier);
-    return supplier;
+  async load(): Promise<void> {
+    if (this.loading) return;
+    this.loading = true;
+    try {
+      const list = await listSuppliers();
+      this.items = list.map(toSupplier);
+      this.loaded = true;
+    } finally {
+      this.loading = false;
+    }
   }
 
-  update(id: string, patch: Partial<SupplierInput>): Supplier | undefined {
-    const idx = this.items.findIndex((s) => s.id === id);
-    if (idx === -1) return undefined;
-    this.items[idx] = { ...this.items[idx], ...patch };
-    return this.items[idx];
+  async add(input: SupplierInput): Promise<Supplier> {
+    const created = await createSupplier(toApiInput(input));
+    const s = toSupplier(created);
+    this.items = [...this.items, s];
+    return s;
   }
 
-  remove(id: string) {
+  async update(id: string, patch: SupplierInput): Promise<Supplier | undefined> {
+    const updated = await updateSupplier(id, toApiInput(patch));
+    const s = toSupplier(updated);
+    this.items = this.items.map((x) => (x.id === id ? s : x));
+    return s;
+  }
+
+  async remove(id: string): Promise<void> {
+    await deleteSupplier(id);
     this.items = this.items.filter((s) => s.id !== id);
   }
 

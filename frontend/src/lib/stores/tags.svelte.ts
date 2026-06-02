@@ -1,71 +1,84 @@
+import {
+  listTags,
+  createTag,
+  updateTag,
+  deleteTag,
+  type ApiTag,
+  type TagInput as ApiTagInput
+} from '$lib/api/tags';
+
 export type TagColor = 'brand' | 'success' | 'warning' | 'danger' | 'info' | 'neutral';
 
 export type Tag = {
   id: string;
-  name: string;          // unique label, used as the FK from Product.tags
+  name: string;
   color: TagColor;
-  publicVisible: boolean; // show on POS card / shelf label for customers
+  publicVisible: boolean;
   description: string;
 };
 
 export type TagInput = Omit<Tag, 'id'>;
 
-const seed: Tag[] = [
-  {
-    id: 'tag_baru',
-    name: 'Baru',
-    color: 'brand',
-    publicVisible: true,
-    description: 'Produk baru masuk katalog.'
-  },
-  {
-    id: 'tag_best',
-    name: 'Best Seller',
-    color: 'success',
-    publicVisible: true,
-    description: 'Produk paling sering laku.'
-  },
-  {
-    id: 'tag_halal',
-    name: 'Halal',
-    color: 'success',
-    publicVisible: true,
-    description: 'Bersertifikat MUI Halal.'
-  },
-  {
-    id: 'tag_promo',
-    name: 'Promo',
-    color: 'warning',
-    publicVisible: true,
-    description: 'Sedang dalam program promo.'
-  },
-  {
-    id: 'tag_lokal',
-    name: 'Lokal',
-    color: 'info',
-    publicVisible: true,
-    description: 'Produk lokal / UMKM.'
-  }
-];
+function toTag(t: ApiTag): Tag {
+  return {
+    id: t.id,
+    name: t.name,
+    color: t.color,
+    publicVisible: t.publicVisible,
+    description: t.description
+  };
+}
+
+function toApiInput(t: TagInput): ApiTagInput {
+  return {
+    name: t.name,
+    color: t.color,
+    publicVisible: t.publicVisible,
+    description: t.description
+  };
+}
 
 class TagsStore {
-  items = $state<Tag[]>([...seed]);
-  private nextId = seed.length + 1;
+  items = $state<Tag[]>([]);
+  loaded = $state(false);
+  loading = $state(false);
 
-  add(input: TagInput): Tag {
-    const tag: Tag = { ...input, id: `tag_${this.nextId++}` };
-    this.items.push(tag);
-    return tag;
+  async load(): Promise<void> {
+    if (this.loading) return;
+    this.loading = true;
+    try {
+      const list = await listTags();
+      this.items = list.map(toTag);
+      this.loaded = true;
+    } finally {
+      this.loading = false;
+    }
   }
 
-  update(id: string, patch: Partial<TagInput>): Tag | undefined {
-    const idx = this.items.findIndex((t) => t.id === id);
-    if (idx === -1) return undefined;
-    this.items[idx] = { ...this.items[idx], ...patch };
-    return this.items[idx];
+  async add(input: TagInput): Promise<Tag> {
+    const created = await createTag(toApiInput(input));
+    const t = toTag(created);
+    this.items = [...this.items, t];
+    return t;
   }
 
-  remove(id: string) {
+  async update(id: string, patch: Partial<TagInput>): Promise<Tag | undefined> {
+    const current = this.getById(id);
+    if (!current) return undefined;
+    const next: TagInput = {
+      name: patch.name ?? current.name,
+      color: patch.color ?? current.color,
+      publicVisible: patch.publicVisible ?? current.publicVisible,
+      description: patch.description ?? current.description
+    };
+    const updated = await updateTag(id, toApiInput(next));
+    const t = toTag(updated);
+    this.items = this.items.map((x) => (x.id === id ? t : x));
+    return t;
+  }
+
+  async remove(id: string): Promise<void> {
+    await deleteTag(id);
     this.items = this.items.filter((t) => t.id !== id);
   }
 

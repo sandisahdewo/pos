@@ -24,7 +24,7 @@ type unitInput struct {
 }
 
 func (h *UnitsHandler) List(w http.ResponseWriter, r *http.Request) {
-	var units []models.Unit
+	units := []models.Unit{}
 	err := h.deps.DB.NewSelect().Model(&units).Order("name ASC").Scan(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())

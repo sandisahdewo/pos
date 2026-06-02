@@ -2,6 +2,42 @@ SET statement_timeout = 0;
 
 --bun:split
 
+DROP TABLE IF EXISTS product_components;
+
+--bun:split
+
+DROP TABLE IF EXISTS product_price_tiers;
+
+--bun:split
+
+DROP TABLE IF EXISTS product_prices;
+
+--bun:split
+
+DROP TABLE IF EXISTS product_extras;
+
+--bun:split
+
+DROP TABLE IF EXISTS product_suppliers;
+
+--bun:split
+
+DROP TABLE IF EXISTS product_packagings;
+
+--bun:split
+
+DROP TABLE IF EXISTS product_variants;
+
+--bun:split
+
+DROP TABLE IF EXISTS product_attributes;
+
+--bun:split
+
+DROP TABLE IF EXISTS products;
+
+--bun:split
+
 DROP INDEX IF EXISTS locations_one_default_receipt;
 
 --bun:split

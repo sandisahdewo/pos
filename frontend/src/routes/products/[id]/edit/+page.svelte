@@ -10,18 +10,24 @@
   const id = $derived(page.params.id ?? '');
   const product = $derived(id ? products.getById(id) : undefined);
 
-  function save(
+  async function save(
     data: ProductInput,
     context?: { priceChangeSource?: 'manual' | 'bulk-adjust' | 'system'; priceChangeNotes?: string }
   ) {
-    const updated = products.update(id, data, {
-      source: context?.priceChangeSource,
-      notes: context?.priceChangeNotes
-    });
-    if (!updated) throw new Error(`Product ${id} not found during save.`);
-    toast.success('Produk diperbarui', data.name);
-    goto('/products');
-    return updated;
+    try {
+      const updated = await products.update(id, data, {
+        source: context?.priceChangeSource,
+        notes: context?.priceChangeNotes
+      });
+      if (!updated) throw new Error(`Product ${id} not found during save.`);
+      toast.success('Produk diperbarui', data.name);
+      await goto('/products');
+      return updated;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Terjadi kesalahan';
+      toast.error('Gagal menyimpan produk', msg);
+      throw err;
+    }
   }
 
   function cancel() {

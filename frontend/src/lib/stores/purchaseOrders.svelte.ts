@@ -454,7 +454,10 @@ class PurchaseOrdersStore {
           const updated = existing.map((s, i) =>
             i === idx ? { ...s, unitCost: perBaseUnitCost } : s
           );
-          products.update(line.productId, { suppliers: updated });
+          // Fire-and-forget: refreshing the supplier cost is a side-effect of
+          // PO receiving. If the request fails the next manual save will
+          // re-sync. PO store stays synchronous.
+          void products.update(line.productId, { suppliers: updated });
         }
         // Kalau supplier ini belum punya entry di Product.suppliers, skip —
         // jangan tambah entry baru otomatis (operator yang harus mendaftarkan

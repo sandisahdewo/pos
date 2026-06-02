@@ -5,11 +5,17 @@
   import { products, type ProductInput } from '$lib/stores/products.svelte';
   import { toast } from '$lib/stores/toast.svelte';
 
-  function save(data: ProductInput) {
-    const created = products.add(data);
-    toast.success('Produk ditambahkan', created.name);
-    goto('/products');
-    return created;
+  async function save(data: ProductInput) {
+    try {
+      const created = await products.add(data);
+      toast.success('Produk ditambahkan', created.name);
+      await goto('/products');
+      return created;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Terjadi kesalahan';
+      toast.error('Gagal menyimpan produk', msg);
+      throw err;
+    }
   }
 
   function cancel() {

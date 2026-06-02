@@ -84,7 +84,7 @@
     onSubmit: (
       data: ProductInput,
       context?: { priceChangeSource?: PriceChangeSource; priceChangeNotes?: string }
-    ) => Product;
+    ) => Product | Promise<Product>;
     onCancel: () => void;
   };
 

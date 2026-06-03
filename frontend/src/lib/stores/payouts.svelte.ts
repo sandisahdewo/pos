@@ -1,93 +1,84 @@
+import { listPayouts, createPayout, deletePayout } from '$lib/api/payouts';
+
 export type PayoutMethod = 'cash' | 'transfer' | 'other';
 
 export type Payout = {
   id: string;
-  code: string;                // PAYOUT-YYYY-NNN
+  code: string;
   supplierId: string;
-  amount: number;              // IDR
-  paidAt: string;              // ISO date (yyyy-mm-dd)
+  amount: number;
+  paidAt: string;
   method: PayoutMethod;
-  coversPeriodStart: string;   // ISO date
-  coversPeriodEnd: string;     // ISO date
+  coversPeriodStart: string;
+  coversPeriodEnd: string;
   notes: string;
 };
 
 export type PayoutInput = Omit<Payout, 'id' | 'code'>;
 
-// One seed payout so the History card isn't empty out of the box. Tied to sup_3
-// (Studio Karya Lokal), matching the consignment-mug seed batches.
-const seed: Payout[] = [
-  {
-    id: 'payout_1',
-    code: 'PAYOUT-2026-001',
-    supplierId: 'sup_3',
-    amount: 200000,
-    paidAt: '2026-04-30',
-    method: 'transfer',
-    coversPeriodStart: '2026-04-01',
-    coversPeriodEnd: '2026-04-30',
-    notes: 'Pembayaran awal untuk penjualan konsinyasi April (2 mug White via ORD-2026-002).'
-  },
-  {
-    id: 'payout_2',
-    code: 'PAYOUT-2026-002',
-    supplierId: 'sup_3',
-    amount: 150000,
-    paidAt: '2026-05-10',
-    method: 'transfer',
-    coversPeriodStart: '2026-05-01',
-    coversPeriodEnd: '2026-05-10',
-    notes: 'Pembayaran cicilan tengah bulan (mug Black ORD-003/009).'
-  },
-  {
-    id: 'payout_3',
-    code: 'PAYOUT-2026-003',
-    supplierId: 'sup_3',
-    amount: 80000,
-    paidAt: '2026-05-15',
-    method: 'cash',
-    coversPeriodStart: '2026-05-11',
-    coversPeriodEnd: '2026-05-15',
-    notes: 'Cicilan tunai saat Studio Karya Lokal mampir.'
-  }
-];
-
-function fmtCodeNumber(n: number): string {
-  return n.toString().padStart(3, '0');
+function normalizePayout(raw: unknown): Payout {
+  const r = raw as Partial<Payout> & Record<string, unknown>;
+  return {
+    id: String(r.id ?? ''),
+    code: String(r.code ?? ''),
+    supplierId: String(r.supplierId ?? ''),
+    amount: Number(r.amount ?? 0),
+    paidAt: (r.paidAt ?? '') as string,
+    method: (r.method ?? 'cash') as PayoutMethod,
+    coversPeriodStart: (r.coversPeriodStart ?? '') as string,
+    coversPeriodEnd: (r.coversPeriodEnd ?? '') as string,
+    notes: (r.notes ?? '') as string
+  };
 }
 
 class PayoutsStore {
-  items = $state<Payout[]>([...seed]);
-  private nextId = seed.length + 1;
-  private nextCodeNum = seed.length + 1;
+  items = $state<Payout[]>([]);
+  loaded = $state(false);
+  loading = $state(false);
 
-  private generateCode(): string {
-    const year = new Date().getFullYear();
-    return `PAYOUT-${year}-${fmtCodeNumber(this.nextCodeNum++)}`;
+  async load(): Promise<void> {
+    if (this.loading) return;
+    this.loading = true;
+    try {
+      const list = await listPayouts();
+      this.items = list.map(normalizePayout);
+      this.loaded = true;
+    } finally {
+      this.loading = false;
+    }
   }
 
-  add(input: PayoutInput): Payout {
-    const payout: Payout = {
-      ...input,
-      id: `payout_${this.nextId++}`,
-      code: this.generateCode()
-    };
-    this.items.push(payout);
-    return payout;
+  async add(input: PayoutInput): Promise<Payout> {
+    const created = await createPayout({
+      supplierId: input.supplierId,
+      amount: input.amount,
+      paidAt: input.paidAt,
+      method: input.method,
+      coversPeriodStart: input.coversPeriodStart,
+      coversPeriodEnd: input.coversPeriodEnd,
+      notes: input.notes
+    });
+    const p = normalizePayout(created);
+    this.items = [...this.items, p];
+    return p;
   }
 
-  remove(id: string): boolean {
-    const before = this.items.length;
-    this.items = this.items.filter((p) => p.id !== id);
-    return this.items.length < before;
+  async remove(id: string): Promise<boolean> {
+    try {
+      await deletePayout(id);
+      const before = this.items.length;
+      this.items = this.items.filter((p) => p.id !== id);
+      return this.items.length < before;
+    } catch {
+      return false;
+    }
   }
 
   getById(id: string): Payout | undefined {
     return this.items.find((p) => p.id === id);
   }
 
-  // Sum of payouts already made to a supplier, optionally up to a cutoff date
-  // (paidAt <= asOf). Used by the Outstanding column on the report.
+  // Sum of payouts already made to a supplier, optionally up to a cutoff date.
   paidToSupplier(supplierId: string, asOf?: string): number {
     return this.items.reduce((s, p) => {
       if (p.supplierId !== supplierId) return s;

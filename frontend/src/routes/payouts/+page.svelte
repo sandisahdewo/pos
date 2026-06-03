@@ -150,19 +150,26 @@
     return Object.keys(next).length === 0;
   }
 
-  function savePayout() {
+  async function savePayout() {
     if (!validatePayout()) return;
-    const created = payouts.add({
-      supplierId: payoutSupplierId,
-      amount: payoutForm.amount,
-      method: payoutForm.method,
-      paidAt: todayISO,
-      coversPeriodStart: payoutForm.coversPeriodStart,
-      coversPeriodEnd: payoutForm.coversPeriodEnd,
-      notes: payoutForm.notes.trim()
-    });
-    payoutOpen = false;
-    toast.success(`Pembayaran tercatat · ${created.code}`, `${formatRupiah(created.amount)} ke ${supplierName(created.supplierId)}`);
+    try {
+      const created = await payouts.add({
+        supplierId: payoutSupplierId,
+        amount: payoutForm.amount,
+        method: payoutForm.method,
+        paidAt: todayISO,
+        coversPeriodStart: payoutForm.coversPeriodStart,
+        coversPeriodEnd: payoutForm.coversPeriodEnd,
+        notes: payoutForm.notes.trim()
+      });
+      payoutOpen = false;
+      toast.success(
+        `Pembayaran tercatat · ${created.code}`,
+        `${formatRupiah(created.amount)} ke ${supplierName(created.supplierId)}`
+      );
+    } catch (err) {
+      toast.error('Gagal menyimpan pembayaran', err instanceof Error ? err.message : '');
+    }
   }
 
   // Delete payout
@@ -174,12 +181,14 @@
     confirmOpen = true;
   }
 
-  function doDelete() {
+  async function doDelete() {
     if (!pendingDelete) return;
     const code = pendingDelete.code;
-    payouts.remove(pendingDelete.id);
+    const id = pendingDelete.id;
     pendingDelete = null;
-    toast.success('Pembayaran dihapus', code);
+    const ok = await payouts.remove(id);
+    if (ok) toast.success('Pembayaran dihapus', code);
+    else toast.error('Gagal menghapus pembayaran', code);
   }
 
   // Return stock modal

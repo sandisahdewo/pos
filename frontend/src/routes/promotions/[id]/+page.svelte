@@ -477,17 +477,21 @@
     return payload;
   }
 
-  function save() {
+  async function save() {
     if (!validate()) return;
     const payload = buildPayload();
-    if (isNew) {
-      const created = promotions.add(payload);
-      toast.success('Promo dibuat', created.name);
-    } else if (editing) {
-      promotions.update(editing.id, payload);
-      toast.success('Promo diperbarui', form.name);
+    try {
+      if (isNew) {
+        const created = await promotions.add(payload);
+        toast.success('Promo dibuat', created.name);
+      } else if (editing) {
+        await promotions.update(editing.id, payload);
+        toast.success('Promo diperbarui', form.name);
+      }
+      goto('/promotions');
+    } catch (err) {
+      toast.error('Gagal menyimpan promo', err instanceof Error ? err.message : '');
     }
-    goto('/promotions');
   }
 </script>
 

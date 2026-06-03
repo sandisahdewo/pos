@@ -1031,9 +1031,9 @@
       return;
     }
 
-    // Increment usage counter on each unique applied promo.
+    // Increment usage counter on each unique applied promo (best-effort).
     for (const p of orderAppliedPromos) {
-      promotions.incrementUsage(p.promoId);
+      void promotions.incrementUsage(p.promoId);
     }
 
     await applyOrderToStock(created);

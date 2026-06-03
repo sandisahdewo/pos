@@ -2,6 +2,30 @@ SET statement_timeout = 0;
 
 --bun:split
 
+DROP TABLE IF EXISTS promotion_category_scopes;
+
+--bun:split
+
+DROP TABLE IF EXISTS promotion_product_scopes;
+
+--bun:split
+
+DROP TABLE IF EXISTS promotion_combo_items;
+
+--bun:split
+
+DROP TABLE IF EXISTS promotions;
+
+--bun:split
+
+DROP TABLE IF EXISTS price_changes;
+
+--bun:split
+
+DROP TABLE IF EXISTS payouts;
+
+--bun:split
+
 DROP TABLE IF EXISTS stock_opname_lines;
 
 --bun:split

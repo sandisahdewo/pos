@@ -56,6 +56,9 @@ func NewRouter(opts Options) http.Handler {
 	stockMovementsH := handlers.NewStockMovementsHandler(opts.Deps)
 	productionRunsH := handlers.NewProductionRunsHandler(opts.Deps)
 	stockOpnamesH := handlers.NewStockOpnamesHandler(opts.Deps)
+	payoutsH := handlers.NewPayoutsHandler(opts.Deps)
+	priceChangesH := handlers.NewPriceChangesHandler(opts.Deps)
+	promotionsH := handlers.NewPromotionsHandler(opts.Deps)
 
 	r.Get("/healthz", healthz)
 
@@ -128,6 +131,20 @@ func NewRouter(opts Options) http.Handler {
 			p.Post("/stock-opnames", stockOpnamesH.Create)
 			p.Patch("/stock-opnames/{id}", stockOpnamesH.Update)
 
+			// Consignor payouts (settlement). Reads + writes authed since
+			// kasir & finance both touch them.
+			p.Get("/payouts", payoutsH.List)
+			p.Post("/payouts", payoutsH.Create)
+			p.Delete("/payouts/{id}", payoutsH.Delete)
+
+			// Price change audit log. Bulk-write on product save.
+			p.Get("/price-changes", priceChangesH.List)
+			p.Post("/price-changes", priceChangesH.Create)
+
+			// Promotions. List/inc-usage authed (POS needs both); CRUD admin.
+			p.Get("/promotions", promotionsH.List)
+			p.Post("/promotions/{id}/usage", promotionsH.IncrementUsage)
+
 			// Admin-only: user (employee) + role management + master data writes.
 			p.Group(func(adm chi.Router) {
 				adm.Use(middleware.RequireRole("Admin"))
@@ -183,6 +200,10 @@ func NewRouter(opts Options) http.Handler {
 				adm.Post("/purchase-orders", purchaseOrdersH.Create)
 				adm.Patch("/purchase-orders/{id}", purchaseOrdersH.Update)
 				adm.Delete("/purchase-orders/{id}", purchaseOrdersH.Delete)
+
+				adm.Post("/promotions", promotionsH.Create)
+				adm.Patch("/promotions/{id}", promotionsH.Update)
+				adm.Delete("/promotions/{id}", promotionsH.Delete)
 
 				// Templates + assignments are admin-managed master data.
 				adm.Post("/shift-templates", shiftTemplatesH.Create)

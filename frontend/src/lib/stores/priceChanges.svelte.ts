@@ -1,38 +1,30 @@
 import type { PricingStrategy } from './products.svelte';
 import { user } from './user.svelte';
+import { listPriceChanges, createPriceChanges } from '$lib/api/price-changes';
 
-// Source attribution for a single price-change record.
-//   'manual'      — direct save from the product form (operator typed values).
-//   'bulk-adjust' — applied via the Sesuaikan harga modal; carries a human
-//                   summary in `notes` describing the adjustment params.
-//   'system'      — reserved for future auto-changes (none today).
 export type PriceChangeSource = 'manual' | 'bulk-adjust' | 'system';
 
-// One row per (scope × pricelistId × optional tierMinQty) whose pricing
-// strategy actually changed between old and new product state. Snapshotted
-// at the moment of save — the strategy objects are stored verbatim so the
-// record stays meaningful even if the product is later renamed/deleted.
 export type PriceChange = {
   id: string;
-  code: string; // PCH-YYYY-NNN
+  code: string;
   productId: string;
-  productName: string;        // snapshot for surviving renames
+  productName: string;
   variantId?: string;
   variantName?: string;
   packagingIndex?: number;
-  packagingLabel?: string;    // e.g. "Box · isi 6"
+  packagingLabel?: string;
   pricelistId: string;
-  pricelistName: string;      // snapshot
-  tierMinQty?: number;        // present when the change is on a tier
+  pricelistName: string;
+  tierMinQty?: number;
   oldStrategy: PricingStrategy;
   newStrategy: PricingStrategy;
-  oldSale: number;            // computeSalePrice(cost, oldStrategy) at change time
+  oldSale: number;
   newSale: number;
-  cost: number;               // base-unit cost snapshot at change time
+  cost: number;
   source: PriceChangeSource;
   notes: string;
   performedBy: string;
-  at: string;                 // ISO timestamp
+  at: string;
 };
 
 export type PriceChangeInput = Omit<PriceChange, 'id' | 'code' | 'at' | 'performedBy'> & {
@@ -40,51 +32,98 @@ export type PriceChangeInput = Omit<PriceChange, 'id' | 'code' | 'at' | 'perform
   at?: string;
 };
 
-function fmtCodeNumber(n: number): string {
-  return n.toString().padStart(4, '0');
+function normalizeChange(raw: unknown): PriceChange {
+  const r = raw as Partial<PriceChange> & Record<string, unknown>;
+  return {
+    id: String(r.id ?? ''),
+    code: String(r.code ?? ''),
+    productId: String(r.productId ?? ''),
+    productName: (r.productName ?? '') as string,
+    variantId: (r.variantId as string | undefined) || undefined,
+    variantName: (r.variantName as string | undefined) || undefined,
+    packagingIndex:
+      r.packagingIndex === null || r.packagingIndex === undefined
+        ? undefined
+        : Number(r.packagingIndex),
+    packagingLabel: (r.packagingLabel as string | undefined) || undefined,
+    pricelistId: String(r.pricelistId ?? ''),
+    pricelistName: (r.pricelistName ?? '') as string,
+    tierMinQty:
+      r.tierMinQty === null || r.tierMinQty === undefined ? undefined : Number(r.tierMinQty),
+    oldStrategy: (r.oldStrategy ?? { kind: 'fixed', value: 0 }) as PricingStrategy,
+    newStrategy: (r.newStrategy ?? { kind: 'fixed', value: 0 }) as PricingStrategy,
+    oldSale: Number(r.oldSale ?? 0),
+    newSale: Number(r.newSale ?? 0),
+    cost: Number(r.cost ?? 0),
+    source: (r.source ?? 'manual') as PriceChangeSource,
+    notes: (r.notes ?? '') as string,
+    performedBy: (r.performedBy ?? '') as string,
+    at: String(r.at ?? '')
+  };
+}
+
+function toPayload(input: PriceChangeInput, performedBy: string, at: string): Record<string, unknown> {
+  return {
+    productId: input.productId || null,
+    productName: input.productName,
+    variantId: input.variantId ?? null,
+    variantName: input.variantName ?? '',
+    packagingIndex: input.packagingIndex ?? null,
+    packagingLabel: input.packagingLabel ?? '',
+    pricelistId: input.pricelistId || null,
+    pricelistName: input.pricelistName,
+    tierMinQty: input.tierMinQty ?? null,
+    oldStrategy: input.oldStrategy,
+    newStrategy: input.newStrategy,
+    oldSale: input.oldSale,
+    newSale: input.newSale,
+    cost: input.cost,
+    source: input.source,
+    notes: input.notes,
+    performedBy,
+    at
+  };
 }
 
 class PriceChangesStore {
   items = $state<PriceChange[]>([]);
-  private nextId = 1;
-  private nextCodeNum = 1;
+  loaded = $state(false);
+  loading = $state(false);
 
-  private generateCode(at: string): string {
-    const year = at.slice(0, 4);
-    return `PCH-${year}-${fmtCodeNumber(this.nextCodeNum++)}`;
+  async load(): Promise<void> {
+    if (this.loading) return;
+    this.loading = true;
+    try {
+      const list = await listPriceChanges({ limit: 2000 });
+      this.items = list.map(normalizeChange);
+      this.loaded = true;
+    } finally {
+      this.loading = false;
+    }
   }
 
-  add(input: PriceChangeInput): PriceChange {
+  async add(input: PriceChangeInput): Promise<PriceChange> {
     const at = input.at ?? new Date().toISOString();
     const performedBy = input.performedBy ?? user.current?.name ?? 'System';
-    const change: PriceChange = {
-      id: `pch_${this.nextId++}`,
-      code: this.generateCode(at),
-      at,
-      performedBy,
-      ...input
-    };
-    this.items.push(change);
-    return change;
+    const list = await createPriceChanges([toPayload(input, performedBy, at)]);
+    const items = list.map(normalizeChange);
+    if (items.length > 0) this.items = [...this.items, ...items];
+    return items[0];
   }
 
-  // Bulk-add — used by `products.update()` when a single save produces many
-  // changes at once. All rows share the same timestamp & performedBy so the
-  // history view can group them visually if it wants.
-  addMany(inputs: PriceChangeInput[]): PriceChange[] {
-    const at = new Date().toISOString();
-    const performedBy = user.current?.name ?? 'System';
-    const out: PriceChange[] = [];
-    for (const input of inputs) {
-      out.push(
-        this.add({
-          ...input,
-          at: input.at ?? at,
-          performedBy: input.performedBy ?? performedBy
-        })
-      );
-    }
-    return out;
+  // Bulk-add — single backend call. All rows share timestamp & performedBy
+  // unless overridden in their input.
+  async addMany(inputs: PriceChangeInput[]): Promise<PriceChange[]> {
+    if (inputs.length === 0) return [];
+    const defaultAt = new Date().toISOString();
+    const defaultBy = user.current?.name ?? 'System';
+    const payloads = inputs.map((input) =>
+      toPayload(input, input.performedBy ?? defaultBy, input.at ?? defaultAt)
+    );
+    const list = await createPriceChanges(payloads);
+    const items = list.map(normalizeChange);
+    this.items = [...this.items, ...items];
+    return items;
   }
 
   forProduct(productId: string, variantId?: string): PriceChange[] {
@@ -111,7 +150,6 @@ class PriceChangesStore {
     return set.size;
   }
 
-  // Top operator by change count since a given ISO date.
   topPerformerSince(sinceISO: string): { name: string; count: number } | undefined {
     const tally = new Map<string, number>();
     for (const c of this.items) {
@@ -143,9 +181,6 @@ export const priceChangeSourceVariant: Record<
   system: 'info'
 };
 
-// Short, human-readable description of the strategy. Used in the history UI
-// so the user can read "10%" / "+Rp 5.000" / "Rp 12.500" without parsing
-// the underlying object.
 export function describePricing(s: PricingStrategy): string {
   switch (s.kind) {
     case 'fixed':
@@ -159,7 +194,6 @@ export function describePricing(s: PricingStrategy): string {
 
 function formatNumber(n: number): string {
   if (!Number.isFinite(n)) return '—';
-  // Match Indonesian locale digit grouping but keep a max of 2 fractional digits
   return new Intl.NumberFormat('id-ID', { maximumFractionDigits: 2 }).format(n);
 }
 

@@ -1,3 +1,11 @@
+import {
+  listPromotions,
+  createPromotion,
+  updatePromotion,
+  deletePromotion,
+  incrementPromotionUsage
+} from '$lib/api/promotions';
+
 export type PromoKind = 'discount' | 'combo' | 'bogo' | 'member-tier' | 'expiring-batch';
 export type PromoStatus = 'active' | 'scheduled' | 'expired' | 'archived';
 export type PromoLevel = 'line' | 'order';
@@ -110,10 +118,6 @@ export const promoLevelLabels: Record<PromoLevel, string> = {
   order: 'Per-transaksi'
 };
 
-function pad3(n: number): string {
-  return n.toString().padStart(3, '0');
-}
-
 function timeToMinutes(hhmm: string): number {
   const [h, m] = hhmm.split(':').map(Number);
   return (h || 0) * 60 + (m || 0);
@@ -216,168 +220,145 @@ export function shortPromoLabel(p: Promotion): string {
   }
 }
 
-// Seed: a mix to demonstrate each kind.
-const seed: Promotion[] = [
-  {
-    id: 'prm_1',
-    code: 'PRM-001',
-    name: 'Diskon 10% Minuman',
-    kind: 'discount',
-    level: 'line',
-    discountUnit: 'percent',
-    discountValue: 10,
-    categoryIds: ['cat_1'],
-    status: 'active',
-    usageCount: 0,
-    description: 'Diskon 10% untuk semua minuman.',
-    notes: ''
-  },
-  {
-    id: 'prm_2',
-    code: 'PRM-002',
-    name: 'Combo Latte + Cola',
-    kind: 'combo',
-    level: 'line',
-    comboItems: [
-      { productId: 'prd_2', quantity: 1 },
-      { productId: 'prd_5', quantity: 1 }
-    ],
-    comboPrice: 18000,
-    status: 'active',
-    usageCount: 0,
-    description: 'Paket hemat Latte + Cola hanya Rp 18.000 (dari Rp 41.000).',
-    notes: ''
-  },
-  {
-    id: 'prm_3',
-    code: 'PRM-003',
-    name: 'Beli 2 Gratis 1 Croissant',
-    kind: 'bogo',
-    level: 'line',
-    buyQuantity: 2,
-    getQuantity: 1,
-    bogoProductId: 'prd_3',
-    status: 'active',
-    usageCount: 0,
-    description: 'Beli 2 croissant, dapat 1 croissant gratis.',
-    notes: ''
-  },
-  {
-    id: 'prm_4',
-    code: 'PRM-004',
-    name: 'Diskon Pelanggan VIP',
-    kind: 'member-tier',
-    level: 'order',
-    memberPricelistId: 'pl_wholesale',
-    memberPercentOff: 5,
-    status: 'active',
-    usageCount: 0,
-    description: 'Pelanggan dengan daftar harga grosir otomatis dapat 5% off total.',
-    notes: ''
-  },
-  {
-    id: 'prm_5',
-    code: 'PRM-005',
-    name: 'Hari Senin Diskon Rp 5.000',
-    kind: 'discount',
-    level: 'order',
-    discountUnit: 'fixed',
-    discountValue: 5000,
-    minimumPurchase: 30000,
-    daysOfWeek: [1],
-    status: 'active',
-    usageCount: 0,
-    description: 'Setiap hari Senin, diskon Rp 5.000 untuk minimum belanja Rp 30.000.',
-    notes: ''
-  },
-  {
-    id: 'prm_6',
-    code: 'PRM-006',
-    name: 'Beli 1 Box Cola Gratis 1 Pcs',
-    kind: 'bogo',
-    level: 'line',
-    bogoProductId: 'prd_5',
-    buyQuantity: 1,
-    buyUnitId: 'unit_2',
-    buyUnitFactor: 6,
-    getQuantity: 1,
-    getUnitId: 'unit_1',
-    getUnitFactor: 1,
-    status: 'active',
-    usageCount: 0,
-    description: 'Beli 1 box (isi 6) Cola, dapat tambahan 1 pcs Cola gratis.',
-    notes: ''
-  },
-  {
-    id: 'prm_7',
-    code: 'PRM-007',
-    name: 'Diskon 15% Minuman Khusus Member',
-    kind: 'discount',
-    level: 'line',
-    discountUnit: 'percent',
-    discountValue: 15,
-    categoryIds: ['cat_1'],
-    memberPricelistId: 'pl_wholesale',
-    status: 'active',
-    usageCount: 0,
-    description: 'Pelanggan dengan daftar harga grosir dapat 15% diskon untuk semua minuman.',
-    notes: ''
-  },
-  {
-    id: 'prm_8',
-    code: 'PRM-008',
-    name: 'Diskon Rp 5.000 Cola per Box',
-    kind: 'discount',
-    level: 'line',
-    discountUnit: 'fixed',
-    discountValue: 5000,
-    productScopes: [{ productId: 'prd_5', unitId: 'unit_2', unitFactor: 6 }],
-    status: 'active',
-    usageCount: 0,
-    description: 'Diskon Rp 5.000 hanya saat Cola dibeli per box (isi 6), tidak berlaku saat dibeli per pcs.',
-    notes: ''
-  },
-  {
-    id: 'prm_9',
-    code: 'PRM-009',
-    name: 'Diskon 50% Bahan Segar Mau Expired',
-    kind: 'expiring-batch',
-    level: 'line',
-    daysToExpiryThreshold: 3,
-    expiryDiscountUnit: 'percent',
-    expiryDiscountValue: 50,
-    categoryIds: ['cat_5'],
-    status: 'active',
-    usageCount: 0,
-    description: 'Diskon 50% otomatis untuk unit yang berasal dari batch Bahan Segar yang akan kedaluwarsa dalam 3 hari.',
-    notes: ''
-  }
-];
+function numOpt(v: unknown): number | undefined {
+  if (v === null || v === undefined) return undefined;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : undefined;
+}
+
+function normalizePromotion(raw: unknown): Promotion {
+  const r = raw as Partial<Promotion> & Record<string, unknown>;
+  return {
+    id: String(r.id ?? ''),
+    code: String(r.code ?? ''),
+    name: String(r.name ?? ''),
+    kind: (r.kind ?? 'discount') as PromoKind,
+    level: (r.level ?? 'line') as PromoLevel,
+    discountUnit: r.discountUnit as DiscountUnit | undefined,
+    discountValue: numOpt(r.discountValue),
+    comboItems: ((r.comboItems as ComboItem[] | undefined) ?? []).map((c) => ({
+      productId: c.productId,
+      variantId: c.variantId ?? undefined,
+      unitId: c.unitId ?? undefined,
+      unitFactor: c.unitFactor ?? undefined,
+      quantity: Number(c.quantity ?? 0)
+    })),
+    comboPrice: numOpt(r.comboPrice),
+    buyQuantity: numOpt(r.buyQuantity),
+    getQuantity: numOpt(r.getQuantity),
+    bogoProductId: (r.bogoProductId as string | undefined) || undefined,
+    bogoVariantId: (r.bogoVariantId as string | undefined) || undefined,
+    buyUnitId: (r.buyUnitId as string | undefined) || undefined,
+    buyUnitFactor: numOpt(r.buyUnitFactor),
+    getUnitId: (r.getUnitId as string | undefined) || undefined,
+    getUnitFactor: numOpt(r.getUnitFactor),
+    memberPricelistId: (r.memberPricelistId as string | undefined) || undefined,
+    memberPercentOff: numOpt(r.memberPercentOff),
+    daysToExpiryThreshold: numOpt(r.daysToExpiryThreshold),
+    expiryDiscountUnit: r.expiryDiscountUnit as DiscountUnit | undefined,
+    expiryDiscountValue: numOpt(r.expiryDiscountValue),
+    productScopes: ((r.productScopes as ProductScope[] | undefined) ?? []).map((s) => ({
+      productId: s.productId,
+      variantId: s.variantId ?? undefined,
+      unitId: s.unitId ?? undefined,
+      unitFactor: s.unitFactor ?? undefined
+    })),
+    categoryIds: (r.categoryIds as string[] | undefined) ?? [],
+    minimumPurchase: numOpt(r.minimumPurchase),
+    startDate: (r.startDate as string | undefined) || undefined,
+    endDate: (r.endDate as string | undefined) || undefined,
+    daysOfWeek: (r.daysOfWeek as number[] | undefined) ?? [],
+    hourStart: (r.hourStart as string | undefined) || undefined,
+    hourEnd: (r.hourEnd as string | undefined) || undefined,
+    status: (r.status ?? 'active') as PromoStatus,
+    usageCount: Number(r.usageCount ?? 0),
+    usageLimit: numOpt(r.usageLimit),
+    description: (r.description ?? '') as string,
+    notes: (r.notes ?? '') as string
+  };
+}
+
+function toPromoPayload(input: PromotionInput): Record<string, unknown> {
+  return {
+    name: input.name,
+    kind: input.kind,
+    level: input.level,
+    status: input.status,
+    usageLimit: input.usageLimit ?? null,
+    discountUnit: input.discountUnit ?? null,
+    discountValue: input.discountValue ?? null,
+    comboPrice: input.comboPrice ?? null,
+    buyQuantity: input.buyQuantity ?? null,
+    getQuantity: input.getQuantity ?? null,
+    bogoProductId: input.bogoProductId ?? null,
+    bogoVariantId: input.bogoVariantId ?? null,
+    buyUnitId: input.buyUnitId ?? null,
+    buyUnitFactor: input.buyUnitFactor ?? null,
+    getUnitId: input.getUnitId ?? null,
+    getUnitFactor: input.getUnitFactor ?? null,
+    memberPricelistId: input.memberPricelistId ?? null,
+    memberPercentOff: input.memberPercentOff ?? null,
+    daysToExpiryThreshold: input.daysToExpiryThreshold ?? null,
+    expiryDiscountUnit: input.expiryDiscountUnit ?? null,
+    expiryDiscountValue: input.expiryDiscountValue ?? null,
+    minimumPurchase: input.minimumPurchase ?? null,
+    startDate: input.startDate ?? '',
+    endDate: input.endDate ?? '',
+    daysOfWeek: input.daysOfWeek ?? [],
+    hourStart: input.hourStart ?? '',
+    hourEnd: input.hourEnd ?? '',
+    description: input.description ?? '',
+    notes: input.notes ?? '',
+    comboItems: (input.comboItems ?? []).map((c) => ({
+      productId: c.productId,
+      variantId: c.variantId ?? null,
+      unitId: c.unitId ?? null,
+      unitFactor: c.unitFactor ?? null,
+      quantity: c.quantity
+    })),
+    productScopes: (input.productScopes ?? []).map((s) => ({
+      productId: s.productId,
+      variantId: s.variantId ?? null,
+      unitId: s.unitId ?? null,
+      unitFactor: s.unitFactor ?? null
+    })),
+    categoryIds: input.categoryIds ?? []
+  };
+}
 
 class PromotionsStore {
-  items = $state<Promotion[]>([...seed]);
-  private nextId = seed.length + 1;
-  private nextCodeNum = seed.length + 1;
+  items = $state<Promotion[]>([]);
+  loaded = $state(false);
+  loading = $state(false);
 
-  add(input: PromotionInput): Promotion {
-    const promo: Promotion = {
-      ...input,
-      id: `prm_${this.nextId++}`,
-      code: `PRM-${pad3(this.nextCodeNum++)}`,
-      usageCount: 0
-    };
-    this.items.push(promo);
+  async load(): Promise<void> {
+    if (this.loading) return;
+    this.loading = true;
+    try {
+      const list = await listPromotions();
+      this.items = list.map(normalizePromotion);
+      this.loaded = true;
+    } finally {
+      this.loading = false;
+    }
+  }
+
+  async add(input: PromotionInput): Promise<Promotion> {
+    const created = await createPromotion(toPromoPayload(input));
+    const promo = normalizePromotion(created);
+    this.items = [...this.items, promo];
     return promo;
   }
 
-  update(id: string, patch: Partial<PromotionInput>): Promotion | undefined {
-    const idx = this.items.findIndex((p) => p.id === id);
-    if (idx === -1) return undefined;
-    this.items[idx] = { ...this.items[idx], ...patch };
-    return this.items[idx];
+  async update(id: string, patch: PromotionInput): Promise<Promotion | undefined> {
+    const updated = await updatePromotion(id, toPromoPayload(patch));
+    const promo = normalizePromotion(updated);
+    this.items = this.items.map((p) => (p.id === id ? promo : p));
+    return promo;
   }
 
-  remove(id: string): void {
+  async remove(id: string): Promise<void> {
+    await deletePromotion(id);
     this.items = this.items.filter((p) => p.id !== id);
   }
 
@@ -393,7 +374,12 @@ class PromotionsStore {
     return this.items.filter((p) => isPromoUsable(p, at));
   }
 
-  incrementUsage(id: string): void {
+  async incrementUsage(id: string): Promise<void> {
+    try {
+      await incrementPromotionUsage(id);
+    } catch {
+      // Best-effort — POS UX must not block on this.
+    }
     const idx = this.items.findIndex((p) => p.id === id);
     if (idx === -1) return;
     this.items[idx] = {

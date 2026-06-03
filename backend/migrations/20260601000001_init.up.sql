@@ -760,3 +760,142 @@ CREATE TABLE stock_opname_lines (
 );
 
 CREATE INDEX stock_opname_lines_opname_idx ON stock_opname_lines(opname_id);
+
+--bun:split
+
+-- payouts: consignor settlement record. One row per cash/transfer paid to a
+-- supplier covering a date range. Drives the Outstanding column on /payouts
+-- (paid_sum vs owed_sum from consignment batch allocations).
+CREATE TABLE payouts (
+    id                      UUID          PRIMARY KEY DEFAULT gen_random_uuid(),
+    code                    TEXT          NOT NULL UNIQUE,
+    supplier_id             UUID          NOT NULL REFERENCES suppliers(id) ON DELETE RESTRICT,
+    amount                  NUMERIC(14,2) NOT NULL,
+    paid_at                 TEXT          NOT NULL DEFAULT '',
+    method                  TEXT          NOT NULL DEFAULT 'cash',
+    covers_period_start     TEXT          NOT NULL DEFAULT '',
+    covers_period_end       TEXT          NOT NULL DEFAULT '',
+    notes                   TEXT          NOT NULL DEFAULT '',
+    created_at              TIMESTAMPTZ   NOT NULL DEFAULT now(),
+    updated_at              TIMESTAMPTZ   NOT NULL DEFAULT now()
+);
+
+CREATE INDEX payouts_supplier_idx ON payouts(supplier_id);
+CREATE INDEX payouts_paid_at_idx  ON payouts(paid_at DESC);
+
+--bun:split
+
+-- price_changes: append-only audit log of pricing strategy changes. The
+-- strategy objects are stored as JSONB so a record stays meaningful even if
+-- the underlying product schema evolves later. snapshots productName /
+-- pricelistName so renames don't break the history view.
+CREATE TABLE price_changes (
+    id                  UUID          PRIMARY KEY DEFAULT gen_random_uuid(),
+    code                TEXT          NOT NULL UNIQUE,
+    happened_at         TIMESTAMPTZ   NOT NULL DEFAULT now(),
+    product_id          UUID          REFERENCES products(id) ON DELETE SET NULL,
+    product_name        TEXT          NOT NULL DEFAULT '',
+    variant_id          UUID          REFERENCES product_variants(id) ON DELETE SET NULL,
+    variant_name        TEXT          NOT NULL DEFAULT '',
+    packaging_index     INTEGER,
+    packaging_label     TEXT          NOT NULL DEFAULT '',
+    pricelist_id        TEXT          REFERENCES pricelists(id) ON DELETE SET NULL,
+    pricelist_name      TEXT          NOT NULL DEFAULT '',
+    tier_min_qty        NUMERIC(14,4),
+    old_strategy        JSONB         NOT NULL DEFAULT '{}'::jsonb,
+    new_strategy        JSONB         NOT NULL DEFAULT '{}'::jsonb,
+    old_sale            NUMERIC(14,2) NOT NULL DEFAULT 0,
+    new_sale            NUMERIC(14,2) NOT NULL DEFAULT 0,
+    cost                NUMERIC(14,2) NOT NULL DEFAULT 0,
+    source              TEXT          NOT NULL DEFAULT 'manual',
+    notes               TEXT          NOT NULL DEFAULT '',
+    performed_by        TEXT          NOT NULL DEFAULT ''
+);
+
+CREATE INDEX price_changes_product_idx ON price_changes(product_id);
+CREATE INDEX price_changes_at_idx      ON price_changes(happened_at DESC);
+
+--bun:split
+
+-- promotions: top-level promo definitions. Per-kind fields (discount_value,
+-- combo_price, bogo_*, member_*, expiry_*) are sparse — only meaningful for
+-- the matching kind. Scope (specific products, variants, categories, combo
+-- items) lives in the child tables below.
+CREATE TABLE promotions (
+    id                          UUID          PRIMARY KEY DEFAULT gen_random_uuid(),
+    code                        TEXT          NOT NULL UNIQUE,
+    name                        TEXT          NOT NULL,
+    kind                        TEXT          NOT NULL,
+    level                       TEXT          NOT NULL DEFAULT 'line',
+    status                      TEXT          NOT NULL DEFAULT 'active',
+    usage_count                 INTEGER       NOT NULL DEFAULT 0,
+    usage_limit                 INTEGER,
+
+    discount_unit               TEXT,
+    discount_value              NUMERIC(14,2),
+
+    combo_price                 NUMERIC(14,2),
+
+    buy_quantity                NUMERIC(14,4),
+    get_quantity                NUMERIC(14,4),
+    bogo_product_id             UUID          REFERENCES products(id) ON DELETE SET NULL,
+    bogo_variant_id             UUID          REFERENCES product_variants(id) ON DELETE SET NULL,
+    buy_unit_id                 UUID          REFERENCES units(id) ON DELETE SET NULL,
+    buy_unit_factor             NUMERIC(14,4),
+    get_unit_id                 UUID          REFERENCES units(id) ON DELETE SET NULL,
+    get_unit_factor             NUMERIC(14,4),
+
+    member_pricelist_id         TEXT          REFERENCES pricelists(id) ON DELETE SET NULL,
+    member_percent_off          NUMERIC(14,4),
+
+    days_to_expiry_threshold    INTEGER,
+    expiry_discount_unit        TEXT,
+    expiry_discount_value       NUMERIC(14,2),
+
+    minimum_purchase            NUMERIC(14,2),
+    start_date                  TEXT          NOT NULL DEFAULT '',
+    end_date                    TEXT          NOT NULL DEFAULT '',
+    days_of_week                INTEGER[]     NOT NULL DEFAULT '{}',
+    hour_start                  TEXT          NOT NULL DEFAULT '',
+    hour_end                    TEXT          NOT NULL DEFAULT '',
+
+    description                 TEXT          NOT NULL DEFAULT '',
+    notes                       TEXT          NOT NULL DEFAULT '',
+    created_at                  TIMESTAMPTZ   NOT NULL DEFAULT now(),
+    updated_at                  TIMESTAMPTZ   NOT NULL DEFAULT now()
+);
+
+--bun:split
+
+CREATE TABLE promotion_combo_items (
+    id              UUID          PRIMARY KEY DEFAULT gen_random_uuid(),
+    promotion_id    UUID          NOT NULL REFERENCES promotions(id) ON DELETE CASCADE,
+    product_id      UUID          NOT NULL REFERENCES products(id) ON DELETE RESTRICT,
+    variant_id      UUID          REFERENCES product_variants(id) ON DELETE RESTRICT,
+    unit_id         UUID          REFERENCES units(id) ON DELETE SET NULL,
+    unit_factor     NUMERIC(14,4),
+    quantity        NUMERIC(14,4) NOT NULL
+);
+
+CREATE INDEX promotion_combo_items_promo_idx ON promotion_combo_items(promotion_id);
+
+--bun:split
+
+CREATE TABLE promotion_product_scopes (
+    id              UUID          PRIMARY KEY DEFAULT gen_random_uuid(),
+    promotion_id    UUID          NOT NULL REFERENCES promotions(id) ON DELETE CASCADE,
+    product_id      UUID          NOT NULL REFERENCES products(id) ON DELETE RESTRICT,
+    variant_id      UUID          REFERENCES product_variants(id) ON DELETE RESTRICT,
+    unit_id         UUID          REFERENCES units(id) ON DELETE SET NULL,
+    unit_factor     NUMERIC(14,4)
+);
+
+CREATE INDEX promotion_product_scopes_promo_idx ON promotion_product_scopes(promotion_id);
+
+--bun:split
+
+CREATE TABLE promotion_category_scopes (
+    promotion_id    UUID          NOT NULL REFERENCES promotions(id) ON DELETE CASCADE,
+    category_id     UUID          NOT NULL REFERENCES categories(id) ON DELETE CASCADE,
+    PRIMARY KEY (promotion_id, category_id)
+);

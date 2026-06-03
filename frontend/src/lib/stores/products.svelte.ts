@@ -697,14 +697,11 @@ class ProductsStore {
       merged as unknown as Record<string, unknown>
     )) as unknown as Product;
     this.items = this.items.map((p) => (p.id === id ? updated : p));
-    // Mirror the legacy price-change audit log so /riwayat-harga keeps
-    // showing entries. PriceChanges store is still client-side until it
-    // gets its own backend migration.
     const diffs = diffPriceEntries(before, updated);
     if (diffs.length > 0) {
       const source: PriceChangeSource = options?.source ?? 'manual';
       const notes = options?.notes ?? '';
-      priceChanges.addMany(diffs.map((d) => ({ ...d, source, notes })));
+      void priceChanges.addMany(diffs.map((d) => ({ ...d, source, notes })));
     }
     return updated;
   }

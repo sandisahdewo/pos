@@ -29,6 +29,9 @@
   import { stockMovements } from '$lib/stores/stockMovements.svelte';
   import { productionRuns } from '$lib/stores/productionRuns.svelte';
   import { stockOpnames } from '$lib/stores/stockOpnames.svelte';
+  import { payouts } from '$lib/stores/payouts.svelte';
+  import { priceChanges } from '$lib/stores/priceChanges.svelte';
+  import { promotions } from '$lib/stores/promotions.svelte';
   import { Button } from '$lib/components/ui';
   import { permissionForPath, permissionLabel } from '$lib/auth/permissions';
 
@@ -75,6 +78,11 @@
       productionRuns.load().catch(() => {});
     if (!stockOpnames.loaded && !stockOpnames.loading)
       stockOpnames.load().catch(() => {});
+    if (!payouts.loaded && !payouts.loading) payouts.load().catch(() => {});
+    if (!priceChanges.loaded && !priceChanges.loading)
+      priceChanges.load().catch(() => {});
+    if (!promotions.loaded && !promotions.loading)
+      promotions.load().catch(() => {});
   });
 
   const isAuthRoute = $derived(page.url.pathname.startsWith('/login'));

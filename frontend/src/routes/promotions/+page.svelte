@@ -292,12 +292,17 @@
     confirmOpen = true;
   }
 
-  function doDelete() {
+  async function doDelete() {
     if (!pendingDelete) return;
     const name = pendingDelete.name;
-    promotions.remove(pendingDelete.id);
+    const id = pendingDelete.id;
     pendingDelete = null;
-    toast.success('Promo dihapus', name);
+    try {
+      await promotions.remove(id);
+      toast.success('Promo dihapus', name);
+    } catch (err) {
+      toast.error('Gagal menghapus promo', err instanceof Error ? err.message : '');
+    }
   }
 </script>
 

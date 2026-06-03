@@ -419,3 +419,85 @@ CREATE TABLE purchase_order_payments (
 );
 
 CREATE INDEX purchase_order_payments_po_idx ON purchase_order_payments(purchase_order_id);
+
+--bun:split
+
+-- Shift templates: reusable shift definitions (Pagi 06–14, Sore 14–22, etc.).
+-- Times stored as TEXT "HH:MM" so the API and frontend can stay in lockstep.
+CREATE TABLE shift_templates (
+    id         UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    name       TEXT        NOT NULL,
+    start_time TEXT        NOT NULL DEFAULT '00:00',
+    end_time   TEXT        NOT NULL DEFAULT '00:00',
+    notes      TEXT        NOT NULL DEFAULT '',
+    status     TEXT        NOT NULL DEFAULT 'active',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+--bun:split
+
+-- Shift sessions: an actual shift opened by an employee (open → closed/cancelled).
+-- opening_cash / closing_cash are small {total, denominations?[]} objects —
+-- stored as JSONB to avoid two extra tables for what is a single read.
+CREATE TABLE shift_sessions (
+    id                    UUID          PRIMARY KEY DEFAULT gen_random_uuid(),
+    code                  TEXT          NOT NULL UNIQUE,
+    employee_id           UUID          NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+    template_id           UUID          REFERENCES shift_templates(id) ON DELETE SET NULL,
+    opened_at             TIMESTAMPTZ   NOT NULL DEFAULT now(),
+    closed_at             TIMESTAMPTZ,
+    status                TEXT          NOT NULL DEFAULT 'open',
+    opening_cash          JSONB         NOT NULL DEFAULT '{"total":0}'::jsonb,
+    closing_cash          JSONB,
+    expected_closing_cash NUMERIC(14,2),
+    variance              NUMERIC(14,2),
+    notes                 TEXT          NOT NULL DEFAULT '',
+    created_at            TIMESTAMPTZ   NOT NULL DEFAULT now(),
+    updated_at            TIMESTAMPTZ   NOT NULL DEFAULT now()
+);
+
+CREATE INDEX shift_sessions_employee_idx ON shift_sessions(employee_id);
+CREATE INDEX shift_sessions_status_idx   ON shift_sessions(status);
+-- At most one open shift across the till at any given time.
+CREATE UNIQUE INDEX shift_sessions_one_open ON shift_sessions((status)) WHERE status = 'open';
+
+--bun:split
+
+-- Cash-in / cash-out entries that happened during a shift. Append-mostly; FK
+-- cascade on shift_session delete.
+CREATE TABLE shift_cash_entries (
+    id               UUID          PRIMARY KEY DEFAULT gen_random_uuid(),
+    shift_session_id UUID          NOT NULL REFERENCES shift_sessions(id) ON DELETE CASCADE,
+    happened_at      TIMESTAMPTZ   NOT NULL DEFAULT now(),
+    kind             TEXT          NOT NULL,
+    category         TEXT          NOT NULL DEFAULT 'lain',
+    amount           NUMERIC(14,2) NOT NULL,
+    notes            TEXT          NOT NULL DEFAULT '',
+    performed_by     TEXT          NOT NULL DEFAULT '',
+    position         INTEGER       NOT NULL DEFAULT 0
+);
+
+CREATE INDEX shift_cash_entries_session_idx ON shift_cash_entries(shift_session_id);
+
+--bun:split
+
+-- Shift assignments: planned schedule. Pairs (template, employee) on a date.
+-- actual_shift_id is populated once the planned slot is fulfilled by an
+-- opened session — kept as a soft link (SET NULL on session delete) so the
+-- schedule isn't lost if the session row is purged.
+CREATE TABLE shift_assignments (
+    id              UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    date            TEXT        NOT NULL,
+    template_id     UUID        NOT NULL REFERENCES shift_templates(id) ON DELETE RESTRICT,
+    employee_id     UUID        NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+    notes           TEXT        NOT NULL DEFAULT '',
+    status          TEXT        NOT NULL DEFAULT 'planned',
+    actual_shift_id UUID        REFERENCES shift_sessions(id) ON DELETE SET NULL,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (date, template_id, employee_id)
+);
+
+CREATE INDEX shift_assignments_date_idx ON shift_assignments(date);
+CREATE INDEX shift_assignments_employee_idx ON shift_assignments(employee_id);

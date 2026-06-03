@@ -63,7 +63,7 @@
     });
   }
 
-  function submit() {
+  async function submit() {
     error = null;
     if (!templateId) {
       error = 'Pilih template shift.';
@@ -73,21 +73,29 @@
       error = 'Pilih pegawai.';
       return;
     }
-    if (editing) {
-      shiftSchedule.update(editing.id, { templateId, employeeId, notes });
-      toast.success('Jadwal diperbarui');
-    } else {
-      shiftSchedule.add({ date, templateId, employeeId, notes });
-      toast.success('Jadwal ditambahkan');
+    try {
+      if (editing) {
+        await shiftSchedule.update(editing.id, { templateId, employeeId, notes });
+        toast.success('Jadwal diperbarui');
+      } else {
+        await shiftSchedule.add({ date, templateId, employeeId, notes });
+        toast.success('Jadwal ditambahkan');
+      }
+      open = false;
+    } catch (err) {
+      error = err instanceof Error ? err.message : 'Gagal menyimpan jadwal.';
     }
-    open = false;
   }
 
-  function doDelete() {
+  async function doDelete() {
     if (!editing) return;
-    shiftSchedule.remove(editing.id);
-    toast.success('Jadwal dihapus');
-    open = false;
+    try {
+      await shiftSchedule.remove(editing.id);
+      toast.success('Jadwal dihapus');
+      open = false;
+    } catch (err) {
+      error = err instanceof Error ? err.message : 'Gagal menghapus jadwal.';
+    }
   }
 </script>
 

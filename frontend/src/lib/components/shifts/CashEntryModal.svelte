@@ -58,7 +58,7 @@
     }))
   );
 
-  function submit() {
+  async function submit() {
     if (!shift) return;
     error = null;
     if (amount <= 0) {
@@ -66,7 +66,7 @@
       return;
     }
     const performer = employees.getById(shift.employeeId)?.name ?? 'Kasir';
-    const res = shifts.addEntry(shift.id, {
+    const res = await shifts.addEntry(shift.id, {
       kind,
       category,
       amount,

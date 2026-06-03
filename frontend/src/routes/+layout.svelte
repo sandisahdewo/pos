@@ -19,6 +19,9 @@
   import { locations } from '$lib/stores/locations.svelte';
   import { products } from '$lib/stores/products.svelte';
   import { purchaseOrders } from '$lib/stores/purchaseOrders.svelte';
+  import { shiftTemplates } from '$lib/stores/shiftTemplates.svelte';
+  import { shiftSchedule } from '$lib/stores/shiftSchedule.svelte';
+  import { shifts } from '$lib/stores/shifts.svelte';
   import { Button } from '$lib/components/ui';
   import { permissionForPath, permissionLabel } from '$lib/auth/permissions';
 
@@ -50,6 +53,11 @@
     if (!products.loaded && !products.loading) products.load().catch(() => {});
     if (!purchaseOrders.loaded && !purchaseOrders.loading)
       purchaseOrders.load().catch(() => {});
+    if (!shiftTemplates.loaded && !shiftTemplates.loading)
+      shiftTemplates.load().catch(() => {});
+    if (!shiftSchedule.loaded && !shiftSchedule.loading)
+      shiftSchedule.load().catch(() => {});
+    if (!shifts.loaded && !shifts.loading) shifts.load().catch(() => {});
   });
 
   const isAuthRoute = $derived(page.url.pathname.startsWith('/login'));

@@ -41,10 +41,10 @@
     }
   });
 
-  function submit() {
+  async function submit() {
     if (!shift) return;
     error = null;
-    const res = shifts.close(shift.id, { closingCash, notes });
+    const res = await shifts.close(shift.id, { closingCash, notes });
     if (!res.ok) {
       error = res.reason;
       return;

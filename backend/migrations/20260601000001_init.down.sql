@@ -2,6 +2,26 @@ SET statement_timeout = 0;
 
 --bun:split
 
+DROP TABLE IF EXISTS shift_assignments;
+
+--bun:split
+
+DROP TABLE IF EXISTS shift_cash_entries;
+
+--bun:split
+
+DROP INDEX IF EXISTS shift_sessions_one_open;
+
+--bun:split
+
+DROP TABLE IF EXISTS shift_sessions;
+
+--bun:split
+
+DROP TABLE IF EXISTS shift_templates;
+
+--bun:split
+
 DROP TABLE IF EXISTS purchase_order_payments;
 
 --bun:split

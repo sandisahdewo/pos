@@ -55,6 +55,9 @@ func main() {
 	if err := seedLocations(ctx, bundb); err != nil {
 		log.Fatalf("seed locations: %v", err)
 	}
+	if err := seedShiftTemplates(ctx, bundb); err != nil {
+		log.Fatalf("seed shift templates: %v", err)
+	}
 
 	email := envOr("ADMIN_EMAIL", "admin@pos.local")
 	password := envOr("ADMIN_PASSWORD", "admin123")
@@ -402,6 +405,41 @@ func seedLocations(ctx context.Context, db *bun.DB) error {
 		}
 		return nil
 	})
+}
+
+// systemShiftTemplates — common 3-shift rotation (Pagi / Sore / Malam).
+// Upserted by name; admins can edit times / notes via the UI afterwards.
+var systemShiftTemplates = []models.ShiftTemplate{
+	{Name: "Pagi", StartTime: "06:00", EndTime: "14:00", Notes: "Buka toko, sarapan, makan siang awal.", Status: models.ShiftTemplateStatusActive},
+	{Name: "Sore", StartTime: "14:00", EndTime: "22:00", Notes: "Makan siang lanjutan, jam pulang kantor, makan malam.", Status: models.ShiftTemplateStatusActive},
+	{Name: "Malam", StartTime: "22:00", EndTime: "06:00", Notes: "Pelanggan begadang, ojol shift malam.", Status: models.ShiftTemplateStatusActive},
+}
+
+func seedShiftTemplates(ctx context.Context, db *bun.DB) error {
+	for _, t := range systemShiftTemplates {
+		row := t
+		// shift_templates has no UNIQUE on name yet; check first then insert.
+		// Idempotent in spirit — re-running the seed is safe.
+		var existing models.ShiftTemplate
+		err := db.NewSelect().Model(&existing).Where("name = ?", row.Name).Scan(ctx)
+		if err == nil {
+			_, err = db.NewUpdate().Table("shift_templates").Where("id = ?", existing.ID).
+				Set("start_time = ?", row.StartTime).
+				Set("end_time = ?", row.EndTime).
+				Set("notes = ?", row.Notes).
+				Set("status = ?", row.Status).
+				Set("updated_at = current_timestamp").
+				Exec(ctx)
+			if err != nil {
+				return fmt.Errorf("update shift template %s: %w", row.Name, err)
+			}
+			continue
+		}
+		if _, err := db.NewInsert().Model(&row).Exec(ctx); err != nil {
+			return fmt.Errorf("insert shift template %s: %w", row.Name, err)
+		}
+	}
+	return nil
 }
 
 func envOr(key, fallback string) string {

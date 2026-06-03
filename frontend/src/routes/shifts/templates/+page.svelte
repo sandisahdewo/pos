@@ -43,7 +43,7 @@
     tplErrors = {};
   }
 
-  function saveTpl() {
+  async function saveTpl() {
     const next: typeof tplErrors = {};
     if (!tplDraft.name.trim()) next.name = 'Nama wajib diisi.';
     if (!/^\d{2}:\d{2}$/.test(tplDraft.startTime) || !/^\d{2}:\d{2}$/.test(tplDraft.endTime))
@@ -51,34 +51,51 @@
     tplErrors = next;
     if (Object.keys(next).length) return;
 
-    if (editingTplId === 'new') {
-      shiftTemplates.add({
-        name: tplDraft.name.trim(),
-        startTime: tplDraft.startTime,
-        endTime: tplDraft.endTime,
-        notes: tplDraft.notes,
-        status: 'active'
-      });
-      toast.success('Template ditambahkan', tplDraft.name);
-    } else if (editingTplId) {
-      shiftTemplates.update(editingTplId, {
-        name: tplDraft.name.trim(),
-        startTime: tplDraft.startTime,
-        endTime: tplDraft.endTime,
-        notes: tplDraft.notes
-      });
-      toast.success('Template diperbarui', tplDraft.name);
+    try {
+      if (editingTplId === 'new') {
+        await shiftTemplates.add({
+          name: tplDraft.name.trim(),
+          startTime: tplDraft.startTime,
+          endTime: tplDraft.endTime,
+          notes: tplDraft.notes,
+          status: 'active'
+        });
+        toast.success('Template ditambahkan', tplDraft.name);
+      } else if (editingTplId) {
+        await shiftTemplates.update(editingTplId, {
+          name: tplDraft.name.trim(),
+          startTime: tplDraft.startTime,
+          endTime: tplDraft.endTime,
+          notes: tplDraft.notes
+        });
+        toast.success('Template diperbarui', tplDraft.name);
+      }
+      editingTplId = null;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Gagal menyimpan template.';
+      toast.error('Gagal menyimpan', msg);
     }
-    editingTplId = null;
   }
 
-  function removeTpl(t: ShiftTemplate) {
-    shiftTemplates.remove(t.id);
-    toast.success('Template dihapus', t.name);
+  async function removeTpl(t: ShiftTemplate) {
+    try {
+      await shiftTemplates.remove(t.id);
+      toast.success('Template dihapus', t.name);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Gagal menghapus template.';
+      toast.error('Tidak bisa menghapus', msg);
+    }
   }
 
-  function toggleArchive(t: ShiftTemplate) {
-    shiftTemplates.update(t.id, { status: t.status === 'active' ? 'archived' : 'active' });
+  async function toggleArchive(t: ShiftTemplate) {
+    try {
+      await shiftTemplates.update(t.id, {
+        status: t.status === 'active' ? 'archived' : 'active'
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Gagal.';
+      toast.error('Gagal mengubah status', msg);
+    }
   }
 </script>
 

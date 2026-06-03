@@ -95,9 +95,9 @@
     return d.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
   }
 
-  function doCancel() {
+  async function doCancel() {
     if (!shift) return;
-    const res = shifts.cancel(shift.id);
+    const res = await shifts.cancel(shift.id);
     if (!res.ok) {
       toast.error('Gagal membatalkan', res.reason ?? '');
       return;
@@ -106,9 +106,9 @@
     cancelConfirmOpen = false;
   }
 
-  function doDeleteEntry() {
+  async function doDeleteEntry() {
     if (!shift || !pendingDeleteEntryId) return;
-    const res = shifts.removeEntry(shift.id, pendingDeleteEntryId);
+    const res = await shifts.removeEntry(shift.id, pendingDeleteEntryId);
     if (!res.ok) {
       toast.error('Gagal menghapus', res.reason ?? '');
     } else {

@@ -1,3 +1,12 @@
+import {
+  listShiftTemplates,
+  createShiftTemplate,
+  updateShiftTemplate,
+  deleteShiftTemplate,
+  type ApiShiftTemplate,
+  type ShiftTemplateInput as ApiShiftTemplateInput
+} from '$lib/api/shift-templates';
+
 export type ShiftTemplateStatus = 'active' | 'archived';
 
 export type ShiftTemplate = {
@@ -10,33 +19,6 @@ export type ShiftTemplate = {
 };
 
 export type ShiftTemplateInput = Omit<ShiftTemplate, 'id'>;
-
-const seed: ShiftTemplate[] = [
-  {
-    id: 'shf_tpl_1',
-    name: 'Pagi',
-    startTime: '06:00',
-    endTime: '14:00',
-    notes: 'Buka toko, sarapan, makan siang awal.',
-    status: 'active'
-  },
-  {
-    id: 'shf_tpl_2',
-    name: 'Sore',
-    startTime: '14:00',
-    endTime: '22:00',
-    notes: 'Makan siang lanjutan, jam pulang kantor, makan malam.',
-    status: 'active'
-  },
-  {
-    id: 'shf_tpl_3',
-    name: 'Malam',
-    startTime: '22:00',
-    endTime: '06:00',
-    notes: 'Pelanggan begadang, ojol shift malam.',
-    status: 'active'
-  }
-];
 
 function timeToMinutes(hhmm: string): number {
   const [h, m] = hhmm.split(':').map(Number);
@@ -54,24 +36,69 @@ export function formatShiftRange(t: { startTime: string; endTime: string }): str
   return `${t.startTime}–${t.endTime}`;
 }
 
+function toTemplate(t: ApiShiftTemplate): ShiftTemplate {
+  return {
+    id: t.id,
+    name: t.name,
+    startTime: t.startTime,
+    endTime: t.endTime,
+    notes: t.notes,
+    status: t.status
+  };
+}
+
+function toApiInput(t: ShiftTemplateInput): ApiShiftTemplateInput {
+  return {
+    name: t.name,
+    startTime: t.startTime,
+    endTime: t.endTime,
+    notes: t.notes,
+    status: t.status
+  };
+}
+
 class ShiftTemplatesStore {
-  items = $state<ShiftTemplate[]>([...seed]);
-  private nextId = seed.length + 1;
+  items = $state<ShiftTemplate[]>([]);
+  loaded = $state(false);
+  loading = $state(false);
 
-  add(input: ShiftTemplateInput): ShiftTemplate {
-    const tpl: ShiftTemplate = { ...input, id: `shf_tpl_${this.nextId++}` };
-    this.items.push(tpl);
-    return tpl;
+  async load(): Promise<void> {
+    if (this.loading) return;
+    this.loading = true;
+    try {
+      const list = await listShiftTemplates();
+      this.items = list.map(toTemplate);
+      this.loaded = true;
+    } finally {
+      this.loading = false;
+    }
   }
 
-  update(id: string, patch: Partial<ShiftTemplateInput>): ShiftTemplate | undefined {
-    const idx = this.items.findIndex((t) => t.id === id);
-    if (idx === -1) return undefined;
-    this.items[idx] = { ...this.items[idx], ...patch };
-    return this.items[idx];
+  async add(input: ShiftTemplateInput): Promise<ShiftTemplate> {
+    const created = await createShiftTemplate(toApiInput(input));
+    const t = toTemplate(created);
+    this.items = [...this.items, t];
+    return t;
   }
 
-  remove(id: string) {
+  async update(id: string, patch: Partial<ShiftTemplateInput>): Promise<ShiftTemplate | undefined> {
+    const current = this.getById(id);
+    if (!current) return undefined;
+    const merged: ShiftTemplateInput = {
+      name: patch.name ?? current.name,
+      startTime: patch.startTime ?? current.startTime,
+      endTime: patch.endTime ?? current.endTime,
+      notes: patch.notes ?? current.notes,
+      status: patch.status ?? current.status
+    };
+    const updated = await updateShiftTemplate(id, toApiInput(merged));
+    const t = toTemplate(updated);
+    this.items = this.items.map((x) => (x.id === id ? t : x));
+    return t;
+  }
+
+  async remove(id: string): Promise<void> {
+    await deleteShiftTemplate(id);
     this.items = this.items.filter((t) => t.id !== id);
   }
 

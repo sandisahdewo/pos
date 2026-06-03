@@ -1,6 +1,10 @@
 import { employees } from './employees.svelte';
 import { orders } from './orders.svelte';
-import { shiftTemplates } from './shiftTemplates.svelte';
+import {
+  listShiftSessions,
+  createShiftSession,
+  updateShiftSession
+} from '$lib/api/shifts';
 
 export type ShiftStatus = 'open' | 'closed' | 'cancelled';
 
@@ -82,15 +86,6 @@ export type ShiftSession = {
   notes: string;
 };
 
-function pad3(n: number): string {
-  return n.toString().padStart(3, '0');
-}
-
-function todayCode(seq: number): string {
-  const year = new Date().getFullYear();
-  return `SHF-${year}-${pad3(seq)}`;
-}
-
 export function denominationTotal(denoms?: CashDenomination[]): number {
   if (!denoms) return 0;
   return denoms.reduce((sum, d) => sum + d.unit * d.count, 0);
@@ -166,10 +161,73 @@ export function expectedClosingCash(shift: ShiftSession): number {
   return total;
 }
 
+function normalizeShift(raw: unknown): ShiftSession {
+  const r = raw as Partial<ShiftSession> & Record<string, unknown>;
+  return {
+    id: String(r.id ?? ''),
+    code: String(r.code ?? ''),
+    employeeId: String(r.employeeId ?? ''),
+    templateId: (r.templateId as string | undefined) || undefined,
+    openedAt: String(r.openedAt ?? ''),
+    closedAt: (r.closedAt as string | undefined) || undefined,
+    status: (r.status ?? 'open') as ShiftStatus,
+    openingCash: (r.openingCash as CashCount) ?? { total: 0 },
+    closingCash: (r.closingCash as CashCount | undefined) || undefined,
+    expectedClosingCash: (r.expectedClosingCash as number | undefined) ?? undefined,
+    variance: (r.variance as number | undefined) ?? undefined,
+    entries: ((r.entries as CashEntry[] | undefined) ?? []).map((e) => ({
+      id: e.id,
+      at: e.at,
+      kind: e.kind,
+      category: e.category,
+      amount: Number(e.amount ?? 0),
+      notes: e.notes ?? '',
+      performedBy: e.performedBy ?? ''
+    })),
+    notes: (r.notes ?? '') as string
+  };
+}
+
+function toPayload(s: Partial<ShiftSession>): Record<string, unknown> {
+  return {
+    employeeId: s.employeeId,
+    templateId: s.templateId || null,
+    openedAt: s.openedAt,
+    closedAt: s.closedAt || null,
+    status: s.status ?? 'open',
+    openingCash: s.openingCash ?? { total: 0 },
+    closingCash: s.closingCash ?? null,
+    expectedClosingCash: s.expectedClosingCash ?? null,
+    variance: s.variance ?? null,
+    notes: s.notes ?? '',
+    entries: (s.entries ?? []).map((e) => ({
+      id: e.id,
+      at: e.at,
+      kind: e.kind,
+      category: e.category,
+      amount: e.amount,
+      notes: e.notes,
+      performedBy: e.performedBy
+    }))
+  };
+}
+
 class ShiftsStore {
   items = $state<ShiftSession[]>([]);
-  private nextId = 1;
-  private nextCodeNum = 1;
+  loaded = $state(false);
+  loading = $state(false);
+
+  async load(): Promise<void> {
+    if (this.loading) return;
+    this.loading = true;
+    try {
+      const list = await listShiftSessions();
+      this.items = list.map(normalizeShift);
+      this.loaded = true;
+    } finally {
+      this.loading = false;
+    }
+  }
 
   active(): ShiftSession | undefined {
     return this.items.find((s) => s.status === 'open');
@@ -191,47 +249,47 @@ class ShiftsStore {
     return best;
   }
 
-  open(args: {
+  async open(args: {
     employeeId: string;
     templateId?: string;
     openingCash: CashCount;
     notes?: string;
     at?: string;
-  }): { ok: true; shift: ShiftSession } | { ok: false; reason: string } {
+  }): Promise<{ ok: true; shift: ShiftSession } | { ok: false; reason: string }> {
     const emp = employees.getById(args.employeeId);
     if (!emp) return { ok: false, reason: 'Pegawai tidak ditemukan.' };
     if (emp.status !== 'active') return { ok: false, reason: 'Pegawai tidak aktif.' };
     if (this.active()) return { ok: false, reason: 'Masih ada shift terbuka. Tutup dulu shift sebelumnya.' };
-    if (args.templateId) {
-      const tpl = shiftTemplates.getById(args.templateId);
-      if (!tpl) return { ok: false, reason: 'Template shift tidak ditemukan.' };
-    }
     if (args.openingCash.total < 0) return { ok: false, reason: 'Kas awal tidak boleh negatif.' };
-    const shift: ShiftSession = {
-      id: `shf_${this.nextId++}`,
-      code: todayCode(this.nextCodeNum++),
-      employeeId: args.employeeId,
-      templateId: args.templateId,
-      openedAt: args.at ?? new Date().toISOString(),
-      status: 'open',
-      openingCash: args.openingCash,
-      entries: [],
-      notes: args.notes ?? ''
-    };
-    this.items.push(shift);
-    return { ok: true, shift };
+    try {
+      const created = await createShiftSession({
+        employeeId: args.employeeId,
+        templateId: args.templateId || null,
+        openedAt: args.at ?? new Date().toISOString(),
+        status: 'open',
+        openingCash: args.openingCash,
+        notes: args.notes ?? '',
+        entries: []
+      });
+      const shift = normalizeShift(created);
+      this.items = [shift, ...this.items];
+      return { ok: true, shift };
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : 'Gagal membuka shift.';
+      return { ok: false, reason };
+    }
   }
 
-  addEntry(
+  async addEntry(
     shiftId: string,
     input: Omit<CashEntry, 'id' | 'at'> & { at?: string }
-  ): { ok: true; entry: CashEntry } | { ok: false; reason: string } {
+  ): Promise<{ ok: true; entry: CashEntry } | { ok: false; reason: string }> {
     const shift = this.getById(shiftId);
     if (!shift) return { ok: false, reason: 'Shift tidak ditemukan.' };
     if (shift.status !== 'open') return { ok: false, reason: 'Shift sudah tutup.' };
     if (input.amount <= 0) return { ok: false, reason: 'Jumlah harus lebih dari nol.' };
     const entry: CashEntry = {
-      id: `cse_${crypto.randomUUID().slice(0, 8)}`,
+      id: crypto.randomUUID(),
       at: input.at ?? new Date().toISOString(),
       kind: input.kind,
       category: input.category,
@@ -239,43 +297,85 @@ class ShiftsStore {
       notes: input.notes,
       performedBy: input.performedBy
     };
-    shift.entries.push(entry);
-    return { ok: true, entry };
+    try {
+      const updated = await updateShiftSession(
+        shiftId,
+        toPayload({ ...shift, entries: [...shift.entries, entry] })
+      );
+      const s = normalizeShift(updated);
+      this.items = this.items.map((x) => (x.id === shiftId ? s : x));
+      const last = s.entries[s.entries.length - 1] ?? entry;
+      return { ok: true, entry: last };
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : 'Gagal menambah catatan.';
+      return { ok: false, reason };
+    }
   }
 
-  removeEntry(shiftId: string, entryId: string): { ok: boolean; reason?: string } {
+  async removeEntry(shiftId: string, entryId: string): Promise<{ ok: boolean; reason?: string }> {
     const shift = this.getById(shiftId);
     if (!shift) return { ok: false, reason: 'Shift tidak ditemukan.' };
     if (shift.status !== 'open') return { ok: false, reason: 'Shift sudah tutup, tidak bisa diubah.' };
     const before = shift.entries.length;
-    shift.entries = shift.entries.filter((e) => e.id !== entryId);
-    return { ok: shift.entries.length < before };
+    const nextEntries = shift.entries.filter((e) => e.id !== entryId);
+    if (nextEntries.length === before) return { ok: false };
+    try {
+      const updated = await updateShiftSession(shiftId, toPayload({ ...shift, entries: nextEntries }));
+      const s = normalizeShift(updated);
+      this.items = this.items.map((x) => (x.id === shiftId ? s : x));
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, reason: err instanceof Error ? err.message : 'Gagal.' };
+    }
   }
 
-  close(
+  async close(
     shiftId: string,
     args: { closingCash: CashCount; notes?: string; at?: string }
-  ): { ok: true; shift: ShiftSession } | { ok: false; reason: string } {
+  ): Promise<{ ok: true; shift: ShiftSession } | { ok: false; reason: string }> {
     const shift = this.getById(shiftId);
     if (!shift) return { ok: false, reason: 'Shift tidak ditemukan.' };
     if (shift.status !== 'open') return { ok: false, reason: 'Shift bukan dalam status terbuka.' };
     if (args.closingCash.total < 0) return { ok: false, reason: 'Kas akhir tidak boleh negatif.' };
-    shift.closedAt = args.at ?? new Date().toISOString();
-    shift.status = 'closed';
-    shift.closingCash = args.closingCash;
-    shift.expectedClosingCash = expectedClosingCash(shift);
-    shift.variance = args.closingCash.total - shift.expectedClosingCash;
-    if (args.notes) shift.notes = args.notes;
-    return { ok: true, shift };
+    const closedAt = args.at ?? new Date().toISOString();
+    const expected = expectedClosingCash(shift);
+    const variance = args.closingCash.total - expected;
+    try {
+      const updated = await updateShiftSession(
+        shiftId,
+        toPayload({
+          ...shift,
+          status: 'closed',
+          closedAt,
+          closingCash: args.closingCash,
+          expectedClosingCash: expected,
+          variance,
+          notes: args.notes ?? shift.notes
+        })
+      );
+      const s = normalizeShift(updated);
+      this.items = this.items.map((x) => (x.id === shiftId ? s : x));
+      return { ok: true, shift: s };
+    } catch (err) {
+      return { ok: false, reason: err instanceof Error ? err.message : 'Gagal menutup shift.' };
+    }
   }
 
-  cancel(shiftId: string): { ok: boolean; reason?: string } {
+  async cancel(shiftId: string): Promise<{ ok: boolean; reason?: string }> {
     const shift = this.getById(shiftId);
     if (!shift) return { ok: false, reason: 'Shift tidak ditemukan.' };
     if (shift.status !== 'open') return { ok: false, reason: 'Hanya shift terbuka yang bisa dibatalkan.' };
-    shift.status = 'cancelled';
-    shift.closedAt = new Date().toISOString();
-    return { ok: true };
+    try {
+      const updated = await updateShiftSession(
+        shiftId,
+        toPayload({ ...shift, status: 'cancelled', closedAt: new Date().toISOString() })
+      );
+      const s = normalizeShift(updated);
+      this.items = this.items.map((x) => (x.id === shiftId ? s : x));
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, reason: err instanceof Error ? err.message : 'Gagal.' };
+    }
   }
 }
 

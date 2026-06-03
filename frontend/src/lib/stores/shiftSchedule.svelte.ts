@@ -1,5 +1,13 @@
 import { shiftTemplates, type ShiftTemplate } from './shiftTemplates.svelte';
-import { employees } from './employees.svelte';
+import {
+  listShiftAssignments,
+  createShiftAssignment,
+  updateShiftAssignment,
+  deleteShiftAssignment,
+  bulkShiftAssignments,
+  type ApiShiftAssignment,
+  type ShiftAssignmentInput as ApiShiftAssignmentInput
+} from '$lib/api/shift-assignments';
 
 /** Minutes a kasir is allowed to open their shift before its scheduled start time. */
 export const SHIFT_OPEN_GRACE_BEFORE_MIN = 30;
@@ -26,23 +34,11 @@ export type WeekdayPattern = {
 };
 
 export const dayOfWeekLabels: Record<number, string> = {
-  0: 'Minggu',
-  1: 'Senin',
-  2: 'Selasa',
-  3: 'Rabu',
-  4: 'Kamis',
-  5: 'Jumat',
-  6: 'Sabtu'
+  0: 'Minggu', 1: 'Senin', 2: 'Selasa', 3: 'Rabu', 4: 'Kamis', 5: 'Jumat', 6: 'Sabtu'
 };
 
 export const dayOfWeekShort: Record<number, string> = {
-  0: 'Min',
-  1: 'Sen',
-  2: 'Sel',
-  3: 'Rab',
-  4: 'Kam',
-  5: 'Jum',
-  6: 'Sab'
+  0: 'Min', 1: 'Sen', 2: 'Sel', 3: 'Rab', 4: 'Kam', 5: 'Jum', 6: 'Sab'
 };
 
 export const assignmentStatusLabels: Record<AssignmentStatus, string> = {
@@ -80,32 +76,75 @@ function parseISODate(iso: string): Date {
   return new Date(y, (m || 1) - 1, d || 1);
 }
 
+function toAssignment(a: ApiShiftAssignment): ShiftAssignment {
+  return {
+    id: a.id,
+    date: a.date,
+    templateId: a.templateId,
+    employeeId: a.employeeId,
+    notes: a.notes,
+    status: a.status,
+    actualShiftId: a.actualShiftId
+  };
+}
+
+function toApiInput(a: ShiftAssignmentInput): ApiShiftAssignmentInput {
+  return {
+    date: a.date,
+    templateId: a.templateId,
+    employeeId: a.employeeId,
+    notes: a.notes,
+    status: a.status,
+    actualShiftId: a.actualShiftId ?? null
+  };
+}
+
 class ShiftScheduleStore {
   items = $state<ShiftAssignment[]>([]);
-  private nextId = 1;
+  loaded = $state(false);
+  loading = $state(false);
 
-  add(input: ShiftAssignmentInput): ShiftAssignment {
-    const assignment: ShiftAssignment = {
-      id: `sasg_${this.nextId++}`,
-      status: input.status ?? 'planned',
-      date: input.date,
-      templateId: input.templateId,
-      employeeId: input.employeeId,
-      notes: input.notes,
-      actualShiftId: input.actualShiftId
+  async load(): Promise<void> {
+    if (this.loading) return;
+    this.loading = true;
+    try {
+      const list = await listShiftAssignments();
+      this.items = list.map(toAssignment);
+      this.loaded = true;
+    } finally {
+      this.loading = false;
+    }
+  }
+
+  async add(input: ShiftAssignmentInput): Promise<ShiftAssignment> {
+    const created = await createShiftAssignment(toApiInput(input));
+    const a = toAssignment(created);
+    this.items = [...this.items, a];
+    return a;
+  }
+
+  async update(
+    id: string,
+    patch: Partial<ShiftAssignmentInput>
+  ): Promise<ShiftAssignment | undefined> {
+    const current = this.getById(id);
+    if (!current) return undefined;
+    const merged: ShiftAssignmentInput = {
+      date: patch.date ?? current.date,
+      templateId: patch.templateId ?? current.templateId,
+      employeeId: patch.employeeId ?? current.employeeId,
+      notes: patch.notes ?? current.notes,
+      status: patch.status ?? current.status,
+      actualShiftId: patch.actualShiftId ?? current.actualShiftId
     };
-    this.items.push(assignment);
-    return assignment;
+    const updated = await updateShiftAssignment(id, toApiInput(merged));
+    const a = toAssignment(updated);
+    this.items = this.items.map((x) => (x.id === id ? a : x));
+    return a;
   }
 
-  update(id: string, patch: Partial<ShiftAssignmentInput>): ShiftAssignment | undefined {
-    const idx = this.items.findIndex((a) => a.id === id);
-    if (idx === -1) return undefined;
-    this.items[idx] = { ...this.items[idx], ...patch };
-    return this.items[idx];
-  }
-
-  remove(id: string): void {
+  async remove(id: string): Promise<void> {
+    await deleteShiftAssignment(id);
     this.items = this.items.filter((a) => a.id !== id);
   }
 
@@ -135,75 +174,51 @@ class ShiftScheduleStore {
     });
   }
 
-  bulkGenerate(args: {
+  // Bulk generate weekday-pattern assignments via backend's POST /bulk
+  // endpoint, which ON CONFLICT DO NOTHING on the (date, template, employee)
+  // unique. Returns counts so callers can show "X created, Y skipped".
+  async bulkGenerate(args: {
     startDate: string;
     endDate: string;
     pattern: Record<number, WeekdayPattern[]>;
-    skipExisting?: boolean;
     notes?: string;
-  }): { created: ShiftAssignment[]; skipped: number; invalid: number } {
-    const start = parseISODate(args.startDate);
-    const end = parseISODate(args.endDate);
-    if (end < start) return { created: [], skipped: 0, invalid: 0 };
-
-    const skipExisting = args.skipExisting ?? true;
-    const created: ShiftAssignment[] = [];
-    let skipped = 0;
-    let invalid = 0;
-
-    let cursor = start;
-    while (cursor <= end) {
-      const date = toISODate(cursor);
-      const dow = cursor.getDay();
-      const slots = args.pattern[dow] ?? [];
-      for (const slot of slots) {
-        if (!slot.templateId || !slot.employeeId) {
-          invalid++;
-          continue;
-        }
-        if (!shiftTemplates.getById(slot.templateId)) {
-          invalid++;
-          continue;
-        }
-        if (!employees.getById(slot.employeeId)) {
-          invalid++;
-          continue;
-        }
-        if (skipExisting) {
-          const dup = this.items.find(
-            (a) =>
-              a.date === date &&
-              a.templateId === slot.templateId &&
-              a.employeeId === slot.employeeId
-          );
-          if (dup) {
-            skipped++;
-            continue;
-          }
-        }
-        created.push(
-          this.add({
-            date,
-            templateId: slot.templateId,
-            employeeId: slot.employeeId,
-            notes: args.notes ?? '',
-            status: 'planned'
-          })
-        );
-      }
-      cursor = addDays(cursor, 1);
+  }): Promise<{ created: number; skipped: number }> {
+    const patternByString: Record<string, WeekdayPattern[]> = {};
+    for (const [k, v] of Object.entries(args.pattern)) {
+      patternByString[String(k)] = v;
     }
-
-    return { created, skipped, invalid };
+    const res = await bulkShiftAssignments({
+      startDate: args.startDate,
+      endDate: args.endDate,
+      pattern: patternByString,
+      notes: args.notes
+    });
+    await this.load();
+    return res;
   }
 
-  removeRange(start: string, end: string): number {
-    const before = this.items.length;
-    this.items = this.items.filter((a) => a.date < start || a.date > end);
-    return before - this.items.length;
+  async removeRange(start: string, end: string): Promise<number> {
+    const matching = this.items.filter((a) => a.date >= start && a.date <= end);
+    let removed = 0;
+    for (const a of matching) {
+      try {
+        await deleteShiftAssignment(a.id);
+        removed++;
+      } catch {
+        // best-effort
+      }
+    }
+    if (removed > 0) {
+      const ids = new Set(matching.map((m) => m.id));
+      this.items = this.items.filter((a) => !ids.has(a.id));
+    }
+    return removed;
   }
 
-  markCompleted(assignmentId: string, shiftSessionId: string): ShiftAssignment | undefined {
+  async markCompleted(
+    assignmentId: string,
+    shiftSessionId: string
+  ): Promise<ShiftAssignment | undefined> {
     return this.update(assignmentId, {
       status: 'completed',
       actualShiftId: shiftSessionId
@@ -223,30 +238,18 @@ function timeToMin(hhmm: string): number {
 export type ShiftOpenValidation =
   | {
       ok: true;
-      /** Today's planned assignment whose window contains `now`, if any. */
       matchedAssignment?: ShiftAssignment;
       matchedTemplate?: ShiftTemplate;
-      /** All of today's planned assignments for this employee (may be empty). */
       todayAssignments: Array<{ assignment: ShiftAssignment; template: ShiftTemplate | undefined }>;
     }
   | {
       ok: false;
       reason: string;
-      /** Closest planned assignment that explains the rejection. */
       nextAssignment?: ShiftAssignment;
       nextTemplate?: ShiftTemplate;
       todayAssignments: Array<{ assignment: ShiftAssignment; template: ShiftTemplate | undefined }>;
     };
 
-/**
- * Decide whether the given employee is allowed to open a shift right now.
- *
- * Rules:
- * - No planned assignment today → allowed (ad-hoc open).
- * - Planned assignment(s) today → must be within window [start − grace, end]; cross-midnight
- *   templates accept any time at-or-after start − grace on the schedule date.
- * - Otherwise rejected with a reason that names the next/last scheduled shift.
- */
 export function validateShiftOpenForEmployee(
   employeeId: string,
   now: Date = new Date()
@@ -274,14 +277,23 @@ export function validateShiftOpenForEmployee(
 
     if (crossesMidnight) {
       if (nowMin >= startMin - SHIFT_OPEN_GRACE_BEFORE_MIN) {
-        return { ok: true, matchedAssignment: assignment, matchedTemplate: template, todayAssignments };
+        return {
+          ok: true,
+          matchedAssignment: assignment,
+          matchedTemplate: template,
+          todayAssignments
+        };
       }
     } else if (nowMin >= startMin - SHIFT_OPEN_GRACE_BEFORE_MIN && nowMin <= endMin) {
-      return { ok: true, matchedAssignment: assignment, matchedTemplate: template, todayAssignments };
+      return {
+        ok: true,
+        matchedAssignment: assignment,
+        matchedTemplate: template,
+        todayAssignments
+      };
     }
   }
 
-  // Outside every window — find the next/last assignment to explain why.
   const sorted = todayAssignments
     .filter((x) => x.template)
     .map((x) => ({ ...x, startMin: timeToMin(x.template!.startTime) }))
@@ -307,4 +319,3 @@ export function validateShiftOpenForEmployee(
     todayAssignments
   };
 }
-

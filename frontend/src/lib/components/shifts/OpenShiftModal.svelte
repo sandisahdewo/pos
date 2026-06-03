@@ -99,7 +99,7 @@
 
   const canSubmit = $derived(Boolean(me) && validation?.ok === true && !adHocBlocked);
 
-  function submit() {
+  async function submit() {
     submitError = null;
     pinError = null;
     if (!me) {
@@ -122,7 +122,7 @@
       pinError = 'PIN salah.';
       return;
     }
-    const res = shifts.open({
+    const res = await shifts.open({
       employeeId: me.id,
       templateId: validation.matchedAssignment?.templateId,
       openingCash,
@@ -133,7 +133,9 @@
       return;
     }
     if (validation.matchedAssignment) {
-      shiftSchedule.markCompleted(validation.matchedAssignment.id, res.shift.id);
+      // Fire-and-forget — failure to mark schedule completed doesn't block
+      // the shift from being open.
+      void shiftSchedule.markCompleted(validation.matchedAssignment.id, res.shift.id);
     }
     toast.success(
       `Shift dibuka — ${me.name}`,

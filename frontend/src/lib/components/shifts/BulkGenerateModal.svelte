@@ -115,7 +115,7 @@
     Object.values(pattern).reduce((sum, slots) => sum + slots.length, 0)
   );
 
-  function generate() {
+  async function generate() {
     error = null;
     if (!startDate || !endDate) {
       error = 'Tanggal mulai dan selesai wajib diisi.';
@@ -140,18 +140,20 @@
       return;
     }
 
-    const res = shiftSchedule.bulkGenerate({
-      startDate,
-      endDate,
-      pattern: cleanedPattern,
-      skipExisting,
-      notes
-    });
-    const parts = [`${res.created.length} jadwal dibuat`];
-    if (res.skipped > 0) parts.push(`${res.skipped} dilewati (sudah ada)`);
-    if (res.invalid > 0) parts.push(`${res.invalid} slot tidak valid`);
-    toast.success('Jadwal dibuat', parts.join(' · '));
-    open = false;
+    try {
+      const res = await shiftSchedule.bulkGenerate({
+        startDate,
+        endDate,
+        pattern: cleanedPattern,
+        notes
+      });
+      const parts = [`${res.created} jadwal dibuat`];
+      if (res.skipped > 0) parts.push(`${res.skipped} dilewati (sudah ada)`);
+      toast.success('Jadwal dibuat', parts.join(' · '));
+      open = false;
+    } catch (err) {
+      error = err instanceof Error ? err.message : 'Gagal membuat jadwal.';
+    }
   }
 </script>
 

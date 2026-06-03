@@ -46,6 +46,9 @@ func NewRouter(opts Options) http.Handler {
 	locationsH := handlers.NewLocationsHandler(opts.Deps)
 	productsH := handlers.NewProductsHandler(opts.Deps)
 	purchaseOrdersH := handlers.NewPurchaseOrdersHandler(opts.Deps)
+	shiftTemplatesH := handlers.NewShiftTemplatesHandler(opts.Deps)
+	shiftAssignmentsH := handlers.NewShiftAssignmentsHandler(opts.Deps)
+	shiftsH := handlers.NewShiftsHandler(opts.Deps)
 
 	r.Get("/healthz", healthz)
 
@@ -77,6 +80,14 @@ func NewRouter(opts Options) http.Handler {
 			p.Get("/products/{id}", productsH.Get)
 			p.Get("/purchase-orders", purchaseOrdersH.List)
 			p.Get("/purchase-orders/{id}", purchaseOrdersH.Get)
+
+			// Shifts (operational): kasir needs to open/close + add cash entries.
+			p.Get("/shift-templates", shiftTemplatesH.List)
+			p.Get("/shift-assignments", shiftAssignmentsH.List)
+			p.Get("/shifts", shiftsH.List)
+			p.Get("/shifts/{id}", shiftsH.Get)
+			p.Post("/shifts", shiftsH.Create)
+			p.Patch("/shifts/{id}", shiftsH.Update)
 
 			// Admin-only: user (employee) + role management + master data writes.
 			p.Group(func(adm chi.Router) {
@@ -133,6 +144,16 @@ func NewRouter(opts Options) http.Handler {
 				adm.Post("/purchase-orders", purchaseOrdersH.Create)
 				adm.Patch("/purchase-orders/{id}", purchaseOrdersH.Update)
 				adm.Delete("/purchase-orders/{id}", purchaseOrdersH.Delete)
+
+				// Templates + assignments are admin-managed master data.
+				adm.Post("/shift-templates", shiftTemplatesH.Create)
+				adm.Patch("/shift-templates/{id}", shiftTemplatesH.Update)
+				adm.Delete("/shift-templates/{id}", shiftTemplatesH.Delete)
+
+				adm.Post("/shift-assignments", shiftAssignmentsH.Create)
+				adm.Patch("/shift-assignments/{id}", shiftAssignmentsH.Update)
+				adm.Delete("/shift-assignments/{id}", shiftAssignmentsH.Delete)
+				adm.Post("/shift-assignments/bulk", shiftAssignmentsH.Bulk)
 			})
 		})
 	})

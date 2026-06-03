@@ -54,6 +54,8 @@ func NewRouter(opts Options) http.Handler {
 	ordersH := handlers.NewOrdersHandler(opts.Deps)
 	batchesH := handlers.NewBatchesHandler(opts.Deps)
 	stockMovementsH := handlers.NewStockMovementsHandler(opts.Deps)
+	productionRunsH := handlers.NewProductionRunsHandler(opts.Deps)
+	stockOpnamesH := handlers.NewStockOpnamesHandler(opts.Deps)
 
 	r.Get("/healthz", healthz)
 
@@ -114,6 +116,17 @@ func NewRouter(opts Options) http.Handler {
 			p.Patch("/batches/{id}", batchesH.Update)
 			p.Get("/stock-movements", stockMovementsH.List)
 			p.Post("/stock-movements", stockMovementsH.Create)
+
+			// Production runs + stock opnames. Both write rows but their
+			// stock side-effects (batch + movement mutations) are persisted
+			// by the FE before posting the header, so the backend just
+			// records the resulting paperwork.
+			p.Get("/production-runs", productionRunsH.List)
+			p.Post("/production-runs", productionRunsH.Create)
+			p.Get("/stock-opnames", stockOpnamesH.List)
+			p.Get("/stock-opnames/{id}", stockOpnamesH.Get)
+			p.Post("/stock-opnames", stockOpnamesH.Create)
+			p.Patch("/stock-opnames/{id}", stockOpnamesH.Update)
 
 			// Admin-only: user (employee) + role management + master data writes.
 			p.Group(func(adm chi.Router) {

@@ -97,11 +97,12 @@
     confirmCancelOpen = true;
   }
 
-  function doCancel() {
+  async function doCancel() {
     if (!pendingCancel) return;
     const code = pendingCancel.code;
-    const r = stockOpnames.cancel(pendingCancel.id);
+    const id = pendingCancel.id;
     pendingCancel = null;
+    const r = await stockOpnames.cancel(id);
     if (r.ok) toast.success('Opname dibatalkan', code);
     else toast.error('Gagal membatalkan', r.reason ?? '');
   }

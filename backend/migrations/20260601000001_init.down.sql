@@ -2,6 +2,22 @@ SET statement_timeout = 0;
 
 --bun:split
 
+DROP TABLE IF EXISTS stock_opname_lines;
+
+--bun:split
+
+DROP TABLE IF EXISTS stock_opnames;
+
+--bun:split
+
+DROP TABLE IF EXISTS production_run_consumptions;
+
+--bun:split
+
+DROP TABLE IF EXISTS production_runs;
+
+--bun:split
+
 DROP TABLE IF EXISTS stock_movements;
 
 --bun:split

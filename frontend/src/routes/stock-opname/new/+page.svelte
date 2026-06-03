@@ -99,20 +99,25 @@
     return categories.getById(id)?.name ?? id;
   }
 
-  function create() {
+  async function create() {
     if (selectedCount === 0) {
       toast.error('Pilih minimal 1 produk', 'Tidak ada produk yang dipilih untuk dihitung.');
       return;
     }
     creating = true;
     const productIds = eligibleProducts.filter((p) => isSelected(p.id)).map((p) => p.id);
-    const draft = stockOpnames.buildDraft({
-      locationId: locationsOn ? locationId : undefined,
-      productIds,
-      notes: notes.trim()
-    });
-    toast.success('Opname dibuat', `${draft.code} · ${draft.lines.length} baris siap dihitung`);
-    goto(`/stock-opname/${draft.id}`);
+    try {
+      const draft = await stockOpnames.buildDraft({
+        locationId: locationsOn ? locationId : undefined,
+        productIds,
+        notes: notes.trim()
+      });
+      toast.success('Opname dibuat', `${draft.code} · ${draft.lines.length} baris siap dihitung`);
+      goto(`/stock-opname/${draft.id}`);
+    } catch (err) {
+      toast.error('Gagal membuat opname', err instanceof Error ? err.message : '');
+      creating = false;
+    }
   }
 </script>
 

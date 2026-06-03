@@ -201,19 +201,19 @@
     if (!opname || readonly) return;
     const trimmed = raw.trim();
     if (trimmed === '') {
-      stockOpnames.updateLine(opname.id, line.id, { countedQty: null });
+      void stockOpnames.updateLine(opname.id, line.id, { countedQty: null });
       return;
     }
     const n = Number(trimmed);
     if (!Number.isFinite(n)) return;
     const factor = getUnitFactor(line);
     const baseQty = Math.round(n * factor);
-    stockOpnames.updateLine(opname.id, line.id, { countedQty: baseQty });
+    void stockOpnames.updateLine(opname.id, line.id, { countedQty: baseQty });
   }
 
   function setLineNotes(line: OpnameLine, raw: string) {
     if (!opname || readonly) return;
-    stockOpnames.updateLine(opname.id, line.id, { notes: raw });
+    void stockOpnames.updateLine(opname.id, line.id, { notes: raw });
   }
 
   function openSelidiki(line: OpnameLine) {
@@ -270,11 +270,12 @@
     toast.success(`Opname ${opname.code} selesai`, msg);
   }
 
-  function cancel() {
+  async function cancel() {
     if (!opname) return;
-    const r = stockOpnames.cancel(opname.id);
+    const code = opname.code;
+    const r = await stockOpnames.cancel(opname.id);
     if (r.ok) {
-      toast.success('Opname dibatalkan', opname.code);
+      toast.success('Opname dibatalkan', code);
       goto('/stock-opname');
     } else {
       toast.error('Gagal membatalkan', r.reason ?? '');

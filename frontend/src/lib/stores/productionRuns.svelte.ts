@@ -11,6 +11,7 @@ import { batches, type Batch } from './batches.svelte';
 import { locations } from './locations.svelte';
 import { stockMovements } from './stockMovements.svelte';
 import { units } from './units.svelte';
+import { listProductionRuns, createProductionRun } from '$lib/api/production-runs';
 
 export type ProductionRunStatus = 'completed' | 'cancelled';
 
@@ -92,8 +93,34 @@ export type ConsumptionPlan = {
   blockReasons: string[]; // dedupe-friendly list for surfacing at top of modal
 };
 
-function fmtCodeNumber(n: number): string {
-  return n.toString().padStart(3, '0');
+function normalizeRun(raw: unknown): ProductionRun {
+  const r = raw as Partial<ProductionRun> & Record<string, unknown>;
+  return {
+    id: String(r.id ?? ''),
+    code: String(r.code ?? ''),
+    productId: String(r.productId ?? ''),
+    variantId: (r.variantId as string | undefined) || undefined,
+    intendedQty: Number(r.intendedQty ?? 0),
+    producedQty: Number(r.producedQty ?? 0),
+    componentConsumptions: (
+      (r.componentConsumptions as ConsumedComponent[] | undefined) ?? []
+    ).map((c) => ({
+      productId: c.productId,
+      variantId: c.variantId || undefined,
+      batchId: String(c.batchId ?? ''),
+      batchCode: String(c.batchCode ?? ''),
+      qtyConsumed: Number(c.qtyConsumed ?? 0),
+      unitCost: Number(c.unitCost ?? 0)
+    })),
+    producedBatchId: String(r.producedBatchId ?? ''),
+    unitCost: Number(r.unitCost ?? 0),
+    locationId: String(r.locationId ?? ''),
+    expiresAt: (r.expiresAt as string | undefined) || undefined,
+    shiftId: (r.shiftId as string | undefined) || undefined,
+    notes: (r.notes ?? '') as string,
+    createdAt: String(r.createdAt ?? ''),
+    status: (r.status ?? 'completed') as ProductionRunStatus
+  };
 }
 
 function nameOf(p: Product, variantId?: string): { product: string; variant?: string } {
@@ -271,12 +298,19 @@ export function planConsumption(
 
 class ProductionRunsStore {
   items = $state<ProductionRun[]>([]);
-  private nextId = 1;
-  private nextCodeNum = 1;
+  loaded = $state(false);
+  loading = $state(false);
 
-  private generateCode(): string {
-    const year = new Date().getFullYear();
-    return `PROD-${year}-${fmtCodeNumber(this.nextCodeNum++)}`;
+  async load(): Promise<void> {
+    if (this.loading) return;
+    this.loading = true;
+    try {
+      const list = await listProductionRuns();
+      this.items = list.map(normalizeRun);
+      this.loaded = true;
+    } finally {
+      this.loading = false;
+    }
   }
 
   async add(
@@ -318,12 +352,12 @@ class ProductionRunsStore {
 
     const locId = input.locationId || locations.defaultId();
     const todayISO = new Date().toISOString().slice(0, 10);
-    const nowISO = new Date().toISOString();
 
-    // 1) Reserve a code + id so produced batch & movements reference it.
-    const runId = `prod_${this.nextId++}`;
-    const runCode = this.generateCode();
-    const reference = { kind: 'production' as const, id: runId, code: runCode };
+    // Reserve a transient run reference. Real id+code arrive after backend
+    // persistence; stock movements logged against the transient ref get
+    // updated to the real id once we know it.
+    const tempRunId = crypto.randomUUID();
+    const reference = { kind: 'production' as const, id: tempRunId };
 
     // 2) FIFO-consume each planned draw, logging production-out per batch.
     const consumptions: ConsumedComponent[] = [];
@@ -362,7 +396,7 @@ class ProductionRunsStore {
           qtyAfter: updated?.qtyRemaining ?? batch.qtyRemaining - draw.take,
           unitCost: draw.unitCost,
           reference,
-          notes: `Produksi ${product.name}${variant ? ` · ${variant.name}` : ''} · ${runCode}`
+          notes: `Produksi ${product.name}${variant ? ` · ${variant.name}` : ''}`
         });
       }
     }
@@ -389,7 +423,7 @@ class ProductionRunsStore {
       locationId: locId,
       notes:
         input.notes?.trim() ||
-        `Hasil produksi ${runCode}${variant ? ` — ${variant.name}` : ''}`
+        `Hasil produksi${variant ? ` — ${variant.name}` : ''}`
     });
     await stockMovements.log({
       kind: 'production-in',
@@ -401,29 +435,37 @@ class ProductionRunsStore {
       qtyAfter: producedQty,
       unitCost: perUnitCost,
       reference,
-      notes: `Produksi ${product.name}${variant ? ` · ${variant.name}` : ''} · ${runCode}`
+      notes: `Produksi ${product.name}${variant ? ` · ${variant.name}` : ''}`
     });
 
-    // 5) Persist the run record.
-    const run: ProductionRun = {
-      id: runId,
-      code: runCode,
-      productId: product.id,
-      variantId: input.variantId,
-      intendedQty: input.intendedQty,
-      producedQty,
-      componentConsumptions: consumptions,
-      producedBatchId: producedBatch.id,
-      unitCost: perUnitCost,
-      locationId: locId,
-      expiresAt: expiresAt || undefined,
-      shiftId: input.shiftId,
-      notes: input.notes ?? '',
-      createdAt: nowISO,
-      status: 'completed'
-    };
-    this.items.push(run);
-    return { ok: true, run };
+    try {
+      const created = await createProductionRun({
+        productId: product.id,
+        variantId: input.variantId ?? null,
+        intendedQty: input.intendedQty,
+        producedQty,
+        producedBatchId: producedBatch.id,
+        unitCost: perUnitCost,
+        locationId: locId,
+        expiresAt: expiresAt ?? '',
+        shiftId: input.shiftId ?? null,
+        status: 'completed',
+        notes: input.notes ?? '',
+        componentConsumptions: consumptions.map((c) => ({
+          productId: c.productId,
+          variantId: c.variantId ?? null,
+          batchId: c.batchId,
+          batchCode: c.batchCode,
+          qtyConsumed: c.qtyConsumed,
+          unitCost: c.unitCost
+        }))
+      });
+      const run = normalizeRun(created);
+      this.items = [...this.items, run];
+      return { ok: true, run };
+    } catch (err) {
+      return { ok: false, reason: err instanceof Error ? err.message : 'Gagal simpan.' };
+    }
   }
 
   getById(id: string): ProductionRun | undefined {

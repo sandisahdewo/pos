@@ -682,3 +682,81 @@ CREATE INDEX stock_movements_product_idx  ON stock_movements(product_id);
 CREATE INDEX stock_movements_batch_idx    ON stock_movements(batch_id);
 CREATE INDEX stock_movements_location_idx ON stock_movements(location_id);
 CREATE INDEX stock_movements_at_idx       ON stock_movements(happened_at DESC);
+
+--bun:split
+
+-- production_runs: one row per completed production session for a composite
+-- product. The store side-effects (consume component batches, log movements,
+-- create produced batch) run on the frontend before persistence — backend
+-- just records the resulting header + consumption snapshots.
+CREATE TABLE production_runs (
+    id                  UUID          PRIMARY KEY DEFAULT gen_random_uuid(),
+    code                TEXT          NOT NULL UNIQUE,
+    product_id          UUID          NOT NULL REFERENCES products(id) ON DELETE RESTRICT,
+    variant_id          UUID          REFERENCES product_variants(id) ON DELETE RESTRICT,
+    intended_qty        NUMERIC(14,4) NOT NULL,
+    produced_qty        NUMERIC(14,4) NOT NULL,
+    produced_batch_id   UUID          REFERENCES batches(id) ON DELETE SET NULL,
+    unit_cost           NUMERIC(14,2) NOT NULL DEFAULT 0,
+    location_id         UUID          NOT NULL REFERENCES locations(id) ON DELETE RESTRICT,
+    expires_at          TEXT          NOT NULL DEFAULT '',
+    shift_id            UUID          REFERENCES shift_sessions(id) ON DELETE SET NULL,
+    status              TEXT          NOT NULL DEFAULT 'completed',
+    notes               TEXT          NOT NULL DEFAULT '',
+    created_at          TIMESTAMPTZ   NOT NULL DEFAULT now(),
+    updated_at          TIMESTAMPTZ   NOT NULL DEFAULT now()
+);
+
+CREATE INDEX production_runs_product_idx ON production_runs(product_id);
+CREATE INDEX production_runs_created_idx ON production_runs(created_at DESC);
+
+--bun:split
+
+CREATE TABLE production_run_consumptions (
+    id                  UUID          PRIMARY KEY DEFAULT gen_random_uuid(),
+    production_run_id   UUID          NOT NULL REFERENCES production_runs(id) ON DELETE CASCADE,
+    product_id          UUID          NOT NULL REFERENCES products(id) ON DELETE RESTRICT,
+    variant_id          UUID          REFERENCES product_variants(id) ON DELETE RESTRICT,
+    batch_id            UUID          REFERENCES batches(id) ON DELETE SET NULL,
+    batch_code          TEXT          NOT NULL DEFAULT '',
+    qty_consumed        NUMERIC(14,4) NOT NULL,
+    unit_cost           NUMERIC(14,2) NOT NULL DEFAULT 0
+);
+
+CREATE INDEX production_run_consumptions_run_idx ON production_run_consumptions(production_run_id);
+
+--bun:split
+
+-- stock_opnames: cycle-count header. Lines drive variance reconciliation;
+-- complete() side-effect (batches.adjustStock) is frontend-driven and writes
+-- its own stock_movements rows referencing this opname's id+code.
+CREATE TABLE stock_opnames (
+    id              UUID          PRIMARY KEY DEFAULT gen_random_uuid(),
+    code            TEXT          NOT NULL UNIQUE,
+    location_id     UUID          REFERENCES locations(id) ON DELETE SET NULL,
+    started_at      TIMESTAMPTZ   NOT NULL DEFAULT now(),
+    completed_at    TIMESTAMPTZ,
+    status          TEXT          NOT NULL DEFAULT 'draft',
+    performed_by    TEXT          NOT NULL DEFAULT '',
+    notes           TEXT          NOT NULL DEFAULT '',
+    created_at      TIMESTAMPTZ   NOT NULL DEFAULT now(),
+    updated_at      TIMESTAMPTZ   NOT NULL DEFAULT now()
+);
+
+CREATE INDEX stock_opnames_status_idx  ON stock_opnames(status);
+CREATE INDEX stock_opnames_started_idx ON stock_opnames(started_at DESC);
+
+--bun:split
+
+CREATE TABLE stock_opname_lines (
+    id              UUID          PRIMARY KEY DEFAULT gen_random_uuid(),
+    opname_id       UUID          NOT NULL REFERENCES stock_opnames(id) ON DELETE CASCADE,
+    product_id      UUID          NOT NULL REFERENCES products(id) ON DELETE RESTRICT,
+    variant_id      UUID          REFERENCES product_variants(id) ON DELETE RESTRICT,
+    expected_qty    NUMERIC(14,4) NOT NULL DEFAULT 0,
+    counted_qty     NUMERIC(14,4),
+    unit_cost       NUMERIC(14,2) NOT NULL DEFAULT 0,
+    notes           TEXT          NOT NULL DEFAULT ''
+);
+
+CREATE INDEX stock_opname_lines_opname_idx ON stock_opname_lines(opname_id);

@@ -5,6 +5,50 @@ import {
   type StockMovementReference,
   type StockAdjustmentReason
 } from './stockMovements.svelte';
+import {
+  listBatches,
+  createBatch,
+  updateBatch as apiUpdateBatch
+} from '$lib/api/batches';
+
+function normalizeBatch(raw: unknown): Batch {
+  const r = raw as Partial<Batch> & Record<string, unknown>;
+  return {
+    id: String(r.id ?? ''),
+    code: String(r.code ?? ''),
+    productId: String(r.productId ?? ''),
+    variantId: (r.variantId as string | undefined) || undefined,
+    ownership: (r.ownership ?? 'owned') as BatchOwnership,
+    supplierId: (r.supplierId as string | undefined) || undefined,
+    sourcePurchaseOrderId: (r.sourcePurchaseOrderId as string | undefined) || undefined,
+    sourcePurchaseOrderLineId: (r.sourcePurchaseOrderLineId as string | undefined) || undefined,
+    unitCost: Number(r.unitCost ?? 0),
+    qtyReceived: Number(r.qtyReceived ?? 0),
+    qtyRemaining: Number(r.qtyRemaining ?? 0),
+    receivedAt: (r.receivedAt ?? '') as string,
+    expiresAt: (r.expiresAt as string | undefined) || undefined,
+    locationId: String(r.locationId ?? ''),
+    notes: (r.notes ?? '') as string
+  };
+}
+
+function toBatchPayload(b: BatchInput): Record<string, unknown> {
+  return {
+    productId: b.productId,
+    variantId: b.variantId || null,
+    ownership: b.ownership,
+    supplierId: b.supplierId || null,
+    sourcePurchaseOrderId: b.sourcePurchaseOrderId || null,
+    sourcePurchaseOrderLineId: b.sourcePurchaseOrderLineId || null,
+    unitCost: b.unitCost,
+    qtyReceived: b.qtyReceived,
+    qtyRemaining: b.qtyRemaining,
+    receivedAt: b.receivedAt,
+    expiresAt: b.expiresAt || '',
+    locationId: b.locationId,
+    notes: b.notes ?? ''
+  };
+}
 
 export type BatchOwnership = 'owned' | 'consignment';
 
@@ -43,442 +87,51 @@ export type BatchAllocation = {
 // Seed batches mirror current product/variant stocks. Mugs (prd_4) are consignment
 // from sup_3 — matches the Logo Mug description and PO-2026-003 supplier. All other
 // initial stock is owned. See docs/CONSIGNMENT.md for the broader design.
-const seed: Batch[] = [
-  {
-    id: 'batch_1',
-    code: 'BATCH-2026-001',
-    productId: 'prd_1',
-    ownership: 'owned',
-    supplierId: 'sup_1',
-    unitCost: 5000,
-    qtyReceived: 120,
-    qtyRemaining: 116,
-    receivedAt: '2026-04-22',
-    locationId: 'loc_gudang',
-    notes: 'Initial seed (received via PO-2026-001). 4 unit terjual ke ORD-2026-013 (piutang).'
-  },
-  {
-    id: 'batch_2',
-    code: 'BATCH-2026-002',
-    productId: 'prd_2',
-    ownership: 'owned',
-    supplierId: 'sup_1',
-    unitCost: 12000,
-    qtyReceived: 80,
-    qtyRemaining: 78,
-    receivedAt: '2026-04-22',
-    locationId: 'loc_gudang',
-    notes: 'Initial seed (received via PO-2026-001). 2 unit terjual ke ORD-2026-013 (piutang).'
-  },
-  {
-    id: 'batch_3',
-    code: 'BATCH-2026-003',
-    productId: 'prd_3',
-    ownership: 'owned',
-    unitCost: 8000,
-    qtyReceived: 24,
-    qtyRemaining: 24,
-    receivedAt: '2026-05-12',
-    expiresAt: '2026-05-15',
-    locationId: 'loc_gudang',
-    notes: 'Initial seed — baked fresh, sells out fast.'
-  },
-  {
-    id: 'batch_4',
-    code: 'BATCH-2026-004',
-    productId: 'prd_4',
-    variantId: 'v_1',
-    ownership: 'consignment',
-    supplierId: 'sup_3',
-    unitCost: 50000,
-    qtyReceived: 18,
-    qtyRemaining: 12,
-    receivedAt: '2026-03-01',
-    locationId: 'loc_gudang',
-    notes: 'Initial seed (prior consignment receipt — White colorway). 5 unit terjual + 1 unit di ORD-2026-014 (piutang).'
-  },
-  {
-    id: 'batch_5',
-    code: 'BATCH-2026-005',
-    productId: 'prd_4',
-    variantId: 'v_2',
-    ownership: 'consignment',
-    supplierId: 'sup_3',
-    unitCost: 50000,
-    qtyReceived: 12,
-    qtyRemaining: 8,
-    receivedAt: '2026-03-01',
-    locationId: 'loc_gudang',
-    notes: 'Initial seed (prior consignment receipt — Black colorway). 4 unit terjual via ORD-2026-003/009/012.'
-  },
-  {
-    id: 'batch_6',
-    code: 'BATCH-2026-006',
-    productId: 'prd_4',
-    variantId: 'v_3',
-    ownership: 'consignment',
-    supplierId: 'sup_3',
-    unitCost: 60000,
-    qtyReceived: 6,
-    qtyRemaining: 3,
-    receivedAt: '2026-03-01',
-    locationId: 'loc_gudang',
-    notes: 'Initial seed (prior consignment receipt — Brand Blue colorway). 2 unit dikembalikan ke konsinyor, 1 unit terjual via ORD-2026-010.'
-  },
-  {
-    id: 'batch_7',
-    code: 'BATCH-2026-007',
-    productId: 'prd_5',
-    ownership: 'owned',
-    unitCost: 3500,
-    qtyReceived: 360,
-    qtyRemaining: 360,
-    receivedAt: '2026-05-01',
-    locationId: 'loc_gudang',
-    notes: 'Initial seed.'
-  },
-  // Telur Ayam (prd_8) — three batches spanning the expiry spectrum so the
-  // expiring-soon badge, FIFO-by-expiration, and overdue states are all visible.
-  {
-    id: 'batch_8',
-    code: 'BATCH-2026-008',
-    productId: 'prd_8',
-    ownership: 'owned',
-    supplierId: 'sup_2',
-    unitCost: 2500,
-    qtyReceived: 30,
-    qtyRemaining: 12,
-    receivedAt: '2026-05-08',
-    expiresAt: '2026-05-10',
-    locationId: 'loc_gudang',
-    notes: 'Initial seed — overdue, contoh batch yang sudah kedaluwarsa.'
-  },
-  {
-    id: 'batch_9',
-    code: 'BATCH-2026-009',
-    productId: 'prd_8',
-    ownership: 'owned',
-    supplierId: 'sup_2',
-    unitCost: 2500,
-    qtyReceived: 20,
-    qtyRemaining: 20,
-    receivedAt: '2026-05-12',
-    expiresAt: '2026-05-14',
-    locationId: 'loc_gudang',
-    notes: 'Initial seed — kedaluwarsa besok.'
-  },
-  {
-    id: 'batch_10',
-    code: 'BATCH-2026-010',
-    productId: 'prd_8',
-    ownership: 'owned',
-    supplierId: 'sup_2',
-    unitCost: 2700,
-    qtyReceived: 30,
-    qtyRemaining: 30,
-    receivedAt: '2026-05-13',
-    expiresAt: '2026-05-20',
-    locationId: 'loc_gudang',
-    notes: 'Initial seed — masih segar, batch baru.'
-  },
-  // Daging Sapi Cincang (prd_9) — base unit is gram; this batch is 2 kg = 2000g
-  {
-    id: 'batch_11',
-    code: 'BATCH-2026-011',
-    productId: 'prd_9',
-    ownership: 'owned',
-    supplierId: 'sup_2',
-    unitCost: 130,
-    qtyReceived: 2000,
-    qtyRemaining: 1450,
-    receivedAt: '2026-05-12',
-    expiresAt: '2026-05-15',
-    locationId: 'loc_gudang',
-    notes: 'Initial seed — 2 kg.'
-  },
-  // Ayam Mentah (prd_10) — one batch per cut so production runs have stock
-  // to draw from immediately. Expiry set to a few days out; the fried-chicken
-  // production flow will snapshot these costs into the produced batch.
-  {
-    id: 'batch_12',
-    code: 'BATCH-2026-012',
-    productId: 'prd_10',
-    variantId: 'v_chk_paha',
-    ownership: 'owned',
-    supplierId: 'sup_2',
-    unitCost: 12000,
-    qtyReceived: 20,
-    qtyRemaining: 20,
-    receivedAt: '2026-05-21',
-    expiresAt: '2026-05-24',
-    locationId: 'loc_gudang',
-    notes: 'Initial seed — paha ayam mentah.'
-  },
-  {
-    id: 'batch_13',
-    code: 'BATCH-2026-013',
-    productId: 'prd_10',
-    variantId: 'v_chk_dada',
-    ownership: 'owned',
-    supplierId: 'sup_2',
-    unitCost: 15000,
-    qtyReceived: 15,
-    qtyRemaining: 15,
-    receivedAt: '2026-05-21',
-    expiresAt: '2026-05-24',
-    locationId: 'loc_gudang',
-    notes: 'Initial seed — dada ayam mentah.'
-  },
-  {
-    id: 'batch_14',
-    code: 'BATCH-2026-014',
-    productId: 'prd_10',
-    variantId: 'v_chk_sayap',
-    ownership: 'owned',
-    supplierId: 'sup_2',
-    unitCost: 5000,
-    qtyReceived: 30,
-    qtyRemaining: 30,
-    receivedAt: '2026-05-21',
-    expiresAt: '2026-05-24',
-    locationId: 'loc_gudang',
-    notes: 'Initial seed — sayap ayam mentah.'
-  },
-  {
-    id: 'batch_15',
-    code: 'BATCH-2026-015',
-    productId: 'prd_10',
-    variantId: 'v_chk_drum',
-    ownership: 'owned',
-    supplierId: 'sup_2',
-    unitCost: 8000,
-    qtyReceived: 25,
-    qtyRemaining: 25,
-    receivedAt: '2026-05-21',
-    expiresAt: '2026-05-24',
-    locationId: 'loc_gudang',
-    notes: 'Initial seed — drumstick ayam mentah.'
-  },
-  // Newer (more expensive) Latte batch — paired with prd_2's `fifo-current`
-  // markup source to demo dynamic pricing. Sale stays at the batch_2 cost
-  // (12.000) until batch_2 depletes, then snaps to batch_16's 13.000.
-  {
-    id: 'batch_16',
-    code: 'BATCH-2026-016',
-    productId: 'prd_2',
-    ownership: 'owned',
-    supplierId: 'sup_1',
-    unitCost: 13000,
-    qtyReceived: 40,
-    qtyRemaining: 40,
-    receivedAt: '2026-05-18',
-    locationId: 'loc_gudang',
-    notes: 'Initial seed — Latte stok lanjutan harga lebih tinggi.'
-  },
-  // === Overlap batches untuk demo Perbandingan A vs B di /harga-pemasok ===
-  // sup_4 (Toko Grosir Aneka) kirim produk yang juga di-supply oleh sup_1
-  // (Kopi Nusantara) dan sup_2 (Roti Sejahtera) — supaya operator bisa
-  // bandingkan: mana lebih murah, mana lebih sering naik, dll.
-  //
-  // Espresso: sup_1 (primary 5.000) vs sup_4 (alt, 2× kirim trendnya naik)
-  {
-    id: 'batch_17',
-    code: 'BATCH-2026-017',
-    productId: 'prd_1',
-    ownership: 'owned',
-    supplierId: 'sup_4',
-    unitCost: 5300,
-    qtyReceived: 60,
-    qtyRemaining: 60,
-    receivedAt: '2026-04-10',
-    locationId: 'loc_gudang',
-    notes: 'Demo: Espresso dari sup_4 (cadangan saat sup_1 overdue).'
-  },
-  {
-    id: 'batch_18',
-    code: 'BATCH-2026-018',
-    productId: 'prd_1',
-    ownership: 'owned',
-    supplierId: 'sup_4',
-    unitCost: 5500,
-    qtyReceived: 50,
-    qtyRemaining: 50,
-    receivedAt: '2026-05-15',
-    locationId: 'loc_gudang',
-    notes: 'Demo: Espresso dari sup_4 — harga naik 3.8% dari batch sebelumnya.'
-  },
-  // Espresso sup_1 — tambah batch kedua untuk trend (sebelumnya cuma 1)
-  {
-    id: 'batch_19',
-    code: 'BATCH-2026-019',
-    productId: 'prd_1',
-    ownership: 'owned',
-    supplierId: 'sup_1',
-    unitCost: 5200,
-    qtyReceived: 100,
-    qtyRemaining: 100,
-    receivedAt: '2026-05-20',
-    locationId: 'loc_gudang',
-    notes: 'Demo: Espresso sup_1 batch ke-2 — naik 4% dari batch_1.'
-  },
-  // Croissant: sup_2 (primary, fresh harian) vs sup_4 (frozen darurat)
-  {
-    id: 'batch_20',
-    code: 'BATCH-2026-020',
-    productId: 'prd_3',
-    ownership: 'owned',
-    supplierId: 'sup_4',
-    unitCost: 9200,
-    qtyReceived: 20,
-    qtyRemaining: 0,
-    receivedAt: '2026-05-05',
-    expiresAt: '2026-05-08',
-    locationId: 'loc_gudang',
-    notes: 'Demo: Croissant sup_4 (frozen) — habis. Harga 15% lebih mahal dari sup_2.'
-  },
-  {
-    id: 'batch_21',
-    code: 'BATCH-2026-021',
-    productId: 'prd_3',
-    ownership: 'owned',
-    supplierId: 'sup_2',
-    unitCost: 8000,
-    qtyReceived: 24,
-    qtyRemaining: 0,
-    receivedAt: '2026-05-08',
-    expiresAt: '2026-05-11',
-    locationId: 'loc_gudang',
-    notes: 'Demo: Croissant sup_2 batch tambahan — harga stabil.'
-  },
-  // Telur: sup_2 (primary 2.500) vs sup_4 (cadangan, dua kirim)
-  {
-    id: 'batch_22',
-    code: 'BATCH-2026-022',
-    productId: 'prd_8',
-    ownership: 'owned',
-    supplierId: 'sup_4',
-    unitCost: 2700,
-    qtyReceived: 60,
-    qtyRemaining: 30,
-    receivedAt: '2026-05-04',
-    expiresAt: '2026-05-12',
-    locationId: 'loc_gudang',
-    notes: 'Demo: Telur sup_4 cadangan saat sup_2 overdue.'
-  },
-  {
-    id: 'batch_23',
-    code: 'BATCH-2026-023',
-    productId: 'prd_8',
-    ownership: 'owned',
-    supplierId: 'sup_4',
-    unitCost: 2900,
-    qtyReceived: 60,
-    qtyRemaining: 60,
-    receivedAt: '2026-05-22',
-    expiresAt: '2026-05-30',
-    locationId: 'loc_gudang',
-    notes: 'Demo: Telur sup_4 batch ke-2 — naik 7.4% dari yang sebelumnya.'
-  },
-  // Latte: sup_1 (sudah 2 batch) vs sup_4 (kompetitor baru)
-  {
-    id: 'batch_24',
-    code: 'BATCH-2026-024',
-    productId: 'prd_2',
-    ownership: 'owned',
-    supplierId: 'sup_4',
-    unitCost: 12800,
-    qtyReceived: 30,
-    qtyRemaining: 30,
-    receivedAt: '2026-04-25',
-    locationId: 'loc_gudang',
-    notes: 'Demo: Latte sup_4 sebagai alternatif sup_1.'
-  },
-  {
-    id: 'batch_25',
-    code: 'BATCH-2026-025',
-    productId: 'prd_2',
-    ownership: 'owned',
-    supplierId: 'sup_4',
-    unitCost: 13500,
-    qtyReceived: 25,
-    qtyRemaining: 25,
-    receivedAt: '2026-05-23',
-    locationId: 'loc_gudang',
-    notes: 'Demo: Latte sup_4 batch ke-2 — naik 5.5%.'
-  },
-  // Rokok — qty disimpan dalam batang (satuan dasar), bukan slop. 2 slop yang
-  // diterima dari pemasok ditranslate jadi 2 × 160 = 320 (Sampoerna) atau
-  // 2 × 120 = 240 (Djarum). Disimpan di rak belakang kasir, bukan gudang.
-  {
-    id: 'batch_26',
-    code: 'BATCH-2026-026',
-    productId: 'prd_15',
-    ownership: 'owned',
-    supplierId: 'sup_4',
-    unitCost: 2300,
-    qtyReceived: 320,
-    qtyRemaining: 248,
-    receivedAt: '2026-05-20',
-    locationId: 'loc_rack',
-    notes: 'Initial seed — 2 slop Sampoerna A Mild. 72 batang sudah terjual (campur ecer + bungkus).'
-  },
-  {
-    id: 'batch_27',
-    code: 'BATCH-2026-027',
-    productId: 'prd_16',
-    ownership: 'owned',
-    supplierId: 'sup_4',
-    unitCost: 2500,
-    qtyReceived: 240,
-    qtyRemaining: 192,
-    receivedAt: '2026-05-22',
-    locationId: 'loc_rack',
-    notes: 'Initial seed — 2 slop Djarum Super. 48 batang sudah terjual (4 bungkus).'
-  },
-  {
-    id: 'batch_28',
-    code: 'BATCH-2026-028',
-    productId: 'prd_16',
-    ownership: 'owned',
-    supplierId: 'sup_4',
-    unitCost: 2650,
-    qtyReceived: 120,
-    qtyRemaining: 120,
-    receivedAt: '2026-05-27',
-    locationId: 'loc_rack',
-    notes: 'Initial seed — 1 slop Djarum Super, batch lanjutan dengan biaya naik 6% (demo fifo-current).'
-  }
-];
-
-function fmtCodeNumber(n: number): string {
-  return n.toString().padStart(3, '0');
-}
 
 class BatchesStore {
-  items = $state<Batch[]>([...seed]);
-  private nextId = seed.length + 1;
-  private nextCodeNum = seed.length + 1;
+  items = $state<Batch[]>([]);
+  loaded = $state(false);
+  loading = $state(false);
 
-  private generateCode(): string {
-    const year = new Date().getFullYear();
-    return `BATCH-${year}-${fmtCodeNumber(this.nextCodeNum++)}`;
+  async load(): Promise<void> {
+    if (this.loading) return;
+    this.loading = true;
+    try {
+      const list = await listBatches();
+      this.items = list.map(normalizeBatch);
+      this.loaded = true;
+    } finally {
+      this.loading = false;
+    }
   }
 
-  add(input: BatchInput): Batch {
-    const batch: Batch = {
-      ...input,
-      id: `batch_${this.nextId++}`,
-      code: this.generateCode()
-    };
-    this.items.push(batch);
-    return batch;
+  async add(input: BatchInput): Promise<Batch> {
+    const created = await createBatch(toBatchPayload(input));
+    const b = normalizeBatch(created);
+    this.items = [...this.items, b];
+    return b;
   }
 
-  update(id: string, patch: Partial<Batch>): Batch | undefined {
-    const idx = this.items.findIndex((b) => b.id === id);
-    if (idx === -1) return undefined;
-    this.items[idx] = { ...this.items[idx], ...patch };
-    return this.items[idx];
+  /**
+   * Partial update — only fields the API understands (qtyRemaining, location,
+   * expires, notes). Other fields are snapshot at insert and stay immutable.
+   */
+  async update(id: string, patch: Partial<Batch>): Promise<Batch | undefined> {
+    const apiPatch: {
+      qtyRemaining?: number;
+      locationId?: string;
+      expiresAt?: string;
+      notes?: string;
+    } = {};
+    if (patch.qtyRemaining !== undefined) apiPatch.qtyRemaining = patch.qtyRemaining;
+    if (patch.locationId !== undefined) apiPatch.locationId = patch.locationId;
+    if (patch.expiresAt !== undefined) apiPatch.expiresAt = patch.expiresAt || '';
+    if (patch.notes !== undefined) apiPatch.notes = patch.notes;
+    if (Object.keys(apiPatch).length === 0) return this.getById(id);
+    const updated = await apiUpdateBatch(id, apiPatch);
+    const b = normalizeBatch(updated);
+    this.items = this.items.map((x) => (x.id === id ? b : x));
+    return b;
   }
 
   getById(id: string): Batch | undefined {
@@ -546,7 +199,10 @@ class BatchesStore {
   // Return unsold consignment stock to the consignor. Decrements an existing
   // consignment batch — no payable, no order, no revenue impact, because we never
   // owned the units. See docs/CONSIGNMENT.md §"Return unsold consignment stock".
-  returnToConsignor(batchId: string, qty: number): { ok: boolean; reason?: string } {
+  async returnToConsignor(
+    batchId: string,
+    qty: number
+  ): Promise<{ ok: boolean; reason?: string }> {
     const batch = this.getById(batchId);
     if (!batch) return { ok: false, reason: 'Batch not found.' };
     if (batch.ownership !== 'consignment')
@@ -554,8 +210,8 @@ class BatchesStore {
     if (qty <= 0) return { ok: false, reason: 'Return quantity must be positive.' };
     if (qty > batch.qtyRemaining)
       return { ok: false, reason: `Only ${batch.qtyRemaining} units remain in this batch.` };
-    const updated = this.update(batchId, { qtyRemaining: batch.qtyRemaining - qty });
-    stockMovements.log({
+    const updated = await this.update(batchId, { qtyRemaining: batch.qtyRemaining - qty });
+    await stockMovements.log({
       kind: 'return-consignor',
       productId: batch.productId,
       variantId: batch.variantId,
@@ -576,7 +232,7 @@ class BatchesStore {
   //
   // `locationId` controls where positive deltas land and which location is depleted
   // first for negative deltas. When omitted, falls back to the default-receipt location.
-  adjustStock(args: {
+  async adjustStock(args: {
     productId: string;
     variantId?: string;
     delta: number;
@@ -587,14 +243,14 @@ class BatchesStore {
     reason?: StockAdjustmentReason;
     imageUrl?: string;
     notes?: string;
-  }): Batch | undefined {
+  }): Promise<Batch | undefined> {
     if (args.delta === 0) return undefined;
     const todayISO = new Date().toISOString().slice(0, 10);
     const locId = args.locationId || locations.defaultId();
     const reference: StockMovementReference =
       args.reference ?? { kind: 'manual', id: 'inventory' };
     if (args.delta > 0) {
-      const newBatch = this.add({
+      const newBatch = await this.add({
         productId: args.productId,
         variantId: args.variantId,
         ownership: 'owned',
@@ -606,7 +262,7 @@ class BatchesStore {
         locationId: locId,
         notes: args.notes ?? 'Manual stock adjustment.'
       });
-      stockMovements.log({
+      await stockMovements.log({
         kind: 'adjust-in',
         productId: args.productId,
         variantId: args.variantId,
@@ -630,8 +286,6 @@ class BatchesStore {
         b.ownership === 'owned' &&
         b.qtyRemaining > 0
     );
-    // Decrement target-location batches first (LIFO), then fall through to other
-    // locations if there's still shortfall.
     const atTarget = matching
       .filter((b) => b.locationId === locId)
       .sort((a, b) => b.receivedAt.localeCompare(a.receivedAt));
@@ -641,8 +295,8 @@ class BatchesStore {
     for (const batch of [...atTarget, ...elsewhere]) {
       if (remaining <= 0) break;
       const take = Math.min(remaining, batch.qtyRemaining);
-      const updated = this.update(batch.id, { qtyRemaining: batch.qtyRemaining - take });
-      stockMovements.log({
+      const updated = await this.update(batch.id, { qtyRemaining: batch.qtyRemaining - take });
+      await stockMovements.log({
         kind: 'adjust-out',
         productId: args.productId,
         variantId: args.variantId,
@@ -665,13 +319,13 @@ class BatchesStore {
   // creating a sibling batch at the destination preserving cost, expiry,
   // ownership, supplier, and source PO references. When qty == the full
   // remainder, mutates locationId in place (no zombie batches).
-  moveStock(args: {
+  async moveStock(args: {
     batchId: string;
     toLocationId: string;
     qty: number;
     notes?: string;
     transferGroupId?: string;
-  }): { ok: boolean; reason?: string; newBatch?: Batch } {
+  }): Promise<{ ok: boolean; reason?: string; newBatch?: Batch }> {
     const src = this.getById(args.batchId);
     if (!src) return { ok: false, reason: 'Batch tidak ditemukan.' };
     if (args.qty <= 0) return { ok: false, reason: 'Jumlah harus lebih dari 0.' };
@@ -684,8 +338,8 @@ class BatchesStore {
     const toLoc = locations.getById(args.toLocationId)?.name ?? args.toLocationId;
     const reference = { kind: 'transfer' as const, id: transferId };
     if (args.qty === src.qtyRemaining) {
-      const updated = this.update(src.id, { locationId: args.toLocationId });
-      stockMovements.log({
+      const updated = await this.update(src.id, { locationId: args.toLocationId });
+      await stockMovements.log({
         kind: 'move-relocate',
         productId: src.productId,
         variantId: src.variantId,
@@ -699,8 +353,8 @@ class BatchesStore {
       });
       return { ok: true, newBatch: updated };
     }
-    const updatedSrc = this.update(src.id, { qtyRemaining: src.qtyRemaining - args.qty });
-    stockMovements.log({
+    const updatedSrc = await this.update(src.id, { qtyRemaining: src.qtyRemaining - args.qty });
+    await stockMovements.log({
       kind: 'move-out',
       productId: src.productId,
       variantId: src.variantId,
@@ -712,7 +366,7 @@ class BatchesStore {
       reference,
       notes: args.notes ?? `Pindah ke ${toLoc} · ${src.code}`
     });
-    const sibling = this.add({
+    const sibling = await this.add({
       productId: src.productId,
       variantId: src.variantId,
       ownership: src.ownership,
@@ -727,7 +381,7 @@ class BatchesStore {
       locationId: args.toLocationId,
       notes: args.notes ?? `Dipindahkan dari ${src.code}.`
     });
-    stockMovements.log({
+    await stockMovements.log({
       kind: 'move-in',
       productId: src.productId,
       variantId: src.variantId,
@@ -742,17 +396,14 @@ class BatchesStore {
     return { ok: true, newBatch: sibling };
   }
 
-  // Move qty units of a product/variant from one location to another, walking
-  // batches at the source sorted by expiry asc (so expiring stock moves to the
-  // shelf first). Calls moveStock per batch until qty is satisfied.
-  moveProductStock(args: {
+  async moveProductStock(args: {
     productId: string;
     variantId?: string;
     fromLocationId: string;
     toLocationId: string;
     qty: number;
     notes?: string;
-  }): { ok: boolean; reason?: string; moved: number } {
+  }): Promise<{ ok: boolean; reason?: string; moved: number }> {
     if (args.fromLocationId === args.toLocationId)
       return { ok: false, reason: 'Lokasi sumber dan tujuan sama.', moved: 0 };
     if (args.qty <= 0)
@@ -772,7 +423,7 @@ class BatchesStore {
     for (const b of sourceBatches) {
       if (remaining <= 0) break;
       const take = Math.min(remaining, b.qtyRemaining);
-      const result = this.moveStock({
+      const result = await this.moveStock({
         batchId: b.id,
         toLocationId: args.toLocationId,
         qty: take,

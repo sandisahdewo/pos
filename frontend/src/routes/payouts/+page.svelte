@@ -216,7 +216,7 @@
     returnOpen = true;
   }
 
-  function saveReturn() {
+  async function saveReturn() {
     returnError = '';
     if (!returnBatchId) {
       returnError = 'Pilih batch untuk dikembalikan.';
@@ -226,7 +226,7 @@
       returnError = 'Masukkan jumlah pengembalian yang positif.';
       return;
     }
-    const result = batches.returnToConsignor(returnBatchId, returnQty);
+    const result = await batches.returnToConsignor(returnBatchId, returnQty);
     if (!result.ok) {
       returnError = result.reason ?? 'Tidak bisa mengembalikan stok.';
       return;

@@ -494,10 +494,10 @@ class StockOpnamesStore {
   // Reconcile variances: per line with countedQty set and variance != 0, call
   // batches.adjustStock with an opname reference so the resulting adjust-in /
   // adjust-out movement rows are stamped to this opname.
-  complete(
+  async complete(
     id: string,
     opts?: { skipUncounted?: boolean }
-  ): { ok: boolean; reason?: string; adjusted: number; skipped: number } {
+  ): Promise<{ ok: boolean; reason?: string; adjusted: number; skipped: number }> {
     const opname = this.getById(id);
     if (!opname) return { ok: false, reason: 'Opname tidak ditemukan.', adjusted: 0, skipped: 0 };
     if (opname.status !== 'draft')
@@ -522,7 +522,7 @@ class StockOpnamesStore {
       }
       const variance = line.countedQty - line.expectedQty;
       if (variance === 0) continue;
-      batches.adjustStock({
+      await batches.adjustStock({
         productId: line.productId,
         variantId: line.variantId,
         delta: variance,

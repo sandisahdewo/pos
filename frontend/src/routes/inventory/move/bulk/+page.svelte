@@ -249,7 +249,7 @@
       selectedCount > 0
   );
 
-  function submit() {
+  async function submit() {
     error = '';
     if (!fromLocationId || !toLocationId) {
       error = 'Pilih lokasi sumber dan tujuan.';
@@ -269,7 +269,7 @@
     for (const b of selectedBatches) {
       const qty = getQty(b.id);
       if (qty <= 0) continue;
-      const result = batches.moveStock({
+      const result = await batches.moveStock({
         batchId: b.id,
         toLocationId,
         qty,

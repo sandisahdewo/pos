@@ -248,10 +248,8 @@ class PurchaseOrdersStore {
       return { ok: false, reason: err instanceof Error ? err.message : 'Gagal simpan PO.' };
     }
 
-    // Side-effects run after backend persistence so we don't end up with
-    // batches for a PO state that didn't save.
     for (const fx of sideEffects) {
-      const newBatch = batches.add({
+      const newBatch = await batches.add({
         productId: fx.line.productId,
         variantId: fx.line.variantId,
         ownership: po.type === 'consignment' ? 'consignment' : 'owned',
@@ -266,7 +264,7 @@ class PurchaseOrdersStore {
         locationId: locations.defaultId(),
         notes: ''
       });
-      stockMovements.log({
+      await stockMovements.log({
         kind: 'receive',
         productId: fx.line.productId,
         variantId: fx.line.variantId,

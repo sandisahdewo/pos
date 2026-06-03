@@ -290,7 +290,7 @@
     let success = 0;
     const failures: string[] = [];
     for (const item of basket) {
-      const result = batches.moveStock({
+      const result = await batches.moveStock({
         batchId: item.batchId,
         toLocationId,
         qty: item.qty,

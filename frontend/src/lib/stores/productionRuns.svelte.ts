@@ -279,9 +279,9 @@ class ProductionRunsStore {
     return `PROD-${year}-${fmtCodeNumber(this.nextCodeNum++)}`;
   }
 
-  add(
+  async add(
     input: ProductionRunInput
-  ): { ok: boolean; reason?: string; run?: ProductionRun } {
+  ): Promise<{ ok: boolean; reason?: string; run?: ProductionRun }> {
     const product = products.getById(input.productId);
     if (!product) return { ok: false, reason: 'Produk tidak ditemukan.' };
     if (product.kind !== 'composite')
@@ -340,7 +340,7 @@ class ProductionRunsStore {
             reason: `Stok ${req.productName} berubah selama persiapan. Coba lagi.`
           };
         }
-        const updated = batches.update(batch.id, {
+        const updated = await batches.update(batch.id, {
           qtyRemaining: batch.qtyRemaining - draw.take
         });
         consumptions.push({
@@ -352,7 +352,7 @@ class ProductionRunsStore {
           unitCost: draw.unitCost
         });
         actualTotalCost += draw.take * draw.unitCost;
-        stockMovements.log({
+        await stockMovements.log({
           kind: 'production-out',
           productId: req.productId,
           variantId: req.variantId,
@@ -376,9 +376,8 @@ class ProductionRunsStore {
       expiresAt = d.toISOString().slice(0, 10);
     }
 
-    // 4) Create the produced composite batch.
     const perUnitCost = actualTotalCost / producedQty;
-    const producedBatch = batches.add({
+    const producedBatch = await batches.add({
       productId: product.id,
       variantId: input.variantId,
       ownership: 'owned',
@@ -392,7 +391,7 @@ class ProductionRunsStore {
         input.notes?.trim() ||
         `Hasil produksi ${runCode}${variant ? ` — ${variant.name}` : ''}`
     });
-    stockMovements.log({
+    await stockMovements.log({
       kind: 'production-in',
       productId: product.id,
       variantId: input.variantId,

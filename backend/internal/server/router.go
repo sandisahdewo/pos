@@ -52,6 +52,8 @@ func NewRouter(opts Options) http.Handler {
 	pricelistsH := handlers.NewPricelistsHandler(opts.Deps)
 	customersH := handlers.NewCustomersHandler(opts.Deps)
 	ordersH := handlers.NewOrdersHandler(opts.Deps)
+	batchesH := handlers.NewBatchesHandler(opts.Deps)
+	stockMovementsH := handlers.NewStockMovementsHandler(opts.Deps)
 
 	r.Get("/healthz", healthz)
 
@@ -103,6 +105,15 @@ func NewRouter(opts Options) http.Handler {
 			p.Post("/customers", customersH.Create)
 			p.Patch("/customers/{id}", customersH.Update)
 			p.Delete("/customers/{id}", customersH.Delete)
+
+			// Stock: batches + movements. Reads + writes authed (kasir,
+			// PO receive, opname, production all need to mutate).
+			p.Get("/batches", batchesH.List)
+			p.Get("/batches/{id}", batchesH.Get)
+			p.Post("/batches", batchesH.Create)
+			p.Patch("/batches/{id}", batchesH.Update)
+			p.Get("/stock-movements", stockMovementsH.List)
+			p.Post("/stock-movements", stockMovementsH.Create)
 
 			// Admin-only: user (employee) + role management + master data writes.
 			p.Group(func(adm chi.Router) {

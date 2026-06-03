@@ -2,6 +2,14 @@ SET statement_timeout = 0;
 
 --bun:split
 
+DROP TABLE IF EXISTS stock_movements;
+
+--bun:split
+
+DROP TABLE IF EXISTS batches;
+
+--bun:split
+
 DROP TABLE IF EXISTS order_payments;
 
 --bun:split

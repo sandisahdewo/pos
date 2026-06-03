@@ -326,10 +326,10 @@ class OrdersStore {
       for (const alloc of line.batchAllocations) {
         const batch = batches.getById(alloc.batchId);
         if (!batch) continue;
-        const updated = batches.update(batch.id, {
+        const updated = await batches.update(batch.id, {
           qtyRemaining: batch.qtyRemaining + alloc.qtyTaken
         });
-        stockMovements.log({
+        await stockMovements.log({
           kind: 'sale-cancel',
           productId: line.productId,
           variantId: line.variantId,
@@ -361,18 +361,18 @@ export const orders = new OrdersStore();
 // one BatchAllocation per batch touched. Each allocation is snapshotted so the
 // Consignor Payout report stays correct even if the underlying batch is later
 // mutated or its supplier renamed. See docs/CONSIGNMENT.md §"Sale flow".
-function deductBatchesFIFO(
+async function deductBatchesFIFO(
   productId: string,
   variantId: string | undefined,
   qty: number,
   context?: { reference?: StockMovementReference; notes?: string }
-): BatchAllocation[] {
+): Promise<BatchAllocation[]> {
   const allocations: BatchAllocation[] = [];
   let remaining = qty;
   for (const batch of batches.forStock(productId, variantId)) {
     if (remaining <= 0) break;
     const take = Math.min(remaining, batch.qtyRemaining);
-    const updated = batches.update(batch.id, { qtyRemaining: batch.qtyRemaining - take });
+    const updated = await batches.update(batch.id, { qtyRemaining: batch.qtyRemaining - take });
     allocations.push({
       batchId: batch.id,
       qtyTaken: take,
@@ -381,7 +381,7 @@ function deductBatchesFIFO(
       supplierId: batch.supplierId
     });
     if (context?.reference) {
-      stockMovements.log({
+      await stockMovements.log({
         kind: 'sale',
         productId,
         variantId,
@@ -399,18 +399,16 @@ function deductBatchesFIFO(
   return allocations;
 }
 
-function deductComponents(
+async function deductComponents(
   comps: CompositeComponent[],
   multiplier: number,
   context?: { reference?: StockMovementReference; notes?: string }
-): BatchAllocation[] {
+): Promise<BatchAllocation[]> {
   const allocations: BatchAllocation[] = [];
   for (const c of comps) {
-    // Component qty may be expressed in a packaging unit (mis. 1 ekor = 8 pcs);
-    // convert to base via unitFactor before charging stock.
     const baseQty = c.quantity * (c.unitFactor ?? 1) * multiplier;
     allocations.push(
-      ...deductCompositeOrGoods(c.productId, c.variantId, baseQty, context)
+      ...(await deductCompositeOrGoods(c.productId, c.variantId, baseQty, context))
     );
   }
   return allocations;
@@ -427,36 +425,26 @@ function deductComponents(
 //         fallback). Variant override on the recipe is honored via recipeOf.
 //       - mode 'strict'   → no fallback; allocation list comes back short
 //         and the caller logs an out-of-stock at that line.
-function deductCompositeOrGoods(
+async function deductCompositeOrGoods(
   productId: string,
   variantId: string | undefined,
   qty: number,
   context?: { reference?: StockMovementReference; notes?: string }
-): BatchAllocation[] {
+): Promise<BatchAllocation[]> {
   if (qty <= 0) return [];
   const product = products.getById(productId);
   if (!product || product.kind !== 'composite') {
     return deductBatchesFIFO(productId, variantId, qty, context);
   }
-  // Composite. First try its own produced batches.
-  const fromOwn = deductBatchesFIFO(productId, variantId, qty, context);
+  const fromOwn = await deductBatchesFIFO(productId, variantId, qty, context);
   const taken = fromOwn.reduce((s, a) => s + a.qtyTaken, 0);
   const shortfall = qty - taken;
   if (shortfall <= 0) return fromOwn;
-  // Composite ran short — mode decides what happens.
   const mode = productionModeOf(product, variantId);
-  if (mode === 'strict') {
-    // No fallback. We may have taken some real composite batches above; that
-    // stays consumed. The remaining shortfall just isn't fulfilled — this is
-    // an inventory underrun, not a normal happy path. Operators see it as
-    // qtyAfter going to 0 with no further allocations.
-    return fromOwn;
-  }
-  // Flexible: recurse into the recipe. Multiplier is `shortfall` because the
-  // recipe quantities are per-unit of the composite.
+  if (mode === 'strict') return fromOwn;
   const recipe = recipeOf(product, variantId);
   if (recipe.length === 0) return fromOwn;
-  return [...fromOwn, ...deductComponents(recipe, shortfall, context)];
+  return [...fromOwn, ...(await deductComponents(recipe, shortfall, context))];
 }
 
 /**
@@ -480,18 +468,14 @@ export async function applyOrderToStock(order: Order): Promise<void> {
     const baseQty = line.quantity * (line.unitFactor || 1);
     const allocations: BatchAllocation[] = [];
 
-    // Both branches share the same mode-aware deductor — composites that have
-    // produced batches behave just like goods at the till; only when they run
-    // out does the mode decide whether to fall back to components (flexible)
-    // or stop (strict).
     allocations.push(
-      ...deductCompositeOrGoods(product.id, line.variantId, baseQty, context)
+      ...(await deductCompositeOrGoods(product.id, line.variantId, baseQty, context))
     );
 
     for (const ex of line.extras) {
       const extraDef = product.extras.find((e) => e.id === ex.extraId);
       if (extraDef && extraDef.components.length > 0) {
-        allocations.push(...deductComponents(extraDef.components, line.quantity, context));
+        allocations.push(...(await deductComponents(extraDef.components, line.quantity, context)));
       }
     }
 

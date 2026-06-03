@@ -146,7 +146,7 @@
     producedQty = v;
   }
 
-  function submit() {
+  async function submit() {
     submitError = '';
     if (!product) {
       submitError = 'Pilih produk yang akan diproduksi.';
@@ -169,7 +169,7 @@
       return;
     }
     submitting = true;
-    const result = productionRuns.add({
+    const result = await productionRuns.add({
       productId: product.id,
       variantId: variantId || undefined,
       intendedQty,

@@ -460,7 +460,7 @@
     adjustUnitCost = perBase * adjustUnitFactor;
   }
 
-  function saveAdjust() {
+  async function saveAdjust() {
     adjustError = '';
     if (!adjustProduct) {
       adjustError = 'Produk tidak valid.';
@@ -489,7 +489,7 @@
     }
     const baseUnitCost =
       adjustUnitFactor > 0 ? adjustUnitCost / adjustUnitFactor : adjustUnitCost;
-    const newBatch = batches.adjustStock({
+    const newBatch = await batches.adjustStock({
       productId: adjustProduct.id,
       variantId: adjustVariantId || undefined,
       delta: baseDelta,
@@ -616,7 +616,7 @@
     moveQty = 0;
   }
 
-  function saveMove() {
+  async function saveMove() {
     moveError = '';
     if (!moveProduct) {
       moveError = 'Produk tidak valid.';
@@ -638,7 +638,7 @@
       moveError = `Stok di lokasi sumber hanya ${moveSourceMax}.`;
       return;
     }
-    const result = batches.moveProductStock({
+    const result = await batches.moveProductStock({
       productId: moveProduct.id,
       variantId: moveVariantId || undefined,
       fromLocationId: moveFromLocId,

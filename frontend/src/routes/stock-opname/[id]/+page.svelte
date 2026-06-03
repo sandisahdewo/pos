@@ -258,10 +258,10 @@
     }
   }
 
-  function complete() {
+  async function complete() {
     if (!opname) return;
     const skipUncounted = totals && totals.uncountedLines > 0;
-    const result = stockOpnames.complete(opname.id, { skipUncounted: !!skipUncounted });
+    const result = await stockOpnames.complete(opname.id, { skipUncounted: !!skipUncounted });
     if (!result.ok) {
       toast.error('Gagal menyelesaikan opname', result.reason ?? '');
       return;

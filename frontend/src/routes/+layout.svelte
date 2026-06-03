@@ -25,6 +25,8 @@
   import { pricelists } from '$lib/stores/pricelists.svelte';
   import { customers } from '$lib/stores/customers.svelte';
   import { orders } from '$lib/stores/orders.svelte';
+  import { batches } from '$lib/stores/batches.svelte';
+  import { stockMovements } from '$lib/stores/stockMovements.svelte';
   import { Button } from '$lib/components/ui';
   import { permissionForPath, permissionLabel } from '$lib/auth/permissions';
 
@@ -64,6 +66,9 @@
     if (!pricelists.loaded && !pricelists.loading) pricelists.load().catch(() => {});
     if (!customers.loaded && !customers.loading) customers.load().catch(() => {});
     if (!orders.loaded && !orders.loading) orders.load().catch(() => {});
+    if (!batches.loaded && !batches.loading) batches.load().catch(() => {});
+    if (!stockMovements.loaded && !stockMovements.loading)
+      stockMovements.load().catch(() => {});
   });
 
   const isAuthRoute = $derived(page.url.pathname.startsWith('/login'));

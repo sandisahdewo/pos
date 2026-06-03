@@ -616,3 +616,69 @@ CREATE TABLE order_payments (
 );
 
 CREATE INDEX order_payments_order_idx ON order_payments(order_id);
+
+--bun:split
+
+-- batches: FIFO-tracked stock lots. Each lot carries cost + ownership +
+-- source PO reference + location. qty_remaining decrements on sale, move,
+-- return-to-consignor, or manual adjust-out. expires_at is TEXT (YYYY-MM-DD
+-- or '') consistent with frontend date conventions.
+CREATE TABLE batches (
+    id                              UUID          PRIMARY KEY DEFAULT gen_random_uuid(),
+    code                            TEXT          NOT NULL UNIQUE,
+    product_id                      UUID          NOT NULL REFERENCES products(id) ON DELETE RESTRICT,
+    variant_id                      UUID          REFERENCES product_variants(id) ON DELETE RESTRICT,
+    ownership                       TEXT          NOT NULL DEFAULT 'owned',
+    supplier_id                     UUID          REFERENCES suppliers(id) ON DELETE SET NULL,
+    source_purchase_order_id        UUID          REFERENCES purchase_orders(id) ON DELETE SET NULL,
+    source_purchase_order_line_id   UUID          REFERENCES purchase_order_lines(id) ON DELETE SET NULL,
+    unit_cost                       NUMERIC(14,2) NOT NULL DEFAULT 0,
+    qty_received                    NUMERIC(14,4) NOT NULL,
+    qty_remaining                   NUMERIC(14,4) NOT NULL,
+    received_at                     TEXT          NOT NULL DEFAULT '',
+    expires_at                      TEXT          NOT NULL DEFAULT '',
+    location_id                     UUID          NOT NULL REFERENCES locations(id) ON DELETE RESTRICT,
+    notes                           TEXT          NOT NULL DEFAULT '',
+    created_at                      TIMESTAMPTZ   NOT NULL DEFAULT now(),
+    updated_at                      TIMESTAMPTZ   NOT NULL DEFAULT now()
+);
+
+CREATE INDEX batches_product_idx   ON batches(product_id);
+CREATE INDEX batches_variant_idx   ON batches(variant_id) WHERE variant_id IS NOT NULL;
+CREATE INDEX batches_location_idx  ON batches(location_id);
+CREATE INDEX batches_supplier_idx  ON batches(supplier_id) WHERE supplier_id IS NOT NULL;
+CREATE INDEX batches_source_po_idx ON batches(source_purchase_order_id)
+    WHERE source_purchase_order_id IS NOT NULL;
+-- FIFO walk index — (product, variant, expires_at, received_at) only for
+-- rows with stock left.
+CREATE INDEX batches_fifo_idx ON batches(product_id, variant_id, expires_at, received_at)
+    WHERE qty_remaining > 0;
+
+--bun:split
+
+-- stock_movements: append-only audit log. Every batch mutation that affects
+-- qty_remaining (sale / cancel / adjust / move / return / production) gets
+-- one row. reference is small JSONB ({kind, id, code?}).
+CREATE TABLE stock_movements (
+    id           UUID          PRIMARY KEY DEFAULT gen_random_uuid(),
+    code         TEXT          NOT NULL UNIQUE,
+    happened_at  TIMESTAMPTZ   NOT NULL DEFAULT now(),
+    kind         TEXT          NOT NULL,
+    product_id   UUID          REFERENCES products(id) ON DELETE SET NULL,
+    variant_id   UUID          REFERENCES product_variants(id) ON DELETE SET NULL,
+    location_id  UUID          REFERENCES locations(id) ON DELETE SET NULL,
+    batch_id     UUID          REFERENCES batches(id) ON DELETE SET NULL,
+    qty_delta    NUMERIC(14,4) NOT NULL,
+    qty_after    NUMERIC(14,4) NOT NULL DEFAULT 0,
+    unit_cost    NUMERIC(14,2),
+    reference    JSONB         NOT NULL DEFAULT '{}'::jsonb,
+    reason       TEXT,
+    image_url    TEXT          NOT NULL DEFAULT '',
+    performed_by TEXT          NOT NULL DEFAULT '',
+    notes        TEXT          NOT NULL DEFAULT ''
+);
+
+CREATE INDEX stock_movements_product_idx  ON stock_movements(product_id);
+CREATE INDEX stock_movements_batch_idx    ON stock_movements(batch_id);
+CREATE INDEX stock_movements_location_idx ON stock_movements(location_id);
+CREATE INDEX stock_movements_at_idx       ON stock_movements(happened_at DESC);

@@ -2,6 +2,30 @@ SET statement_timeout = 0;
 
 --bun:split
 
+DROP TABLE IF EXISTS order_payments;
+
+--bun:split
+
+DROP TABLE IF EXISTS order_lines;
+
+--bun:split
+
+DROP TABLE IF EXISTS orders;
+
+--bun:split
+
+DROP TABLE IF EXISTS customers;
+
+--bun:split
+
+DROP INDEX IF EXISTS pricelists_one_default;
+
+--bun:split
+
+DROP TABLE IF EXISTS pricelists;
+
+--bun:split
+
 DROP TABLE IF EXISTS shift_assignments;
 
 --bun:split

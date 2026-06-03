@@ -193,14 +193,14 @@
     payOpen = true;
   }
 
-  function savePay() {
+  async function savePay() {
     if (!payOrder) return;
     payError = '';
     if (!Number.isFinite(payAmount) || payAmount <= 0) {
       payError = 'Jumlah penerimaan harus lebih dari 0.';
       return;
     }
-    const result = orders.recordPayment(payOrder.id, {
+    const result = await orders.recordPayment(payOrder.id, {
       amount: payAmount,
       method: payMethod,
       notes: payNotes.trim()

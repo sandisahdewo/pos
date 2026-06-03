@@ -58,6 +58,9 @@ func main() {
 	if err := seedShiftTemplates(ctx, bundb); err != nil {
 		log.Fatalf("seed shift templates: %v", err)
 	}
+	if err := seedPricelists(ctx, bundb); err != nil {
+		log.Fatalf("seed pricelists: %v", err)
+	}
 
 	email := envOr("ADMIN_EMAIL", "admin@pos.local")
 	password := envOr("ADMIN_PASSWORD", "admin123")
@@ -440,6 +443,38 @@ func seedShiftTemplates(ctx context.Context, db *bun.DB) error {
 		}
 	}
 	return nil
+}
+
+// systemPricelists — well-known TEXT IDs referenced by product seed.
+// Idempotent: clears existing default before re-asserting, same pattern as
+// tax_rates.
+var systemPricelists = []models.Pricelist{
+	{ID: "pl_retail", Name: "Retail", Description: "Walk-in customers, standard pricing.", IsDefault: true},
+	{ID: "pl_wholesale", Name: "Wholesale", Description: "B2B customers buying in bulk.", IsDefault: false},
+	{ID: "pl_vip", Name: "VIP", Description: "Members and loyalty-tier customers.", IsDefault: false},
+}
+
+func seedPricelists(ctx context.Context, db *bun.DB) error {
+	return db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if _, err := tx.NewUpdate().Table("pricelists").
+			Set("is_default = false").
+			Where("is_default = true").Exec(ctx); err != nil {
+			return err
+		}
+		for _, p := range systemPricelists {
+			row := p
+			_, err := tx.NewInsert().Model(&row).
+				On("CONFLICT (id) DO UPDATE").
+				Set("name = EXCLUDED.name").
+				Set("description = EXCLUDED.description").
+				Set("is_default = EXCLUDED.is_default").
+				Set("updated_at = current_timestamp").Exec(ctx)
+			if err != nil {
+				return fmt.Errorf("upsert pricelist %s: %w", p.ID, err)
+			}
+		}
+		return nil
+	})
 }
 
 func envOr(key, fallback string) string {

@@ -22,6 +22,9 @@
   import { shiftTemplates } from '$lib/stores/shiftTemplates.svelte';
   import { shiftSchedule } from '$lib/stores/shiftSchedule.svelte';
   import { shifts } from '$lib/stores/shifts.svelte';
+  import { pricelists } from '$lib/stores/pricelists.svelte';
+  import { customers } from '$lib/stores/customers.svelte';
+  import { orders } from '$lib/stores/orders.svelte';
   import { Button } from '$lib/components/ui';
   import { permissionForPath, permissionLabel } from '$lib/auth/permissions';
 
@@ -58,6 +61,9 @@
     if (!shiftSchedule.loaded && !shiftSchedule.loading)
       shiftSchedule.load().catch(() => {});
     if (!shifts.loaded && !shifts.loading) shifts.load().catch(() => {});
+    if (!pricelists.loaded && !pricelists.loading) pricelists.load().catch(() => {});
+    if (!customers.loaded && !customers.loading) customers.load().catch(() => {});
+    if (!orders.loaded && !orders.loading) orders.load().catch(() => {});
   });
 
   const isAuthRoute = $derived(page.url.pathname.startsWith('/login'));

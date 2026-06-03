@@ -501,3 +501,118 @@ CREATE TABLE shift_assignments (
 
 CREATE INDEX shift_assignments_date_idx ON shift_assignments(date);
 CREATE INDEX shift_assignments_employee_idx ON shift_assignments(employee_id);
+
+--bun:split
+
+-- Pricelists use TEXT PK (slug) — referenced by product seed via
+-- well-known IDs ('pl_retail', 'pl_wholesale', 'pl_vip'). Same rationale as
+-- tax_rates: small closed set with stable identifiers.
+CREATE TABLE pricelists (
+    id          TEXT        PRIMARY KEY,
+    name        TEXT        NOT NULL,
+    description TEXT        NOT NULL DEFAULT '',
+    is_default  BOOLEAN     NOT NULL DEFAULT false,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE UNIQUE INDEX pricelists_one_default ON pricelists((is_default)) WHERE is_default;
+
+--bun:split
+
+CREATE TABLE customers (
+    id             UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    name           TEXT        NOT NULL,
+    type           TEXT        NOT NULL DEFAULT 'individual',
+    email          TEXT        NOT NULL DEFAULT '',
+    phone          TEXT        NOT NULL DEFAULT '',
+    address        TEXT        NOT NULL DEFAULT '',
+    pricelist_id   TEXT        REFERENCES pricelists(id) ON DELETE RESTRICT,
+    tax_id         TEXT        NOT NULL DEFAULT '',
+    status         TEXT        NOT NULL DEFAULT 'active',
+    credit_allowed BOOLEAN     NOT NULL DEFAULT false,
+    notes          TEXT        NOT NULL DEFAULT '',
+    joined_at      TEXT        NOT NULL DEFAULT '',
+    created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX customers_pricelist_idx ON customers(pricelist_id);
+
+--bun:split
+
+-- Orders: POS sales. Header + lines + payments. JSONB columns hold
+-- per-sale snapshots that aren't query targets:
+--   - orders.applied_promos: which promos triggered, snapshotted at sale
+--   - order_lines.extras: which extras were picked + their snapshotted prices
+--   - order_lines.batch_allocations: which batches got drawn down
+-- service_type / table_number are F&B-only fields (null for retail).
+CREATE TABLE orders (
+    id              UUID          PRIMARY KEY DEFAULT gen_random_uuid(),
+    code            TEXT          NOT NULL UNIQUE,
+    pricelist_id    TEXT          REFERENCES pricelists(id) ON DELETE RESTRICT,
+    customer_id     UUID          REFERENCES customers(id) ON DELETE SET NULL,
+    employee_id     UUID          REFERENCES users(id) ON DELETE SET NULL,
+    shift_id        UUID          REFERENCES shift_sessions(id) ON DELETE SET NULL,
+    payment_method  TEXT          NOT NULL DEFAULT 'cash',
+    applied_promos  JSONB         NOT NULL DEFAULT '[]'::jsonb,
+    promo_discount  NUMERIC(14,2) NOT NULL DEFAULT 0,
+    subtotal        NUMERIC(14,2) NOT NULL DEFAULT 0,
+    net_subtotal    NUMERIC(14,2) NOT NULL DEFAULT 0,
+    tax_total       NUMERIC(14,2) NOT NULL DEFAULT 0,
+    total           NUMERIC(14,2) NOT NULL DEFAULT 0,
+    paid_amount     NUMERIC(14,2) NOT NULL DEFAULT 0,
+    status          TEXT          NOT NULL DEFAULT 'paid',
+    notes           TEXT          NOT NULL DEFAULT '',
+    service_type    TEXT,
+    table_number    TEXT          NOT NULL DEFAULT '',
+    created_at      TIMESTAMPTZ   NOT NULL DEFAULT now(),
+    updated_at      TIMESTAMPTZ   NOT NULL DEFAULT now()
+);
+
+CREATE INDEX orders_customer_idx   ON orders(customer_id);
+CREATE INDEX orders_employee_idx   ON orders(employee_id);
+CREATE INDEX orders_shift_idx      ON orders(shift_id);
+CREATE INDEX orders_status_idx     ON orders(status);
+CREATE INDEX orders_created_at_idx ON orders(created_at DESC);
+
+--bun:split
+
+CREATE TABLE order_lines (
+    id                  UUID          PRIMARY KEY DEFAULT gen_random_uuid(),
+    order_id            UUID          NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+    product_id          UUID          NOT NULL REFERENCES products(id) ON DELETE RESTRICT,
+    variant_id          UUID          REFERENCES product_variants(id) ON DELETE RESTRICT,
+    product_name        TEXT          NOT NULL,
+    variant_name        TEXT          NOT NULL DEFAULT '',
+    unit_id             UUID          REFERENCES units(id) ON DELETE RESTRICT,
+    unit_factor         NUMERIC(14,4) NOT NULL DEFAULT 1,
+    unit_code           TEXT          NOT NULL DEFAULT '',
+    quantity            NUMERIC(14,4) NOT NULL,
+    unit_price          NUMERIC(14,2) NOT NULL DEFAULT 0,
+    extras              JSONB         NOT NULL DEFAULT '[]'::jsonb,
+    tax_rate_pct        NUMERIC(6,3)  NOT NULL DEFAULT 0,
+    line_subtotal       NUMERIC(14,2) NOT NULL DEFAULT 0,
+    line_promo_discount NUMERIC(14,2) NOT NULL DEFAULT 0,
+    line_subtotal_net   NUMERIC(14,2) NOT NULL DEFAULT 0,
+    line_tax            NUMERIC(14,2) NOT NULL DEFAULT 0,
+    line_total          NUMERIC(14,2) NOT NULL DEFAULT 0,
+    batch_allocations   JSONB         NOT NULL DEFAULT '[]'::jsonb,
+    position            INTEGER       NOT NULL DEFAULT 0
+);
+
+CREATE INDEX order_lines_order_idx   ON order_lines(order_id);
+CREATE INDEX order_lines_product_idx ON order_lines(product_id);
+
+--bun:split
+
+CREATE TABLE order_payments (
+    id        UUID          PRIMARY KEY DEFAULT gen_random_uuid(),
+    order_id  UUID          NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+    amount    NUMERIC(14,2) NOT NULL,
+    method    TEXT          NOT NULL DEFAULT 'cash',
+    paid_at   TIMESTAMPTZ   NOT NULL DEFAULT now(),
+    notes     TEXT          NOT NULL DEFAULT ''
+);
+
+CREATE INDEX order_payments_order_idx ON order_payments(order_id);

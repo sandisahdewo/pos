@@ -164,16 +164,21 @@
     return Object.keys(next).length === 0;
   }
 
-  function save() {
+  async function save() {
     if (!validate()) return;
-    if (editingId) {
-      customers.update(editingId, { ...form });
-      toast.success('Pelanggan diperbarui', form.name);
-    } else {
-      customers.add({ ...form });
-      toast.success('Pelanggan ditambahkan', form.name);
+    try {
+      if (editingId) {
+        await customers.update(editingId, { ...form });
+        toast.success('Pelanggan diperbarui', form.name);
+      } else {
+        await customers.add({ ...form });
+        toast.success('Pelanggan ditambahkan', form.name);
+      }
+      formOpen = false;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Terjadi kesalahan';
+      toast.error('Gagal menyimpan pelanggan', msg);
     }
-    formOpen = false;
   }
 
   function askDelete(c: Customer) {
@@ -181,12 +186,17 @@
     confirmOpen = true;
   }
 
-  function doDelete() {
+  async function doDelete() {
     if (!pendingDelete) return;
-    const name = pendingDelete.name;
-    customers.remove(pendingDelete.id);
+    const target = pendingDelete;
     pendingDelete = null;
-    toast.success('Pelanggan dihapus', name);
+    try {
+      await customers.remove(target.id);
+      toast.success('Pelanggan dihapus', target.name);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Terjadi kesalahan';
+      toast.error('Gagal menghapus pelanggan', msg);
+    }
   }
 
   function fmtDate(iso: string) {

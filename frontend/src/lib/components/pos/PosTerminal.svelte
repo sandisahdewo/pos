@@ -895,7 +895,7 @@
     return p.variants.map((v) => ({ value: v.id, label: v.name }));
   }
 
-  function charge() {
+  async function charge() {
     if (session.lines.length === 0) return;
     // F&B validation: dine-in dengan requireTableNumber wajib isi nomor meja.
     if (fnbOn && fnbRequireTable && session.serviceType === 'dineIn' && !session.tableNumber.trim()) {
@@ -1001,35 +1001,42 @@
     const willBePaid = isCash ? session.paymentAmount >= cartTotal : true;
     const orderStatus: 'paid' | 'credit' = willBePaid ? 'paid' : 'credit';
 
-    const created = orders.add({
-      pricelistId: activePricelistId,
-      customerId: session.customerId || undefined,
-      employeeId: shiftsOn && activeShift ? activeShift.employeeId : undefined,
-      shiftId: shiftsOn && activeShift ? activeShift.id : undefined,
-      lines,
-      appliedPromos: orderAppliedPromos.length > 0 ? orderAppliedPromos : undefined,
-      promoDiscount: promoDiscount > 0 ? promoDiscount : undefined,
-      paymentMethod: session.paymentMethod,
-      subtotal: cartSubtotal,
-      netSubtotal: cartNetSubtotal,
-      taxTotal: cartTax,
-      total: cartTotal,
-      paidAmount: willBePaid ? cartTotal : receivedNow,
-      status: orderStatus,
-      notes: '',
-      serviceType: fnbOn ? session.serviceType : undefined,
-      tableNumber:
-        fnbOn && session.serviceType === 'dineIn' && session.tableNumber.trim()
-          ? session.tableNumber.trim()
-          : undefined
-    });
+    let created: Order;
+    try {
+      created = await orders.add({
+        pricelistId: activePricelistId,
+        customerId: session.customerId || undefined,
+        employeeId: shiftsOn && activeShift ? activeShift.employeeId : undefined,
+        shiftId: shiftsOn && activeShift ? activeShift.id : undefined,
+        lines,
+        appliedPromos: orderAppliedPromos.length > 0 ? orderAppliedPromos : undefined,
+        promoDiscount: promoDiscount > 0 ? promoDiscount : undefined,
+        paymentMethod: session.paymentMethod,
+        subtotal: cartSubtotal,
+        netSubtotal: cartNetSubtotal,
+        taxTotal: cartTax,
+        total: cartTotal,
+        paidAmount: willBePaid ? cartTotal : receivedNow,
+        status: orderStatus,
+        notes: '',
+        serviceType: fnbOn ? session.serviceType : undefined,
+        tableNumber:
+          fnbOn && session.serviceType === 'dineIn' && session.tableNumber.trim()
+            ? session.tableNumber.trim()
+            : undefined
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Terjadi kesalahan';
+      toast.error('Gagal menyimpan transaksi', msg);
+      return;
+    }
 
     // Increment usage counter on each unique applied promo.
     for (const p of orderAppliedPromos) {
       promotions.incrementUsage(p.promoId);
     }
 
-    applyOrderToStock(created);
+    await applyOrderToStock(created);
 
     if (orderStatus === 'credit') {
       const sisa = cartTotal - (willBePaid ? cartTotal : receivedNow);
@@ -1109,25 +1116,31 @@
     addCustomerOpen = true;
   }
 
-  function saveNewCustomer() {
+  async function saveNewCustomer() {
     newCustomerError = '';
     if (!newCustomerForm.name.trim()) {
       newCustomerError = 'Nama pelanggan wajib diisi.';
       return;
     }
-    const created = customers.add({
-      name: newCustomerForm.name.trim(),
-      type: newCustomerForm.type,
-      email: '',
-      phone: newCustomerForm.phone.trim(),
-      address: '',
-      pricelistId: newCustomerForm.pricelistId,
-      taxId: '',
-      status: 'active',
-      creditAllowed: newCustomerForm.creditAllowed,
-      notes: newCustomerForm.notes.trim(),
-      joinedAt: new Date().toISOString().slice(0, 10)
-    });
+    let created;
+    try {
+      created = await customers.add({
+        name: newCustomerForm.name.trim(),
+        type: newCustomerForm.type,
+        email: '',
+        phone: newCustomerForm.phone.trim(),
+        address: '',
+        pricelistId: newCustomerForm.pricelistId,
+        taxId: '',
+        status: 'active',
+        creditAllowed: newCustomerForm.creditAllowed,
+        notes: newCustomerForm.notes.trim(),
+        joinedAt: new Date().toISOString().slice(0, 10)
+      });
+    } catch (err) {
+      newCustomerError = err instanceof Error ? err.message : 'Gagal menyimpan pelanggan.';
+      return;
+    }
     // Auto-select the new customer for the active session
     session.customerId = created.id;
     cartSessions.touch();

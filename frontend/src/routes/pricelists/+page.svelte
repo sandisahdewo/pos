@@ -65,16 +65,21 @@
     return Object.keys(next).length === 0;
   }
 
-  function save() {
+  async function save() {
     if (!validate()) return;
-    if (editingId) {
-      pricelists.update(editingId, { ...form });
-      toast.success('Daftar harga diperbarui', form.name);
-    } else {
-      pricelists.add({ ...form });
-      toast.success('Daftar harga ditambahkan', form.name);
+    try {
+      if (editingId) {
+        await pricelists.update(editingId, { ...form });
+        toast.success('Daftar harga diperbarui', form.name);
+      } else {
+        await pricelists.add({ ...form });
+        toast.success('Daftar harga ditambahkan', form.name);
+      }
+      formOpen = false;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Terjadi kesalahan';
+      toast.error('Gagal menyimpan daftar harga', msg);
     }
-    formOpen = false;
   }
 
   function askDelete(p: Pricelist) {
@@ -82,18 +87,23 @@
     confirmOpen = true;
   }
 
-  function doDelete() {
+  async function doDelete() {
     if (!pendingDelete) return;
-    const name = pendingDelete.name;
-    const ok = pricelists.remove(pendingDelete.id);
+    const target = pendingDelete;
     pendingDelete = null;
-    if (ok) toast.success('Daftar harga dihapus', name);
-    else toast.error('Tidak bisa dihapus', 'Daftar harga utama atau daftar terakhir tidak bisa dihapus.');
+    const ok = await pricelists.remove(target.id);
+    if (ok) toast.success('Daftar harga dihapus', target.name);
+    else toast.error('Tidak bisa dihapus', 'Daftar harga utama atau masih dipakai customer / produk.');
   }
 
-  function makeDefault(p: Pricelist) {
-    pricelists.update(p.id, { isDefault: true });
-    toast.success('Daftar harga utama diperbarui', p.name);
+  async function makeDefault(p: Pricelist) {
+    try {
+      await pricelists.update(p.id, { isDefault: true });
+      toast.success('Daftar harga utama diperbarui', p.name);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Terjadi kesalahan';
+      toast.error('Gagal mengubah utama', msg);
+    }
   }
 </script>
 

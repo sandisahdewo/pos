@@ -71,9 +71,9 @@
     { key: 'lineSubtotal' as const, label: 'Subtotal', align: 'right' as const, width: '140px' }
   ];
 
-  function doCancel() {
+  async function doCancel() {
     if (!order) return;
-    const r = orders.cancel(order.id);
+    const r = await orders.cancel(order.id);
     if (r.ok) toast.success('Pesanan dibatalkan', order.code);
     else toast.error('Tidak bisa dibatalkan', r.reason ?? '');
   }

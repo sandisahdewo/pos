@@ -49,6 +49,9 @@ func NewRouter(opts Options) http.Handler {
 	shiftTemplatesH := handlers.NewShiftTemplatesHandler(opts.Deps)
 	shiftAssignmentsH := handlers.NewShiftAssignmentsHandler(opts.Deps)
 	shiftsH := handlers.NewShiftsHandler(opts.Deps)
+	pricelistsH := handlers.NewPricelistsHandler(opts.Deps)
+	customersH := handlers.NewCustomersHandler(opts.Deps)
+	ordersH := handlers.NewOrdersHandler(opts.Deps)
 
 	r.Get("/healthz", healthz)
 
@@ -88,6 +91,18 @@ func NewRouter(opts Options) http.Handler {
 			p.Get("/shifts/{id}", shiftsH.Get)
 			p.Post("/shifts", shiftsH.Create)
 			p.Patch("/shifts/{id}", shiftsH.Update)
+
+			// Kasir: pricelists, customers, orders.
+			p.Get("/pricelists", pricelistsH.List)
+			p.Get("/customers", customersH.List)
+			p.Get("/customers/{id}", customersH.Get)
+			p.Get("/orders", ordersH.List)
+			p.Get("/orders/{id}", ordersH.Get)
+			p.Post("/orders", ordersH.Create)
+			p.Patch("/orders/{id}", ordersH.Update)
+			p.Post("/customers", customersH.Create)
+			p.Patch("/customers/{id}", customersH.Update)
+			p.Delete("/customers/{id}", customersH.Delete)
 
 			// Admin-only: user (employee) + role management + master data writes.
 			p.Group(func(adm chi.Router) {
@@ -154,6 +169,10 @@ func NewRouter(opts Options) http.Handler {
 				adm.Patch("/shift-assignments/{id}", shiftAssignmentsH.Update)
 				adm.Delete("/shift-assignments/{id}", shiftAssignmentsH.Delete)
 				adm.Post("/shift-assignments/bulk", shiftAssignmentsH.Bulk)
+
+				adm.Post("/pricelists", pricelistsH.Create)
+				adm.Patch("/pricelists/{id}", pricelistsH.Update)
+				adm.Delete("/pricelists/{id}", pricelistsH.Delete)
 			})
 		})
 	})

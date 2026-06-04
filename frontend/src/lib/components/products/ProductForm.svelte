@@ -1835,25 +1835,58 @@
           <div class="mt-2 space-y-2 text-slate-600">
             <p class="font-semibold text-slate-700">Pakai varian kalau:</p>
             <ul class="ml-4 list-disc space-y-1">
-              <li>Versi yang sama produk — beda warna, ukuran, atau edisi (Kaos Merah/Biru, Sepatu 39/40/41).</li>
-              <li>Customer mikirnya "produk yang sama, tinggal pilih varian".</li>
-              <li>Laporan & analisis lebih masuk akal kalau digabung (mis. total penjualan Kaos Polos lintas warna).</li>
-              <li>Stok dipisah per varian, tapi katalog tampil satu kartu produk.</li>
+              <li>Sama brand & lini produk — Indomie Goreng / Ayam Bawang / Soto, Kaos Polos Merah / Biru, Sepatu ukuran 39/40/41.</li>
+              <li>Customer melihat sebagai "satu produk, tinggal pilih pilihan".</li>
+              <li>Kategori, brand, pajak, & compliance (BPOM/halal) sama.</li>
+              <li>Pemasok pada umumnya sama (boleh harga beda — lihat catatan di bawah).</li>
+              <li>Packaging strategy sama (semua per pcs / per dus 40).</li>
+              <li>Laporan agregat di level produk masuk akal (total penjualan Indomie lintas rasa).</li>
             </ul>
 
             <p class="mt-3 font-semibold text-slate-700">Pisah jadi produk baru kalau:</p>
             <ul class="ml-4 list-disc space-y-1">
-              <li>Spec teknis beda penting — Aqua 600mL vs 1.5L (isi beda, supplier mungkin beda, harga ratusan persen beda).</li>
-              <li>Beda kategori atau brand di laporan keuangan.</li>
-              <li>Customer cari di katalog dengan nama yang beda banget (nasi goreng vs nasi uduk — bukan "nasi" dengan varian).</li>
-              <li>Butuh kemasan kemasan jualnya benar-benar beda — mis. satu pakai dus 24, satu pakai dus 12.</li>
+              <li>Brand berbeda — meski jenis mirip (Indomie vs Pop Mie).</li>
+              <li>Kategori atau pajak berbeda (rokok vs makanan; PPN vs non-PPN).</li>
+              <li>Compliance berbeda (BPOM khusus salah satu, sertifikat halal hanya untuk satu).</li>
+              <li>Satu goods, satu composite (resep) — tidak bisa dicampur sebagai varian.</li>
+              <li>Packaging strategy berbeda — satu dijual per botol, satu per liter.</li>
+              <li>Tidak pernah dianggap sebagai "satu produk dengan pilihan".</li>
             </ul>
 
             <p class="mt-3 font-semibold text-slate-700">Cukup kemasan (satuan tambahan) saja kalau:</p>
             <ul class="ml-4 list-disc space-y-1">
               <li>Produknya sama persis, cuma cara jualnya beda (Cola kaleng dijual ecer / 6-pack / dus 24).</li>
-              <li>Tidak ada perbedaan warna/ukuran/edisi.</li>
+              <li>Tidak ada perbedaan warna/ukuran/rasa/edisi.</li>
             </ul>
+
+            <div class="mt-3 rounded-md border border-emerald-200 bg-emerald-50/60 p-2.5 text-slate-700">
+              <p class="font-semibold">✓ Harga beli & harga jual berbeda per varian? Tetap aman pakai varian.</p>
+              <p class="mt-1.5">
+                Tiap varian punya field <code class="rounded bg-white px-1">cost</code> sendiri
+                (harga modal) dan <code class="rounded bg-white px-1">prices[]</code> sendiri
+                (per pricelist). Contoh:
+              </p>
+              <ul class="ml-4 mt-1 list-disc space-y-0.5 font-mono text-[11px]">
+                <li>Indomie Goreng — modal 3.200, jual 3.500</li>
+                <li>Indomie Ayam Bawang — modal 3.400, jual 3.800</li>
+                <li>Indomie Soto — modal 3.300, jual 3.700</li>
+              </ul>
+              <p class="mt-1.5 text-slate-600">
+                Stok, batches, FIFO, dan barcode juga semuanya terpisah per varian.
+              </p>
+
+              <p class="mt-2.5 font-semibold">⚠ Catatan kecil soal pemasok:</p>
+              <p class="mt-1 text-slate-600">
+                Daftar pemasok (<code class="rounded bg-white px-1">suppliers[]</code>) dan
+                <code class="rounded bg-white px-1">unitCost</code>-nya berada di level
+                <strong>produk</strong>, bukan per-varian. Itu cuma autofill harga PO. Saat
+                input PO line untuk varian tertentu, harga bisa di-override per line
+                (Goreng line 3.200, Ayam Bawang line 3.400 — bebas). Kalau pakai fitur
+                "Update harga supplier dari PO", harga modal default produk yang berubah,
+                bukan per varian — jadi untuk perbedaan signifikan, isi
+                <code class="rounded bg-white px-1">variant.cost</code> manual saja.
+              </p>
+            </div>
 
             <div class="mt-3 rounded-md border border-amber-200 bg-amber-50/60 p-2.5 text-slate-700">
               <p class="font-semibold">⚠ Kalau pakai varian + kemasan bareng</p>
@@ -1861,12 +1894,6 @@
                 Harga jual & barcode untuk satu kemasan <strong>shared lintas varian</strong>.
                 Misal Kaos × Lusin: harga 1 lusin = sama untuk Hitam, Putih, Abu-abu —
                 model tidak bisa simpan harga jual berbeda per (warna, lusin).
-                <br />
-                <span class="text-slate-500">
-                  Catatan: ini hanya soal <strong>harga jual</strong>. Di PO, tiap line
-                  bisa punya harga beli sendiri (mis. Hijau Rp 5jt/gross, Merah Rp 5,5jt/gross)
-                  — itu bebas diatur saat input PO.
-                </span>
               </p>
 
               <p class="mt-2.5 font-semibold">Kalau harga jual per (varian, kemasan) harus benar-benar beda:</p>
@@ -1886,8 +1913,8 @@
                 </li>
                 <li>
                   <strong>Spec teknis berbeda</strong> → pisah jadi produk berbeda per warna
-                  (mis. "Kaos Polos Merah", "Kaos Polos Hijau" sebagai 3 produk independen,
-                  masing-masing dengan 3 kemasan sendiri).
+                  (mis. "Kaos Polos Merah", "Kaos Polos Hijau" sebagai produk independen,
+                  masing-masing dengan kemasan sendiri).
                 </li>
               </ul>
             </div>

@@ -292,6 +292,7 @@
       {
         id: crypto.randomUUID(),
         name: '',
+        printName: '',
         sku: '',
         cost: form.cost,
         prices: form.prices.map(cloneEntry),
@@ -2017,6 +2018,12 @@
                     <Trash2 class="h-4 w-4" />
                   </button>
                 </div>
+                <Input
+                  label="Nama struk (opsional)"
+                  placeholder={`Auto: ${shortenForReceipt(`${form.name || 'Produk'} ${variant.name || ''}`.trim())}`}
+                  bind:value={variant.printName}
+                  hint="Versi pendek per varian untuk dicetak di nota (~18 huruf). Kosongkan untuk pakai gabungan otomatis dari nama produk + varian."
+                />
                 <div class="grid gap-3 md:grid-cols-[1fr_2fr] md:items-end">
                   <MoneyInput
                     label="Biaya"

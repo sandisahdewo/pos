@@ -157,6 +157,9 @@ export function componentBaseQty(c: CompositeComponent): number {
 export type ProductVariant = {
   id: string;
   name: string;
+  // Optional short alias for thermal receipts (~16 char), per-variant.
+  // Empty falls back to algorithmic shortening of `name`.
+  printName?: string;
   sku: string;
   cost: number;
   prices: PricelistEntry[];

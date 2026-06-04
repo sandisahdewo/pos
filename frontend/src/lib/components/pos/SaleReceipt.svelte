@@ -124,11 +124,15 @@
        (unit price shown as a small sub-line only when qty > 1) -->
   <div class="space-y-1">
     {#each order.lines as line (line.id)}
-      {@const printName = products.getById(line.productId)?.printName}
+      {@const product = products.getById(line.productId)}
+      {@const variant = line.variantId
+        ? product?.variants.find((v) => v.id === line.variantId)
+        : undefined}
       {@const display = displayLineName({
         productName: line.productName,
         variantName: line.variantName,
-        printName
+        productPrintName: product?.printName,
+        variantPrintName: variant?.printName
       })}
       <div>
         <div class="flex items-baseline justify-between gap-1">

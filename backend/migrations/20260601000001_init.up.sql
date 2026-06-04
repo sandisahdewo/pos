@@ -241,6 +241,9 @@ CREATE TABLE product_variants (
     id              UUID          PRIMARY KEY DEFAULT gen_random_uuid(),
     product_id      UUID          NOT NULL REFERENCES products(id) ON DELETE CASCADE,
     name            TEXT          NOT NULL DEFAULT '',
+    -- Optional short alias used on thermal receipts. Same role as
+    -- products.print_name but per-variant; empty falls back to algorithm.
+    print_name      TEXT          NOT NULL DEFAULT '',
     sku             TEXT          NOT NULL UNIQUE,
     cost            NUMERIC(14,2) NOT NULL DEFAULT 0,
     barcode         TEXT          NOT NULL DEFAULT '',

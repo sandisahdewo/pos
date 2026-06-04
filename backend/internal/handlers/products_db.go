@@ -168,6 +168,7 @@ func attachVariants(
 		products[i].Variants = append(products[i].Variants, models.ProductVariant{
 			ID:             r.ID,
 			Name:           r.Name,
+			PrintName:      r.PrintName,
 			SKU:            r.SKU,
 			Cost:           r.Cost,
 			Prices:         []models.PricelistEntry{},
@@ -530,6 +531,7 @@ func syncVariants(
 			ID:             v.ID,
 			ProductID:      productID,
 			Name:           strings.TrimSpace(v.Name),
+			PrintName:      strings.TrimSpace(v.PrintName),
 			SKU:            strings.TrimSpace(v.SKU),
 			Cost:           v.Cost,
 			Barcode:        strings.TrimSpace(v.Barcode),

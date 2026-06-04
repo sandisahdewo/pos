@@ -59,6 +59,7 @@ type CompositeComponent struct {
 type ProductVariant struct {
 	ID             uuid.UUID            `json:"id"`
 	Name           string               `json:"name"`
+	PrintName      string               `json:"printName"`
 	SKU            string               `json:"sku"`
 	Cost           float64              `json:"cost"`
 	Prices         []PricelistEntry     `json:"prices"`
@@ -169,6 +170,7 @@ type ProductVariantRow struct {
 	ID             uuid.UUID         `bun:",pk,type:uuid,default:gen_random_uuid()"`
 	ProductID      uuid.UUID         `bun:"product_id,notnull"`
 	Name           string            `bun:",notnull,default:''"`
+	PrintName      string            `bun:"print_name,notnull,default:''"`
 	SKU            string            `bun:"sku,notnull,unique"`
 	Cost           float64           `bun:",notnull,default:0"`
 	Barcode        string            `bun:",notnull,default:''"`

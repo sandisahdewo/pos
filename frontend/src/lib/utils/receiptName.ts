@@ -122,37 +122,47 @@ export function shortenForReceipt(name: string, max: number = MAX_RECEIPT_NAME_L
 /**
  * Compose the receipt display name for a sold line.
  *
- * - When operator set `printName`: kept as-is (manual alias is trusted).
- *   The variant name is appended; if total still exceeds `max`, the algorithm
- *   shortens only the variant portion so `printName` survives intact.
- * - When `printName` empty: full algorithmic shorten of `productName variantName`.
+ * Priority (highest wins):
+ *   1. `variantPrintName` — operator's complete alias for this exact variant
+ *      (e.g. "IDM GRG 85G"). Used as-is, treated as the full receipt name.
+ *   2. `productPrintName` + variantName — operator's product-level alias
+ *      combined with the variant's display name; variant portion is shortened
+ *      algorithmically if total overflows.
+ *   3. No alias — full algorithmic shorten of `productName + variantName`.
  */
 export function displayLineName(args: {
   productName: string;
   variantName?: string;
-  printName?: string;
+  productPrintName?: string;
+  variantPrintName?: string;
   max?: number;
 }): string {
   const max = args.max ?? MAX_RECEIPT_NAME_LEN;
-  const printName = args.printName?.trim();
+  const vpn = args.variantPrintName?.trim();
+  const ppn = args.productPrintName?.trim();
   const variant = args.variantName?.trim();
 
-  if (printName) {
+  // 1. Variant-level alias is the full receipt name for this SKU.
+  if (vpn) {
+    return vpn.length <= max ? vpn : vpn.slice(0, max - 1) + '…';
+  }
+
+  // 2. Product-level alias + variant suffix (variant shortened if needed).
+  if (ppn) {
     if (!variant) {
-      return printName.length <= max ? printName : printName.slice(0, max - 1) + '…';
+      return ppn.length <= max ? ppn : ppn.slice(0, max - 1) + '…';
     }
-    const full = `${printName} ${variant}`;
+    const full = `${ppn} ${variant}`;
     if (full.length <= max) return full;
-    // Need to compress variant. Budget = max - printName.length - 1 (space).
-    const budget = max - printName.length - 1;
+    const budget = max - ppn.length - 1;
     if (budget < 3) {
-      // Almost no room — printName itself is near max; hard truncate.
       return full.slice(0, max - 1) + '…';
     }
     const v = variant.length <= budget ? variant : shortenForReceipt(variant, budget);
-    return `${printName} ${v}`;
+    return `${ppn} ${v}`;
   }
 
+  // 3. No alias — algorithmic shorten across the whole thing.
   const full = variant ? `${args.productName} ${variant}` : args.productName;
   return shortenForReceipt(full, max);
 }

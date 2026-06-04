@@ -120,9 +120,12 @@ export function shortenForReceipt(name: string, max: number = MAX_RECEIPT_NAME_L
 }
 
 /**
- * Compose the receipt display name for a sold line. Prefers operator-set
- * `printName` (taken as-is, only hard-truncated if absurdly long); otherwise
- * algorithmic shorten of `productName` + variant suffix.
+ * Compose the receipt display name for a sold line.
+ *
+ * - When operator set `printName`: kept as-is (manual alias is trusted).
+ *   The variant name is appended; if total still exceeds `max`, the algorithm
+ *   shortens only the variant portion so `printName` survives intact.
+ * - When `printName` empty: full algorithmic shorten of `productName variantName`.
  */
 export function displayLineName(args: {
   productName: string;
@@ -131,13 +134,25 @@ export function displayLineName(args: {
   max?: number;
 }): string {
   const max = args.max ?? MAX_RECEIPT_NAME_LEN;
-  if (args.printName && args.printName.trim()) {
-    const v = args.variantName ? ` ${args.variantName}` : '';
-    const raw = (args.printName + v).trim();
-    return raw.length <= max ? raw : raw.slice(0, max - 1) + '…';
+  const printName = args.printName?.trim();
+  const variant = args.variantName?.trim();
+
+  if (printName) {
+    if (!variant) {
+      return printName.length <= max ? printName : printName.slice(0, max - 1) + '…';
+    }
+    const full = `${printName} ${variant}`;
+    if (full.length <= max) return full;
+    // Need to compress variant. Budget = max - printName.length - 1 (space).
+    const budget = max - printName.length - 1;
+    if (budget < 3) {
+      // Almost no room — printName itself is near max; hard truncate.
+      return full.slice(0, max - 1) + '…';
+    }
+    const v = variant.length <= budget ? variant : shortenForReceipt(variant, budget);
+    return `${printName} ${v}`;
   }
-  const full = args.variantName
-    ? `${args.productName} ${args.variantName}`
-    : args.productName;
+
+  const full = variant ? `${args.productName} ${variant}` : args.productName;
   return shortenForReceipt(full, max);
 }

@@ -899,3 +899,17 @@ CREATE TABLE promotion_category_scopes (
     category_id     UUID          NOT NULL REFERENCES categories(id) ON DELETE CASCADE,
     PRIMARY KEY (promotion_id, category_id)
 );
+
+--bun:split
+
+-- app_settings: single-row table holding the entire /settings page state as
+-- a JSONB blob. CHECK (id = 1) enforces singleton; reads return the row
+-- (auto-seeded with '{}' at install), writes replace the whole value.
+CREATE TABLE app_settings (
+    id          INTEGER       PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+    value       JSONB         NOT NULL DEFAULT '{}'::jsonb,
+    updated_at  TIMESTAMPTZ   NOT NULL DEFAULT now()
+);
+
+INSERT INTO app_settings (id, value) VALUES (1, '{}'::jsonb)
+ON CONFLICT (id) DO NOTHING;

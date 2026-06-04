@@ -32,6 +32,7 @@
   import { payouts } from '$lib/stores/payouts.svelte';
   import { priceChanges } from '$lib/stores/priceChanges.svelte';
   import { promotions } from '$lib/stores/promotions.svelte';
+  import { settings } from '$lib/stores/settings.svelte';
   import { Button } from '$lib/components/ui';
   import { permissionForPath, permissionLabel } from '$lib/auth/permissions';
 
@@ -51,6 +52,8 @@
   // categories, tax rates) referenced by products / PO / POS flows.
   $effect(() => {
     if (!user.isAuthenticated) return;
+    // Settings first — feature flags gate UI in many other pages.
+    if (!settings.loaded && !settings.loading) settings.load().catch(() => {});
     if (!roles.loaded && !roles.loading) roles.load().catch(() => {});
     if (!employees.loaded && !employees.loading) employees.load().catch(() => {});
     if (!taxRates.loaded && !taxRates.loading) taxRates.load().catch(() => {});

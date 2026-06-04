@@ -59,6 +59,7 @@ func NewRouter(opts Options) http.Handler {
 	payoutsH := handlers.NewPayoutsHandler(opts.Deps)
 	priceChangesH := handlers.NewPriceChangesHandler(opts.Deps)
 	promotionsH := handlers.NewPromotionsHandler(opts.Deps)
+	settingsH := handlers.NewAppSettingsHandler(opts.Deps)
 
 	r.Get("/healthz", healthz)
 
@@ -145,6 +146,10 @@ func NewRouter(opts Options) http.Handler {
 			p.Get("/promotions", promotionsH.List)
 			p.Post("/promotions/{id}/usage", promotionsH.IncrementUsage)
 
+			// App-wide settings. Read authed (every page hydrates feature
+			// flags). Write admin (changes affect everyone).
+			p.Get("/settings", settingsH.Get)
+
 			// Admin-only: user (employee) + role management + master data writes.
 			p.Group(func(adm chi.Router) {
 				adm.Use(middleware.RequireRole("Admin"))
@@ -204,6 +209,8 @@ func NewRouter(opts Options) http.Handler {
 				adm.Post("/promotions", promotionsH.Create)
 				adm.Patch("/promotions/{id}", promotionsH.Update)
 				adm.Delete("/promotions/{id}", promotionsH.Delete)
+
+				adm.Put("/settings", settingsH.Put)
 
 				// Templates + assignments are admin-managed master data.
 				adm.Post("/shift-templates", shiftTemplatesH.Create)

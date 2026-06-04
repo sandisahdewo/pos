@@ -2,6 +2,10 @@ SET statement_timeout = 0;
 
 --bun:split
 
+DROP TABLE IF EXISTS app_settings;
+
+--bun:split
+
 DROP TABLE IF EXISTS promotion_category_scopes;
 
 --bun:split

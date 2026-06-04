@@ -179,6 +179,9 @@ export type Product = {
   id: string;
   sku: string;
   name: string;
+  // Optional short alias for thermal receipts (~16 char). Empty falls back
+  // to algorithmic shortening of `name` at render time.
+  printName?: string;
   kind: ProductKind;
   categoryId: string;
   unitId: string;

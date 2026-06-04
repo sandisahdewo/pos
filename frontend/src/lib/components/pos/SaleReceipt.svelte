@@ -20,7 +20,9 @@
   import { employees } from '$lib/stores/employees.svelte';
   import { shifts } from '$lib/stores/shifts.svelte';
   import { serviceTypeLabels } from '$lib/stores/settings.svelte';
+  import { products } from '$lib/stores/products.svelte';
   import { formatRupiah } from '$lib/utils/currency';
+  import { displayLineName } from '$lib/utils/receiptName';
 
   type Props = {
     order: Order;
@@ -117,21 +119,36 @@
 
   <div class="my-2 border-t border-dashed border-slate-300"></div>
 
-  <!-- Line items -->
-  <div class="space-y-1.5">
+  <!-- Line items — Indomaret-style one row per item:
+       NAME (truncated)        QTY  SUBTOTAL
+       (unit price shown as a small sub-line only when qty > 1) -->
+  <div class="space-y-1">
     {#each order.lines as line (line.id)}
+      {@const printName = products.getById(line.productId)?.printName}
+      {@const display = displayLineName({
+        productName: line.productName,
+        variantName: line.variantName,
+        printName
+      })}
       <div>
-        <div class="font-medium">
-          {line.productName}{line.variantName ? ` — ${line.variantName}` : ''}
+        <div class="flex items-baseline justify-between gap-1">
+          <span class="flex-1 truncate font-medium">{display}</span>
+          <span class="tabular-nums text-slate-600">{line.quantity}</span>
+          <span class="w-[18mm] text-right font-medium tabular-nums">
+            {formatRupiah(line.quantity * line.unitPrice)}
+          </span>
         </div>
-        <div class="flex justify-between gap-2 text-slate-600">
-          <span>{line.quantity} {line.unitCode} × {formatRupiah(line.unitPrice)}</span>
-          <span class="tabular-nums">{formatRupiah(line.quantity * line.unitPrice)}</span>
-        </div>
+        {#if line.quantity > 1}
+          <div class="pl-1 text-[9px] text-slate-400">
+            @ {formatRupiah(line.unitPrice)}
+          </div>
+        {/if}
         {#each line.extras as ex (ex.extraId)}
-          <div class="flex justify-between gap-2 pl-3 text-[10px] text-slate-500">
-            <span>+ {ex.name}</span>
-            <span class="tabular-nums">{formatRupiah(line.quantity * ex.priceDelta)}</span>
+          <div class="flex items-baseline justify-between gap-1 pl-3 text-[10px] text-slate-500">
+            <span class="flex-1 truncate">+ {ex.name}</span>
+            <span class="w-[18mm] text-right tabular-nums">
+              {formatRupiah(line.quantity * ex.priceDelta)}
+            </span>
           </div>
         {/each}
       </div>

@@ -183,6 +183,9 @@ CREATE TABLE products (
     id                              UUID          PRIMARY KEY DEFAULT gen_random_uuid(),
     sku                             TEXT          NOT NULL UNIQUE,
     name                            TEXT          NOT NULL,
+    -- Short alias used on thermal receipts (74mm ~16 chars wide). When empty
+    -- the receipt falls back to an algorithmic shortener applied to `name`.
+    print_name                      TEXT          NOT NULL DEFAULT '',
     kind                            TEXT          NOT NULL DEFAULT 'goods',
     category_id                     UUID          REFERENCES categories(id) ON DELETE RESTRICT,
     unit_id                         UUID          REFERENCES units(id) ON DELETE RESTRICT,

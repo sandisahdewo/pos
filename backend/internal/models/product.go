@@ -113,6 +113,7 @@ type Product struct {
 	ID          uuid.UUID  `bun:",pk,type:uuid,default:gen_random_uuid()" json:"id"`
 	SKU         string     `bun:"sku,notnull,unique" json:"sku"`
 	Name        string     `bun:",notnull" json:"name"`
+	PrintName   string     `bun:"print_name,notnull,default:''" json:"printName"`
 	Kind        string     `bun:",notnull,default:'goods'" json:"kind"`
 	CategoryID  *uuid.UUID `bun:"category_id" json:"categoryId,omitempty"`
 	UnitID      *uuid.UUID `bun:"unit_id" json:"unitId,omitempty"`

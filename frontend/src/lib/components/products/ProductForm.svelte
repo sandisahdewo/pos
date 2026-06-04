@@ -39,6 +39,7 @@
   import { taxRates } from '$lib/stores/taxRates.svelte';
   import { suppliers } from '$lib/stores/suppliers.svelte';
   import { formatRupiah } from '$lib/utils/currency';
+  import { shortenForReceipt } from '$lib/utils/receiptName';
   import { supplierComparison } from '$lib/utils/supplierAnalytics';
   import { toast } from '$lib/stores/toast.svelte';
   import {
@@ -99,6 +100,7 @@
   type FormState = {
     sku: string;
     name: string;
+    printName: string;
     barcode: string;
     kind: ProductKind;
     categoryId: string;
@@ -133,6 +135,7 @@
     return {
       sku: product?.sku ?? '',
       name: product?.name ?? '',
+      printName: product?.printName ?? '',
       barcode: product?.barcode ?? '',
       kind: product?.kind ?? 'goods',
       categoryId: product?.categoryId ?? categories.items[0]?.id ?? '',
@@ -472,6 +475,7 @@
     const payload: ProductInput = {
       sku: form.sku.trim(),
       name: form.name.trim(),
+      printName: form.printName.trim() || undefined,
       barcode: form.barcode.trim() || undefined,
       categoryId: form.categoryId,
       brandId: form.brandId || undefined,
@@ -1049,6 +1053,12 @@
             placeholder="mis. Cola 330mL"
             bind:value={form.name}
             error={errors.name}
+          />
+          <Input
+            label="Nama struk (opsional)"
+            placeholder={`Auto: ${shortenForReceipt(form.name || 'mis. Cola 330mL')}`}
+            bind:value={form.printName}
+            hint="Versi pendek yang dicetak di nota (~16 huruf). Kosongkan untuk pakai versi otomatis dari nama."
           />
           <Input
             label="SKU (kode internal)"

@@ -48,6 +48,7 @@
     effectiveVariantCost,
     isComposite,
     priceForQty,
+    producibleStock,
     producibleVariantStock,
     products,
     taxRateFor,
@@ -260,6 +261,40 @@
 
   function productStock(p: Product): number {
     return totalStock(p);
+  }
+
+  // Max base units the operator may sell of (product, variant?). Composite
+  // products fold in their recipe-derived capacity via producibleVariantStock /
+  // producibleStock — so a flexible-mode composite without batches still has
+  // headroom equal to what its components can produce.
+  function availableBaseFor(p: Product, variantId?: string): number {
+    if (p.variants.length > 0) {
+      const v = p.variants.find((x) => x.id === variantId);
+      if (!v) return 0;
+      return producibleVariantStock(p.id, v);
+    }
+    return producibleStock(p);
+  }
+
+  // Sum of base units already reserved in the current cart for the same
+  // (product, variant). Excludes one line by id (the one being edited) so
+  // the in-place qty isn't counted twice.
+  function cartBaseFor(
+    productId: string,
+    variantId: string | undefined,
+    excludeLineId?: string
+  ): number {
+    return session.lines.reduce((sum, l) => {
+      if (l.id === excludeLineId) return sum;
+      if (l.productId !== productId) return sum;
+      if ((l.variantId ?? '') !== (variantId ?? '')) return sum;
+      return sum + l.quantity * l.unitFactor;
+    }, 0);
+  }
+
+  function productLabelFor(p: Product, variantId?: string): string {
+    const v = variantId ? p.variants.find((x) => x.id === variantId) : undefined;
+    return v ? `${p.name} — ${v.name}` : p.name;
   }
 
   const locationsOn = $derived(settings.value.inventory.locationsEnabled);
@@ -639,6 +674,28 @@
         l.unitFactor === unitFactor &&
         l.extras.length === 0
     );
+
+    // Stock guard — goods only. Composite folds recipe capacity into
+    // availableBaseFor, so a flexible composite without batches still allows
+    // sale as long as components can produce it. Strict composite with no
+    // produced stock returns 0 → blocked here.
+    if (!isComposite(p)) {
+      const available = availableBaseFor(p, useVariantId);
+      const otherInCart = cartBaseFor(p.id, useVariantId, existing?.id);
+      const headroomBase = available - otherInCart;
+      const addBase = add * unitFactor;
+      const existingBase = (existing?.quantity ?? 0) * unitFactor;
+      const requestedBase = existingBase + addBase;
+      if (requestedBase > headroomBase) {
+        const baseCode = unitCodeFor(p.unitId);
+        toast.error(
+          'Stok tidak cukup',
+          `${productLabelFor(p, useVariantId)} hanya ${Math.max(0, headroomBase - existingBase)} ${baseCode} lagi yang bisa ditambah.`
+        );
+        return;
+      }
+    }
+
     if (existing) {
       existing.quantity += add;
       lastAddedLineId = existing.id;
@@ -823,24 +880,93 @@
   function updateLineQty(lineId: string, delta: number) {
     const idx = session.lines.findIndex((l) => l.id === lineId);
     if (idx === -1) return;
-    const next = Math.max(1, session.lines[idx].quantity + delta);
-    session.lines[idx].quantity = next;
+    const line = session.lines[idx];
+    const next = Math.max(1, line.quantity + delta);
+    if (delta > 0) {
+      const p = products.getById(line.productId);
+      if (p && !isComposite(p)) {
+        const available = availableBaseFor(p, line.variantId);
+        const otherInCart = cartBaseFor(line.productId, line.variantId, line.id);
+        if (otherInCart + next * line.unitFactor > available) {
+          const baseCode = unitCodeFor(p.unitId);
+          const remaining = Math.max(0, available - otherInCart);
+          toast.error(
+            'Stok tidak cukup',
+            `${productLabelFor(p, line.variantId)} hanya ${remaining} ${baseCode} tersedia.`
+          );
+          return;
+        }
+      }
+    }
+    line.quantity = next;
     cartSessions.touch();
   }
 
   function setLineQty(lineId: string, qty: number) {
     const idx = session.lines.findIndex((l) => l.id === lineId);
     if (idx === -1) return;
-    session.lines[idx].quantity = Math.max(1, Math.floor(qty));
+    const line = session.lines[idx];
+    const requested = Math.max(1, Math.floor(qty));
+    const p = products.getById(line.productId);
+    if (p && !isComposite(p)) {
+      const available = availableBaseFor(p, line.variantId);
+      const otherInCart = cartBaseFor(line.productId, line.variantId, line.id);
+      const maxQty = Math.floor((available - otherInCart) / line.unitFactor);
+      if (requested > maxQty) {
+        const baseCode = unitCodeFor(p.unitId);
+        if (maxQty < 1) {
+          toast.error(
+            'Stok tidak cukup',
+            `${productLabelFor(p, line.variantId)} hanya ${Math.max(0, available - otherInCart)} ${baseCode} tersedia.`
+          );
+          return;
+        }
+        line.quantity = maxQty;
+        cartSessions.touch();
+        toast.warning(
+          'Dibatasi stok',
+          `${productLabelFor(p, line.variantId)} dibatasi ke ${maxQty} ${unitCodeFor(line.unitId)} (sisa stok ${available - otherInCart} ${baseCode}).`
+        );
+        return;
+      }
+    }
+    line.quantity = requested;
     cartSessions.touch();
   }
 
   function updateLineUnit(lineId: string, value: string) {
     const idx = session.lines.findIndex((l) => l.id === lineId);
     if (idx === -1) return;
+    const line = session.lines[idx];
     const [unitId, factorStr] = value.split('|');
-    session.lines[idx].unitId = unitId;
-    session.lines[idx].unitFactor = Number(factorStr) || 1;
+    const newFactor = Number(factorStr) || 1;
+
+    const p = products.getById(line.productId);
+    let nextQty = line.quantity;
+    if (p && !isComposite(p)) {
+      const available = availableBaseFor(p, line.variantId);
+      const otherInCart = cartBaseFor(line.productId, line.variantId, line.id);
+      const headroom = available - otherInCart;
+      if (line.quantity * newFactor > headroom) {
+        const maxQty = Math.floor(headroom / newFactor);
+        if (maxQty < 1) {
+          const baseCode = unitCodeFor(p.unitId);
+          toast.error(
+            'Stok tidak cukup',
+            `${productLabelFor(p, line.variantId)} hanya ${Math.max(0, headroom)} ${baseCode} tersedia — kurang dari 1 ${unitNameFor(unitId)}.`
+          );
+          return;
+        }
+        nextQty = maxQty;
+        toast.warning(
+          'Dibatasi stok',
+          `${productLabelFor(p, line.variantId)} dibatasi ke ${maxQty} ${unitNameFor(unitId)} (sisa stok ${headroom} ${unitCodeFor(p.unitId)}).`
+        );
+      }
+    }
+    line.unitId = unitId;
+    line.unitFactor = newFactor;
+    line.quantity = nextQty;
     cartSessions.touch();
   }
 
